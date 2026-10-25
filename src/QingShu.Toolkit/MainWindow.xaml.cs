@@ -146,10 +146,20 @@ public sealed partial class MainWindow : Window
         var dark = RootGrid.ActualTheme == ElementTheme.Dark;
         PowerDot.Fill = state switch
         {
-            PowerUiState.Eco => new SolidColorBrush(ColorHelper.FromHex(dark ? "#34D399" : "#059669")),
-            PowerUiState.High => new SolidColorBrush(ColorHelper.FromHex(dark ? "#F87171" : "#DC2626")),
-            _ => new SolidColorBrush(ColorHelper.FromHex(dark ? "#3B82F6" : "#2563EB"))
+            PowerUiState.Eco => new SolidColorBrush(FromHex(dark ? "#34D399" : "#059669")),
+            PowerUiState.High => new SolidColorBrush(FromHex(dark ? "#F87171" : "#DC2626")),
+            _ => new SolidColorBrush(FromHex(dark ? "#3B82F6" : "#2563EB"))
         };
+    }
+
+    /// <summary>解析 #RRGGBB（WinUI 3 的 ColorHelper 无 FromHex，本地实现）。</summary>
+    private static Windows.UI.Color FromHex(string hex)
+    {
+        var s = hex.TrimStart('#');
+        return Windows.UI.Color.FromArgb(255,
+            Convert.ToByte(s.Substring(0, 2), 16),
+            Convert.ToByte(s.Substring(2, 2), 16),
+            Convert.ToByte(s.Substring(4, 2), 16));
     }
 
     // ================= 手动更新按钮 =================
@@ -189,7 +199,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = ContentFrame.XamlRoot
         };
-        var result = await dlg.ShowAsync().ConfigureAwait(true);
+        var result = await dlg.ShowAsync();
         if (result == ContentDialogResult.Primary)
             await _update.DownloadAsync(rel).ConfigureAwait(true);
     }
@@ -205,7 +215,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = ContentFrame.XamlRoot
         };
-        var result = await dlg.ShowAsync().ConfigureAwait(true);
+        var result = await dlg.ShowAsync();
         if (result == ContentDialogResult.Primary && _update.Current.DownloadedFile.Length > 0)
             _update.Install(_update.Current.DownloadedFile);
     }

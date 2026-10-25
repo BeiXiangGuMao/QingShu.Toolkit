@@ -1,10 +1,10 @@
 using System;
 using Microsoft.UI;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
-using Windows.UI.Composition;
 using WinRT;
 using QingShu.Toolkit.Models;
 
@@ -55,7 +55,8 @@ public sealed class WindowBackdropService : IDisposable
             }
             if (DesktopAcrylicController.IsSupported())
             {
-                CreateAcrylic(window.ActualTheme == ElementTheme.Dark);
+                // WinUI 3 的 Window 无 ActualTheme（那是 FrameworkElement 属性），用应用级主题判定
+                CreateAcrylic(Application.Current.RequestedTheme == ApplicationTheme.Dark);
                 _acrylic!.AddSystemBackdropTarget(_target!);
                 _acrylic.SetSystemBackdropConfiguration(_config);
                 Kind = BackdropKind.Acrylic;
@@ -92,7 +93,7 @@ public sealed class WindowBackdropService : IDisposable
     public void UpdateTheme(ElementTheme theme)
     {
         if (_config != null)
-            _config.Theme = theme == ElementTheme.Dark ? ApplicationTheme.Dark : ApplicationTheme.Light;
+            _config.Theme = theme == ElementTheme.Dark ? SystemBackdropTheme.Dark : SystemBackdropTheme.Light;
         if (!_usingMica && Kind == BackdropKind.Acrylic && _acrylic != null)
             CreateAcrylic(theme == ElementTheme.Dark);
     }

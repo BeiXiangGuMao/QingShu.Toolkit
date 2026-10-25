@@ -181,17 +181,17 @@ public static partial class NetworkChecks
                 $"DNS: {(p.DnsServers.Count > 0 ? string.Join(", ", p.DnsServers) : "无")}"
             };
             if (string.IsNullOrEmpty(p.IpV4))
-                return CheckOutcome.Fail("未获取到 IPv4 地址", "网线/无线已连接但无 IP，通常是 DHCP 服务不可达，稍后会自动尝试续租修复。", canFix: true, details.ToArray());
+                return Task.FromResult(CheckOutcome.Fail("未获取到 IPv4 地址", "网线/无线已连接但无 IP，通常是 DHCP 服务不可达，稍后会自动尝试续租修复。", canFix: true, details.ToArray()));
 
             if (NetworkProbeHelper.IsApipa(p.IpV4))
-                return CheckOutcome.Fail($"获取到自动私有地址（APIPA {p.IpV4}），说明 DHCP 获取失败",
-                    "将自动尝试“释放并重新获取 IP”；若多次失败，请联系信息中心检查校园网 DHCP 服务。", canFix: true, details.ToArray());
+                return Task.FromResult(CheckOutcome.Fail($"获取到自动私有地址（APIPA {p.IpV4}），说明 DHCP 获取失败",
+                    "将自动尝试“释放并重新获取 IP”；若多次失败，请联系信息中心检查校园网 DHCP 服务。", canFix: true, details.ToArray()));
 
             if (string.IsNullOrEmpty(p.Gateway))
-                return CheckOutcome.Fail("已获取 IP 但未配置默认网关", "无法访问本网段以外的资源；将尝试续租修复，静态网络请核对网关配置。", canFix: true, details.ToArray());
+                return Task.FromResult(CheckOutcome.Fail("已获取 IP 但未配置默认网关", "无法访问本网段以外的资源；将尝试续租修复，静态网络请核对网关配置。", canFix: true, details.ToArray()));
 
             if (p.DnsServers.Count == 0)
-                return CheckOutcome.Fail("未配置 DNS 服务器", "无法解析任何域名；将尝试自动修复，也可在设置中配置首选 DNS。", canFix: true, details.ToArray());
+                return Task.FromResult(CheckOutcome.Fail("未配置 DNS 服务器", "无法解析任何域名；将尝试自动修复，也可在设置中配置首选 DNS。", canFix: true, details.ToArray()));
 
             ctx.SetShared("ip.ok", true);
             return Task.FromResult(CheckOutcome.Pass($"IP 配置正常（{p.IpV4}，{(p.IsDhcpEnabled ? "DHCP" : "静态")}）", details.ToArray()));

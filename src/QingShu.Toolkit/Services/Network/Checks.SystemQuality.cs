@@ -282,7 +282,8 @@ public static partial class NetworkChecks
                 try
                 {
                     using var ping = new Ping();
-                    var reply = await ping.SendPingAsync(host, 1200, p, new PingOptions(64, true)).ConfigureAwait(false);
+                    // SendPingAsync 的 buffer 参数是 byte[]（载荷），int 大小需转换
+                    var reply = await ping.SendPingAsync(host, 1200, new byte[p], new PingOptions(64, true)).ConfigureAwait(false);
                     if (reply.Status == IPStatus.Success) return (p, p + 28);
                 }
                 catch { }

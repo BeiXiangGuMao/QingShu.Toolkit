@@ -99,7 +99,8 @@ public sealed class PdfReportService : IPdfReportService
                 col.Item().AlignRight().Text($"生成时间 {data.Meta.GeneratedAt:yyyy-MM-dd HH:mm}").FontSize(8).FontColor("#94A3B8");
             });
         });
-        c.PaddingTop(6).LineHorizontal(1).LineColor("#E2E8F0");
+        // 分隔线（LineHorizontal 返回 void，用 1pt 高色带等效实现）
+        c.PaddingTop(6).Height(1, Unit.Point).Background("#E2E8F0");
     }
 
     // ================= 正文 =================
@@ -291,7 +292,7 @@ public sealed class PdfReportService : IPdfReportService
         _ => "#64748B"
     };
 
-    private static void HeadCell(TableDescriptor t, string text)
+    private static void HeadCell(TableCellDescriptor t, string text)
     {
         t.Cell().Background("#2563EB").PaddingVertical(4).PaddingHorizontal(5)
             .Text(text).FontSize(8.5f).SemiBold().FontColor("#FFFFFF");
@@ -375,7 +376,7 @@ public sealed class PdfReportService : IPdfReportService
             {
                 cd.ConstantColumn(24);
                 cd.ConstantColumn(46);
-                cd.RelativeColumn(2.4);
+                cd.RelativeColumn(2.4f);
                 cd.RelativeColumn(3);
             });
             table.Header(h => { HeadCell(h, "序"); HeadCell(h, "嫌疑度"); HeadCell(h, "嫌疑原因"); HeadCell(h, "依据与处置"); });
@@ -491,7 +492,7 @@ public sealed class PdfReportService : IPdfReportService
                 c2.Item().PaddingTop(14).Text("日期：______ 年 ____ 月 ____ 日").FontSize(9.5f);
             });
         });
-        col.Item().PaddingTop(10).LineHorizontal(0.5f).LineColor("#E2E8F0");
+        col.Item().PaddingTop(10).Height(0.5f, Unit.Point).Background("#E2E8F0");
         col.Item().PaddingTop(6).Text("本报告由青枢工具箱在本机自动生成，全部诊断数据仅在本地采集与留存，不包含任何云端上传行为。诊断时间戳以本机系统时钟为准。")
             .FontSize(8).FontColor("#94A3B8").LineHeight(1.5f);
     }

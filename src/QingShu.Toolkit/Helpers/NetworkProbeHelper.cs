@@ -72,7 +72,8 @@ public static class NetworkProbeHelper
             {
                 using var ping = new Ping();
                 var opts = new PingOptions(64, dontFragment);
-                var reply = await ping.SendPingAsync(host, timeoutMs, size, opts).ConfigureAwait(false);
+                // SendPingAsync 的 buffer 参数是 byte[]（载荷），int 大小需转换
+                var reply = await ping.SendPingAsync(host, timeoutMs, new byte[size], opts).ConfigureAwait(false);
                 sent++;
                 if (reply.Status == IPStatus.Success)
                 {
