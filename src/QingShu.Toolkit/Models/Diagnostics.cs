@@ -22,7 +22,8 @@ public enum CheckCategory
     SystemStack,    // 系统网络栈
     Clock,          // 系统时钟
     ProxyVpn,       // 代理与 VPN
-    Quality         // 连接质量
+    Quality,        // 连接质量
+    Throughput      // 测速与吞吐（低速专项）
 }
 
 public static class CheckCategoryText
@@ -41,6 +42,7 @@ public static class CheckCategoryText
         CheckCategory.Clock => "系统时钟",
         CheckCategory.ProxyVpn => "代理与 VPN",
         CheckCategory.Quality => "连接质量",
+        CheckCategory.Throughput => "测速吞吐",
         _ => "其他"
     };
 }
@@ -139,7 +141,7 @@ public sealed class CheckOutcome
     }
 }
 
-public enum RunMode { Full, Quick }
+public enum RunMode { Full, Quick, Speed }
 
 /// <summary>修复动作状态。</summary>
 public enum RepairStatus { Pending, Running, Ok, Fail, Skipped }
@@ -187,6 +189,8 @@ public sealed class DiagnosticSessionReport
     public RunMode Mode { get; set; }
     public List<CheckItem> Results { get; set; } = new();
     public List<string> RepairLog { get; set; } = new();
+    /// <summary>低速专项：嫌疑原因分析（仅 RunMode.Speed 产出）。</summary>
+    public List<SlowCause> SlowCauses { get; set; } = new();
 
     public int PassCount => CountOf(CheckStatus.Pass) + CountOf(CheckStatus.Fixed);
     public int WarnCount => CountOf(CheckStatus.Warning);
@@ -194,5 +198,11 @@ public sealed class DiagnosticSessionReport
     public int SkipCount => CountOf(CheckStatus.Skipped);
     public int CountOf(CheckStatus s) { int n = 0; foreach (var r in Results) if (r.Status == s) n++; return n; }
 
-    public string ModeText => Mode == RunMode.Full ? "全面诊断" : "快速体检";
+    public string ModeText => Mode switch
+    {
+        RunMode.Full => "全面诊断",
+        RunMode.Quick => "快速体检",
+        RunMode.Speed => "网速与低速分析",
+        _ => ""
+    };
 }

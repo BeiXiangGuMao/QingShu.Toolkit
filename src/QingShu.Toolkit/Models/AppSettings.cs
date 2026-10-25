@@ -31,6 +31,14 @@ public sealed class AppSettings
     public int LatencyWarnMs { get; set; } = 80;
     /// <summary>延迟不合格阈值（ms）</summary>
     public int LatencyFailMs { get; set; } = 300;
+    /// <summary>测速每端点限时（秒，3-30）</summary>
+    public int SpeedTestSeconds { get; set; } = 8;
+    /// <summary>测速并发连接数（1-8）</summary>
+    public int SpeedTestConnections { get; set; } = 4;
+    /// <summary>测速总下载上限（MB，防止超大带宽长时间跑满）</summary>
+    public int SpeedTestCapMb { get; set; } = 256;
+    /// <summary>自定义测速 URL（优先于内置节点；留空使用内置候选）</summary>
+    public string SpeedTestUrl { get; set; } = "";
 
     // ---------- 磁盘清理 ----------
     /// <summary>微信/QQ 久远文件阈值（天）</summary>

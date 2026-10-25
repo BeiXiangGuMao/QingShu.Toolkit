@@ -9,6 +9,8 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -21,14 +23,15 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="网络诊断" Style="{StaticResource PageTitleTextBlock}" />
-                <TextBlock Text="傻瓜模式：点一下就开始。覆盖物理链路、硬件驱动、IP、网关路由、DNS、城域网认证、内网、外网、系统栈、连接质量全链路；发现问题可一键修复，修复不了可导出 PDF 报告。"
+                <TextBlock Text="傻瓜模式：点一下就开始。全面诊断覆盖物理链路、认证、内外网与系统栈全链路；网速模式专门分析“变慢”的原因并给出可执行的提速修复；发现问题可一键修复，修复不了可导出 PDF 报告。"
                            Style="{StaticResource PageSubtitleTextBlock}" MaxWidth="760" HorizontalAlignment="Left" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Top">
                 <ComboBox x:Name="ModeCombo" SelectedIndex="{x:Bind Vm.ModeIndex, Mode=TwoWay}"
-                          MinWidth="150" VerticalAlignment="Center">
+                          MinWidth="170" VerticalAlignment="Center">
                     <ComboBoxItem Content="全面诊断（约2-4分钟）" />
                     <ComboBoxItem Content="快速体检（约30-60秒）" />
+                    <ComboBoxItem Content="网速与低速分析（约1-2分钟）" />
                 </ComboBox>
                 <Button x:Name="BtnStart" Style="{StaticResource AccentButtonStyle}" Padding="22,8"
                         Command="{x:Bind Vm.StartCommand}">
@@ -72,8 +75,71 @@
             </StackPanel>
         </Border>
 
+        <!-- 实时测速卡（仅网速与低速分析模式显示） -->
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="16,12,16,12"
+                Visibility="{x:Bind Vm.HasSpeedCard, Mode=OneWay}">
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock Text="{x:Bind Vm.SpeedMbpsText, Mode=OneWay}" FontSize="34" FontWeight="Bold"
+                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="Mbps" FontSize="13" Foreground="{ThemeResource TextSecondaryBrush}"
+                               VerticalAlignment="Bottom" Margin="0,0,0,9" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                    <TextBlock Text="{x:Bind Vm.SpeedPhaseText, Mode=OneWay}" Style="{StaticResource BodyTextBlock}" FontWeight="SemiBold" />
+                    <TextBlock Text="{x:Bind Vm.SpeedSubText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="下行带宽实测：多节点多连接限时下载；全程只读、不落盘、不上传。"
+                               Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 低速原因分析卡 -->
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="16,12,16,12"
+                Visibility="{x:Bind Vm.HasSlowCauses, Mode=OneWay}">
+            <StackPanel Spacing="6">
+                <TextBlock Text="低速原因分析（按嫌疑度排序）" Style="{StaticResource SectionTitleTextBlock}" />
+                <TextBlock Text="{x:Bind Vm.SlowConclusionText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
+                <ItemsControl ItemsSource="{x:Bind Vm.SlowCauses, Mode=OneWay}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="m:SlowCause">
+                            <Border Background="{ThemeResource HoverFillBrush}" CornerRadius="6" Padding="10,6" Margin="0,2">
+                                <StackPanel Spacing="2">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Border Background="{ThemeResource ErrorChipFillBrush}" CornerRadius="99" Padding="8,1"
+                                                Visibility="{x:Bind IsHigh, Mode=OneWay}">
+                                            <TextBlock Text="高嫌疑" Foreground="{ThemeResource ErrorTextBrush}" FontSize="10.5" />
+                                        </Border>
+                                        <Border Background="{ThemeResource WarningChipFillBrush}" CornerRadius="99" Padding="8,1"
+                                                Visibility="{x:Bind IsMid, Mode=OneWay}">
+                                            <TextBlock Text="可能" Foreground="{ThemeResource WarningTextBrush}" FontSize="10.5" />
+                                        </Border>
+                                        <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="99" Padding="8,1"
+                                                Visibility="{x:Bind IsLow, Mode=OneWay}">
+                                            <TextBlock Text="轻微" Foreground="{ThemeResource InfoTextBrush}" FontSize="10.5" />
+                                        </Border>
+                                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlock}" FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind EvidenceText}" Style="{StaticResource CaptionTextBlock}"
+                                               TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                    <TextBlock Text="{x:Bind ActionText}" Style="{StaticResource CaptionTextBlock}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
         <!-- 检查结果列表 -->
-        <ListView Grid.Row="2" ItemsSource="{x:Bind Vm.Items, Mode=OneWay}"
+        <ListView Grid.Row="4" ItemsSource="{x:Bind Vm.Items, Mode=OneWay}"
                   SelectionMode="None" IsItemClickEnabled="False">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -162,7 +228,7 @@
         </ListView>
 
         <!-- 修复 + 导出 -->
-        <Grid Grid.Row="3" ColumnSpacing="12" Height="236">
+        <Grid Grid.Row="5" ColumnSpacing="12" Height="236">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1.2*" />
                 <ColumnDefinition Width="*" />

@@ -24,7 +24,9 @@ public interface INetworkRepairService
 /// <summary>
 /// 一键修复服务（傻瓜模式）。
 /// 安全边界：不修改系统服务、不改虚拟内存、不导入注册表文件、不精简系统、不动 Defender；
-/// 涉及网络配置的操作仅限：DNS 缓存 / ARP / DHCP 续租 / 网卡启停 / Winsock 重置 / 时间同步 / 代理复位。
+/// 涉及网络配置的操作仅限：DNS 缓存 / ARP / DHCP 续租 / 网卡启停 / Winsock 重置 / 时间同步 / 代理复位，
+/// 以及低速专项的单点可逆命令：TCP 自调谐（netsh）/ 传递优化单值（reg add 单值，可删除还原）/
+/// 网卡节能托管（PowerShell 单项）/ 网卡重协商（netsh）。全部动作逐条说明、逐项可回滚。
 /// </summary>
 public sealed class NetworkRepairService : INetworkRepairService
 {
@@ -98,6 +100,29 @@ public sealed class NetworkRepairService : INetworkRepairService
             plan.Add(new RepairAction("open_portal", "打开城域网认证页面",
                 "调起默认浏览器打开检测到的认证门户，重新登录校园网账号即可恢复。",
                 false, false, new[] { "portal.detect", "portal.expiry" }));
+
+        // ===== 提速类修复（低速专项；均为单点命令、可逆，遵循安全边界：不导入注册表文件、不改系统服务） =====
+        bool SharedTrue(string k) => ctx?.SharedBool(k) == true;
+
+        if (Has("speed.tcp_tuning") && SharedTrue("tcp.autotuning.abnormal"))
+            plan.Add(new RepairAction("tcp_autotuning", "恢复 TCP 接收窗口自动调节",
+                "netsh 单点设置：autotuninglevel=normal 并启用 RSS。被“网络优化软件”改小/关闭的接收窗口是低速常见原因，恢复后无需重启。", true, false,
+                new[] { "speed.tcp_tuning" }));
+
+        if (Has("speed.delivopt") && SharedTrue("delivopt.p2p"))
+            plan.Add(new RepairAction("disable_delivopt", "关闭 Windows 传递优化 P2P 分发",
+                "写入单个注册表值 DODownloadMode=100（旁路模式，非导入 .reg 文件），阻止系统向局域网/互联网上传更新分片占满上行。还原：删除该值即恢复默认。", true, false,
+                new[] { "speed.delivopt" }));
+
+        if (Has("speed.nic_rate") && SharedTrue("nic.powersave"))
+            plan.Add(new RepairAction("nic_powersave_off", "关闭网卡节能托管",
+                "禁止系统为省电降低网卡性能（AllowComputerToTurnOffDevice=Disabled），避免课中网卡休眠导致的瞬时卡顿。", true, false,
+                new[] { "speed.nic_rate" }));
+
+        if (Has("speed.nic_rate") && SharedTrue("nic.rate.low"))
+            plan.Add(new RepairAction("adapter_reset", $"网卡重协商（{(adapterName.Length > 0 ? adapterName : "主网卡")}）",
+                "禁用并重新启用网卡，重新协商速率与双工；会短暂断网数秒，默认不勾选。", true, true,
+                new[] { "speed.nic_rate" }));
 
         return plan;
     }
@@ -246,6 +271,24 @@ public sealed class NetworkRepairService : INetworkRepairService
                     {
                         sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1");
                         sb.AppendLine($"netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    break;
+                case "tcp_autotuning":
+                    sb.AppendLine("netsh int tcp set global autotuninglevel=normal >nul 2>&1");
+                    sb.AppendLine("netsh int tcp set global rss=enabled >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    break;
+                case "disable_delivopt":
+                    sb.AppendLine("reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization\" /v DODownloadMode /t REG_DWORD /d 100 /f >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    break;
+                case "nic_powersave_off":
+                    sb.AppendLine("powershell -NoProfile -Command \"Get-NetAdapterPowerManagement | Where-Object {$_.AllowComputerToTurnOffDevice -eq 'Enabled'} | Set-NetAdapterPowerManagement -AllowComputerToTurnOffDevice Disabled\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    break;
+                case "adapter_reset":
+                    if (adapterName.Length > 0)
+                    {
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" disable >nul 2>&1");
+                        sb.AppendLine("timeout /t 3 /nobreak >nul 2>&1");
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     }
                     break;
                 default:

@@ -51,6 +51,8 @@ public sealed class ReportMeta
     public string NicModel { get; set; } = "";
     public string IpV4 { get; set; } = "";
     public string MacAddress { get; set; } = "";
+    /// <summary>链路协商速率描述（低速专项填写）</summary>
+    public string LinkSpeedText { get; set; } = "";
     public DateTime GeneratedAt { get; set; }
     public DateTime StartedAt { get; set; }
     public DateTime FinishedAt { get; set; }
@@ -66,6 +68,10 @@ public sealed class NetworkReportData
     public List<RepairAction> Repairs { get; set; } = new();
     /// <summary>分优先级建议（1=立即处理 2=今日处理 3=持续观察）</summary>
     public List<(int Priority, string Text)> Recommendations { get; set; } = new();
+    /// <summary>下载吞吐实测（低速专项，可能为 null）</summary>
+    public SpeedTestResult? SpeedTest { get; set; }
+    /// <summary>低速嫌疑原因分析（低速专项）</summary>
+    public List<SlowCause> SlowCauses { get; set; } = new();
 }
 
 /// <summary>自动更新信息（GitHub Releases）。</summary>

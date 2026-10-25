@@ -73,6 +73,7 @@ dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 /p:PublishProfile=
 | QuestPDF 版本冲突 | 项目统一引用同一版本；删除 bin/obj 后重新还原 |
 | Win10 目标机提示缺运行时 | 使用自包含发布（本文方式 A 默认即自包含） |
 | 中控/杀软误报 | 将发布目录加入白名单（工具未做任何注入，误报可申诉） |
+| 网速模式显示“所有测速节点均不可达” | 校园网白名单拦截属正常现象：低速判断自动回退到分段延迟画像与链路协商；可在 `config.json` 填 `SpeedTestUrl` 指向校内可达的大文件地址 |
 
 ## 七、版本与更新
 

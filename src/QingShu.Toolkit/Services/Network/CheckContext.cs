@@ -21,6 +21,11 @@ public sealed class CheckContext
     public List<AdapterSnapshot> Adapters { get; set; } = new();
     public WifiSnapshot? Wifi { get; set; }
 
+    /// <summary>低速专项：测速实时进度上报（由页面 VM 订阅）。</summary>
+    public IProgress<SpeedProgress>? SpeedProgress { get; set; }
+    /// <summary>低速专项：下载吞吐实测结果（speed.download 写入）。</summary>
+    public SpeedTestResult? SpeedResult { get; set; }
+
     public int PingCount => Math.Clamp(Settings.PingCount, 1, 10);
     public int TimeoutMs => Math.Clamp(Settings.PingTimeoutMs, 500, 8000);
 

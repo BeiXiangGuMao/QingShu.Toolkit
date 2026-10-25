@@ -31,9 +31,11 @@ public partial class NetworkDiagViewModel : ObservableObject
 
     public ObservableCollection<CheckItem> Items { get; } = new();
     public ObservableCollection<RepairAction> RepairActions { get; } = new();
+    /// <summary>低速专项：嫌疑原因清单（按嫌疑度降序）。</summary>
+    public ObservableCollection<SlowCause> SlowCauses { get; } = new();
 
     [ObservableProperty] private bool _isRunning;
-    [ObservableProperty] private int _modeIndex; // 0=全面诊断 1=快速体检
+    [ObservableProperty] private int _modeIndex; // 0=全面诊断 1=快速体检 2=网速与低速分析
     [ObservableProperty] private double _progressValue;
     [ObservableProperty] private string _progressText = "";
     [ObservableProperty] private int _passCount;
@@ -47,6 +49,12 @@ public partial class NetworkDiagViewModel : ObservableObject
     [ObservableProperty] private string _lastReportPath = "";
     [ObservableProperty] private bool _reportReady;
     [ObservableProperty] private string _sessionText = "";
+    // ---- 低速专项实时测速（约 400ms 一拍） ----
+    [ObservableProperty] private string _speedPhaseText = "尚未测速";
+    [ObservableProperty] private string _speedMbpsText = "—";
+    [ObservableProperty] private string _speedSubText = "选择「网速与低速分析」模式后点击开始";
+    [ObservableProperty] private bool _hasSlowCauses;
+    [ObservableProperty] private string _slowConclusionText = "";
 
     public string LogLocationText { get; }
 
@@ -59,6 +67,10 @@ public partial class NetworkDiagViewModel : ObservableObject
     public double ProgressMax => Math.Max(1, Items.Count);
     public bool SessionTextVis => !string.IsNullOrEmpty(SessionText);
     public bool CanRepair => RepairActions.Any(a => a.IsSelected) && !IsRepairing;
+    /// <summary>测速卡仅在网速与低速分析模式显示。</summary>
+    public bool HasSpeedCard => ModeIndex == 2;
+
+    partial void OnModeIndexChanged(int value) => OnPropertyChanged(nameof(HasSpeedCard));
 
     partial void OnPassCountChanged(int value) => OnPropertyChanged(nameof(PassCountText));
     partial void OnWarnCountChanged(int value) => OnPropertyChanged(nameof(WarnCountText));
@@ -91,9 +103,19 @@ public partial class NetworkDiagViewModel : ObservableObject
         RepairActions.Clear();
         RepairHint = "";
         Items.Clear();
+        SlowCauses.Clear();
+        HasSlowCauses = false;
+        SlowConclusionText = "";
         ProgressValue = 0;
 
-        var mode = ModeIndex == 0 ? RunMode.Full : RunMode.Quick;
+        var mode = ModeIndex switch { 0 => RunMode.Full, 1 => RunMode.Quick, _ => RunMode.Speed };
+        if (mode == RunMode.Speed)
+        {
+            SpeedPhaseText = "准备中…";
+            SpeedMbpsText = "—";
+            SpeedSubText = "探测测速节点中，全程只读下载、不落盘、不上传";
+        }
+
         var plan = _diag.CreatePlan(mode);
         foreach (var item in plan) Items.Add(item);
 
@@ -108,22 +130,25 @@ public partial class NetworkDiagViewModel : ObservableObject
             }
             Recount();
         });
+        var speedProgress = new Progress<SpeedProgress>(OnSpeedTick);
 
         try
         {
-            _lastReport = await _diag.ExecuteAsync(plan, mode, progress, _cts.Token).ConfigureAwait(true);
+            _lastReport = await _diag.ExecuteAsync(plan, mode, progress, _cts.Token, speedProgress).ConfigureAwait(true);
             _lastContext = _diag.LastContext;
             HasRun = true;
             Recount();
             ProgressText = $"诊断完成：通过 {PassCount} · 警告 {WarnCount} · 未通过 {FailCount}" +
                 (FixedCount > 0 ? $" · 已修复 {FixedCount}" : "");
             SessionText = $"会话日志：{_lastReport.StartedAt:yyyy-MM-dd HH:mm:ss} · {_lastReport.ModeText}";
+            if (mode == RunMode.Speed) FillSpeedResult();
             BuildRepairPlan();
         }
         catch (OperationCanceledException)
         {
             ProgressText = "诊断已取消。";
             Recount();
+            if (mode == RunMode.Speed) SpeedPhaseText = "已取消";
         }
         catch (Exception ex)
         {
@@ -136,6 +161,35 @@ public partial class NetworkDiagViewModel : ObservableObject
             _cts?.Dispose();
             _cts = null;
         }
+    }
+
+    private void OnSpeedTick(SpeedProgress p)
+    {
+        SpeedPhaseText = string.IsNullOrEmpty(p.Phase) ? SpeedPhaseText : p.Phase;
+        SpeedMbpsText = p.AvgMbps <= 0 ? "…" : p.AvgMbps.ToString("0.#");
+        SpeedSubText = $"瞬时 {p.InstantMbps:0.#} Mbps · 已下载 {FormatHelper.Bytes(p.BytesRead)} · {p.Connections} 连接";
+    }
+
+    private void FillSpeedResult()
+    {
+        var sp = _lastContext?.SpeedResult;
+        if (sp is { Success: true })
+        {
+            SpeedMbpsText = sp.MbpsAvg.ToString("0.#");
+            SpeedPhaseText = sp.ExperienceBand;
+            SpeedSubText = $"实测 {sp.SpeedText}（峰值 {sp.PeakText}）· 链路 {sp.LinkText} · 实测效率 {sp.EfficiencyText} · 节点 {sp.EndpointLabel}";
+        }
+        else
+        {
+            SpeedMbpsText = "—";
+            SpeedPhaseText = "未测得带宽";
+            SpeedSubText = string.IsNullOrEmpty(sp?.Error) ? "下载测速未执行或被取消" : sp!.Error;
+        }
+
+        foreach (var c in _lastReport?.SlowCauses ?? Enumerable.Empty<SlowCause>())
+            SlowCauses.Add(c);
+        HasSlowCauses = SlowCauses.Count > 0;
+        SlowConclusionText = SlowSpeedAnalyzer.Conclusion(SlowCauses.ToList(), sp);
     }
 
     [RelayCommand]
@@ -198,6 +252,7 @@ public partial class NetworkDiagViewModel : ObservableObject
     {
         if (_lastReport == null) throw new InvalidOperationException("尚未执行诊断");
         var facts = await _probe.EnsureLoadedAsync().ConfigureAwait(true);
+        var speed = _lastContext?.SpeedResult;
         var meta = new ReportMeta
         {
             School = school,
@@ -218,7 +273,10 @@ public partial class NetworkDiagViewModel : ObservableObject
             StartedAt = _lastReport.StartedAt,
             FinishedAt = _lastReport.FinishedAt,
             ToolVersion = AppVersion.Text,
-            ModeText = _lastReport.ModeText
+            ModeText = _lastReport.ModeText,
+            LinkSpeedText = speed is { Success: true, LinkMbps: > 0 }
+                ? $"{(_lastContext?.Primary?.IsWireless == true ? "无线" : "有线")} {speed.LinkText}"
+                : ""
         };
 
         var data = new NetworkReportData
@@ -226,7 +284,9 @@ public partial class NetworkDiagViewModel : ObservableObject
             Meta = meta,
             Results = _lastReport.Results.ToList(),
             Repairs = RepairActions.ToList(),
-            Recommendations = BuildRecommendations()
+            Recommendations = BuildRecommendations(),
+            SpeedTest = speed,
+            SlowCauses = _lastReport.SlowCauses
         };
         var path = await _pdf.GenerateAsync(data).ConfigureAwait(true);
         LastReportPath = path;
@@ -248,6 +308,8 @@ public partial class NetworkDiagViewModel : ObservableObject
             list.Add((1, $"【{f.Name}】{f.Suggestion}"));
         foreach (var w in Items.Where(x => x.Status == CheckStatus.Warning))
             list.Add((2, $"【{w.Name}】{w.Suggestion}"));
+        if (_lastReport.SlowCauses.Count > 0)
+            list.Add((2, $"低速首要嫌疑：{_lastReport.SlowCauses[0].Title}——按“低速原因分析”清单逐项处置后复测对比。"));
         if (FixedCount > 0)
             list.Add((2, "已执行自动修复的项目建议在课后再次运行“快速体检”复核修复效果。"));
         list.Add((3, "建议每周运行一次全面诊断并留存报告，形成教室网络健康基线，便于故障回溯。"));

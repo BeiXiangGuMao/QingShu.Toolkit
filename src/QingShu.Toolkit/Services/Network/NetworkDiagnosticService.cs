@@ -14,11 +14,12 @@ public interface INetworkDiagnosticService
     /// <summary>生成一次运行的检查计划（全新 CheckItem 实例）。</summary>
     List<CheckItem> CreatePlan(RunMode mode);
     /// <summary>执行计划：逐项更新 CheckItem 状态（ObservableObject，UI 自动刷新），并写入会话日志。</summary>
-    Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct);
+    Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
+        IProgress<SpeedProgress>? speedProgress = null);
     CheckContext? LastContext { get; }
 }
 
-/// <summary>诊断编排器：按“物理链路 → 硬件 → IP → 网关 → DNS → 互联网 → 内网 → 认证 → 时钟 → 代理 → 系统栈 → 质量”分层执行。</summary>
+/// <summary>诊断编排器：按“物理链路 → 硬件 → IP → 网关 → DNS → 互联网 → 内网 → 认证 → 时钟 → 代理 → 系统栈 → 质量 → 测速吞吐”分层执行。</summary>
 public sealed class NetworkDiagnosticService : INetworkDiagnosticService
 {
     private readonly ISettingsService _settings;
@@ -54,7 +55,27 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         new NetworkChecks.FirewallCheck(),
         new NetworkChecks.WinsockCheck(),
         new NetworkChecks.LatencyQualityCheck(),
-        new NetworkChecks.MtuCheck()
+        new NetworkChecks.MtuCheck(),
+        new NetworkChecks.NicRateCheck(),
+        new NetworkChecks.WifiPhyCheck(),
+        new NetworkChecks.DnsPerfCheck(),
+        new NetworkChecks.PathProfileCheck(),
+        new NetworkChecks.DownloadSpeedCheck(),
+        new NetworkChecks.BackgroundUsageCheck(),
+        new NetworkChecks.TcpTuningCheck(),
+        new NetworkChecks.DelivOptCheck()
+    };
+
+    /// <summary>低速专项计划：8 项专项检查 + 与低速强相关的既有检查（避免重复实现，复用既有证据）。</summary>
+    private static readonly string[] SpeedPlanIds =
+    {
+        "speed.nic_rate", "speed.wifi_phy", "speed.dns_perf", "speed.path_profile",
+        "speed.download", "speed.background", "speed.tcp_tuning", "speed.delivopt",
+        "physical.link", "wifi.signal", "gateway.reachable",
+        "dns.config", "dns.resolve", "dns.servers",
+        "proxy.system", "proxy.winhttp", "vpn.adapters",
+        "quality.latency", "quality.mtu",
+        "internet.http", "internet.https"
     };
 
     private static readonly ICheck[] OrderedChecks =
@@ -68,11 +89,18 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
 
     public List<CheckItem> CreatePlan(RunMode mode)
     {
-        var src = mode == RunMode.Full ? OrderedChecks : OrderedChecks.Where(c => c.InQuickMode).ToArray();
+        var src = mode switch
+        {
+            RunMode.Full => OrderedChecks,
+            RunMode.Quick => OrderedChecks.Where(c => c.InQuickMode),
+            RunMode.Speed => OrderedChecks.Where(c => SpeedPlanIds.Contains(c.Id)),
+            _ => OrderedChecks
+        };
         return src.Select(c => new CheckItem(c.Id, c.Name, c.Category)).ToList();
     }
 
-    public async Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct)
+    public async Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
+        IProgress<SpeedProgress>? speedProgress = null)
     {
         var session = _log.BeginDiagSession();
         var report = new DiagnosticSessionReport { StartedAt = DateTime.Now, Mode = mode };
@@ -88,11 +116,12 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
             Ct = ct,
             Adapters = adapters,
             Primary = primary,
-            Wifi = wifi
+            Wifi = wifi,
+            SpeedProgress = speedProgress
         };
         LastContext = ctx;
 
-        session.Write(LogLevel.Info, "session", $"开始诊断：{(mode == RunMode.Full ? "全面诊断" : "快速体检")}，共 {plan.Count} 项", new
+        session.Write(LogLevel.Info, "session", $"开始诊断：{report.ModeText}，共 {plan.Count} 项", new
         {
             host = Environment.MachineName,
             adapter = primary?.Name,
@@ -157,6 +186,23 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         }
 
         report.FinishedAt = DateTime.Now;
+
+        // 低速专项：归并证据 → 嫌疑原因清单
+        if (mode == RunMode.Speed && !plan.All(p => p.Status == CheckStatus.Skipped))
+        {
+            try
+            {
+                report.SlowCauses = SlowSpeedAnalyzer.Analyze(ctx, report.Results, ctx.SpeedResult);
+                session.Write(LogLevel.Info, "slow",
+                    $"低速原因分析完成：识别 {report.SlowCauses.Count} 项嫌疑",
+                    report.SlowCauses.Select(c => $"[{c.Level}] {c.Title}").ToArray());
+            }
+            catch (Exception ex)
+            {
+                session.Write(LogLevel.Error, "slow", "低速原因分析异常", new { ex = ex.ToString() });
+            }
+        }
+
         session.Write(LogLevel.Info, "session",
             $"诊断完成：通过 {report.PassCount} / 警告 {report.WarnCount} / 未通过 {report.FailCount} / 跳过 {report.SkipCount}");
         return report;

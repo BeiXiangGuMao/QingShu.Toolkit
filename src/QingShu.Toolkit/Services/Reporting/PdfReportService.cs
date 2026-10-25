@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Models;
+using QingShu.Toolkit.Services.Network;
 
 namespace QingShu.Toolkit.Services.Reporting;
 
@@ -107,7 +109,9 @@ public sealed class PdfReportService : IPdfReportService
         {
             ComposeInfoSection(col, data);
             ComposeSummarySection(col, data);
+            ComposeSpeedSection(col, data);
             ComposeDetailSections(col, data);
+            ComposeSlowCausesSection(col, data);
             ComposeRepairSection(col, data);
             ComposeAdviceSection(col, data);
             ComposeSignSection(col, data);
@@ -156,6 +160,8 @@ public sealed class PdfReportService : IPdfReportService
         {
             t.Span("诊断模式：").FontColor("#64748B");
             t.Span($"{m.ModeText}    ").SemiBold();
+            if (!string.IsNullOrWhiteSpace(m.LinkSpeedText))
+                t.Span($"链路速率：{m.LinkSpeedText}    ").FontColor("#64748B");
             t.Span($"起止：{m.StartedAt:HH:mm:ss} — {m.FinishedAt:HH:mm:ss}").FontColor("#64748B");
         }).FontSize(9);
     }
@@ -296,6 +302,99 @@ public sealed class PdfReportService : IPdfReportService
         var d = t.Cell().Background(bg).BorderBottom(0.5f).BorderColor("#E2E8F0")
             .PaddingVertical(4).PaddingHorizontal(5).Text(text).FontSize(8.2f).FontColor(color);
         if (semiBold) d.SemiBold();
+    }
+
+    // ---------- 网速实测（低速专项） ----------
+    private static void ComposeSpeedSection(ColumnDescriptor col, NetworkReportData data)
+    {
+        var s = data.SpeedTest;
+        if (s == null) return;
+        SectionTitle(col, "网速实测（低速专项）");
+        if (!s.Success)
+        {
+            col.Item().PaddingTop(4).Text($"本次未测得有效吞吐数据（{s.Error}）。低速判断以分段延迟画像、链路协商与 DNS 耗时为准。")
+                .FontSize(9.5f).FontColor("#B45309");
+            return;
+        }
+        (string, string)[] left =
+        {
+            ("代表带宽", s.SpeedText),
+            ("峰值瞬时", s.PeakText),
+            ("体验档位", s.ExperienceBand),
+            ("测速节点", s.EndpointLabel)
+        };
+        (string, string)[] right =
+        {
+            ("链路协商速率", s.LinkText),
+            ("实测效率", s.EfficiencyText),
+            ("总下载 / 用时", $"{FormatHelper.Bytes(s.BytesTotal)} / {s.DurationMs / 1000.0:0.#} s"),
+            ("测速方式", $"多连接限时下载（{s.Endpoints.Count} 个节点）")
+        };
+        col.Item().Row(row =>
+        {
+            row.RelativeItem().Element(cc => InfoTable(cc, left));
+            row.ConstantItem(10);
+            row.RelativeItem().Element(cc => InfoTable(cc, right));
+        });
+        if (s.Endpoints.Count > 0)
+        {
+            col.Item().PaddingTop(6).Table(table =>
+            {
+                table.ColumnsDefinition(cd =>
+                {
+                    cd.RelativeColumn(2);
+                    cd.ConstantColumn(70);
+                    cd.ConstantColumn(70);
+                    cd.RelativeColumn(2);
+                });
+                table.Header(h => { HeadCell(h, "测速节点"); HeadCell(h, "平均速率"); HeadCell(h, "峰值"); HeadCell(h, "下载量 / 结果"); });
+                foreach (var e in s.Endpoints)
+                {
+                    var bg = e.Success ? "#FFFFFF" : "#FFFBEB";
+                    BodyCell(table, e.Label, bg, "#1E293B");
+                    BodyCell(table, e.Success ? $"{e.MbpsAvg:0.#} Mbps" : "—", bg, "#047857", true);
+                    BodyCell(table, e.Success ? $"{e.MbpsPeak:0.#} Mbps" : "—", bg, "#334155");
+                    BodyCell(table, e.Success ? $"{FormatHelper.Bytes(e.BytesTotal)} / {e.DurationMs / 1000.0:0.#} s" : e.Error, bg, "#475569");
+                }
+            });
+        }
+        col.Item().PaddingTop(4).Text("注：下载实测受测速节点、出口拥塞与高峰时段影响，应与链路协商速率、分段延迟画像结合解读。")
+            .FontSize(8).FontColor("#94A3B8");
+    }
+
+    // ---------- 低速原因分析 ----------
+    private static void ComposeSlowCausesSection(ColumnDescriptor col, NetworkReportData data)
+    {
+        if (data.SlowCauses.Count == 0) return;
+        SectionTitle(col, "低速原因分析（按嫌疑度排序）");
+        col.Item().PaddingBottom(4).Text(SlowSpeedAnalyzer.Conclusion(data.SlowCauses, data.SpeedTest))
+            .FontSize(9.5f).LineHeight(1.6f);
+        col.Item().Table(table =>
+        {
+            table.ColumnsDefinition(cd =>
+            {
+                cd.ConstantColumn(24);
+                cd.ConstantColumn(46);
+                cd.RelativeColumn(2.4);
+                cd.RelativeColumn(3);
+            });
+            table.Header(h => { HeadCell(h, "序"); HeadCell(h, "嫌疑度"); HeadCell(h, "嫌疑原因"); HeadCell(h, "依据与处置"); });
+            int i = 1;
+            foreach (var cs in data.SlowCauses)
+            {
+                var (bg, tc) = cs.Level switch
+                {
+                    "高" => ("#FEF2F2", "#B91C1C"),
+                    "中" => ("#FFFBEB", "#B45309"),
+                    _ => ("#FFFFFF", "#475569")
+                };
+                BodyCell(table, i++.ToString(), bg, tc, true);
+                BodyCell(table, cs.Level, bg, tc, true);
+                BodyCell(table, cs.Title, bg, "#1E293B");
+                var merged = "依据：" + cs.EvidenceText + "\n处置：" + cs.ActionText;
+                BodyCell(table, merged, bg, "#334155");
+            }
+        });
     }
 
     // ---------- 修复记录 ----------
