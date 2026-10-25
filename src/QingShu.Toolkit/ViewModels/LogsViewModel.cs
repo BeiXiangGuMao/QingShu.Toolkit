@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QingShu.Toolkit.Helpers;
+using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Logging;
 
 namespace QingShu.Toolkit.ViewModels;
@@ -49,18 +50,12 @@ public partial class LogsViewModel : ObservableObject
     [ObservableProperty] private string _retentionText = "";
     [ObservableProperty] private string _rootText;
 
-    public LogsViewModel(ILogService log)
+    public LogsViewModel(ILogService log, ISettingsService settings)
     {
         _log = log;
         _rootText = log.Root;
-        _retentionText = $"日志保留策略：最近 {App.Services is null ? 90 : ServicesRetention()} 天（可在设置中调整）";
+        _retentionText = $"日志保留策略：最近 {settings.Current.LogRetentionDays} 天（可在设置中调整）";
         _ = RefreshDatesAsync();
-    }
-
-    private int ServicesRetention()
-    {
-        try { return ((ISettingsService)App.Services.GetService(typeof(ISettingsService))!).Current.LogRetentionDays; }
-        catch { return 90; }
     }
 
     [RelayCommand]

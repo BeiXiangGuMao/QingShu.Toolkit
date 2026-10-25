@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
+using QingShu.Toolkit.Models;
 
 namespace QingShu.Toolkit.Services;
 

@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using Windows.UI.Composition;
 using WinRT;
+using QingShu.Toolkit.Models;
 
 namespace QingShu.Toolkit.Services;
 

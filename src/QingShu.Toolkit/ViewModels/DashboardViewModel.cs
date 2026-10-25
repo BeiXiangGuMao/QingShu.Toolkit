@@ -7,13 +7,13 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services;
+using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Power;
 using QingShu.Toolkit.Services.Popup;
 using QingShu.Toolkit.Views;
@@ -24,6 +24,7 @@ namespace QingShu.Toolkit.ViewModels;
 public partial class DashboardViewModel : ObservableObject, IDisposable
 {
     private readonly IHardwareProbeService _probe;
+    private readonly ISettingsService _settings;
     private readonly IPowerService _power;
     private readonly IPopupBlockerService _popup;
     private readonly ILogService _log;
@@ -54,9 +55,10 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _lastCleanupText = "尚未执行过清理";
     [ObservableProperty] private string _lastDiagText = "尚未执行过诊断";
 
-    public DashboardViewModel(IHardwareProbeService probe, IPowerService power, IPopupBlockerService popup, ILogService log)
+    public DashboardViewModel(IHardwareProbeService probe, IPowerService power, IPopupBlockerService popup, ILogService log, ISettingsService settings)
     {
         _probe = probe;
+        _settings = settings;
         _power = power;
         _popup = popup;
         _log = log;
@@ -143,7 +145,7 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
     partial void OnPowerModeIndexChanged(int value)
     {
         var mode = value switch { 1 => "balanced", 2 => "performance", 3 => "eco", _ => "auto" };
-        if (mode != App.Services.GetRequiredService<ISettingsService>().Current.PowerMode)
+        if (mode != _settings.Current.PowerMode)
         {
             _power.SetMode(mode);
             PowerModeText = value switch { 1 => "手动·平衡", 2 => "手动·高性能", 3 => "手动·低功耗", _ => "自动切换" };

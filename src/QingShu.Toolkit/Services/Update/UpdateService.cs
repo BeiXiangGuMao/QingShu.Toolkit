@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services.Logging;
 
 namespace QingShu.Toolkit.Services.Update;

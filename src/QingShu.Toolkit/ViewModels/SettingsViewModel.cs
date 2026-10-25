@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QingShu.Toolkit.Services;
+using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Update;
 
 namespace QingShu.Toolkit.ViewModels;
