@@ -159,12 +159,14 @@ public sealed class PdfReportService : IPdfReportService
         });
         col.Item().PaddingTop(6).Text(t =>
         {
+            // Text(Action<TextDescriptor>) 重载返回 void，块级样式须经 DefaultTextStyle 设置（同页脚写法）
+            t.DefaultTextStyle(x => x.FontSize(9));
             t.Span("诊断模式：").FontColor("#64748B");
             t.Span($"{m.ModeText}    ").SemiBold();
             if (!string.IsNullOrWhiteSpace(m.LinkSpeedText))
                 t.Span($"链路速率：{m.LinkSpeedText}    ").FontColor("#64748B");
             t.Span($"起止：{m.StartedAt:HH:mm:ss} — {m.FinishedAt:HH:mm:ss}").FontColor("#64748B");
-        }).FontSize(9);
+        });
     }
 
     private static string Empty(string? s, string fallback) => string.IsNullOrWhiteSpace(s) ? fallback : s;

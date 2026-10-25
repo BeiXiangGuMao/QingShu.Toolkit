@@ -301,7 +301,7 @@ public static partial class NetworkChecks
                     var addrs = await Dns.GetHostAddressesAsync(host).ConfigureAwait(false);
                     details.Add($"{host} → {string.Join(", ", addrs.Select(a => a.ToString()).Take(2))}");
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     return CheckOutcome.Warn($"内网域名 {host} 无法解析", "内网 DNS 未能解析该地址：请确认域名与内网 DNS 配置；校外 DNS 服务器也可能无法解析内网域名。", details.ToArray());
                 }

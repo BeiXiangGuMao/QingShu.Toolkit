@@ -308,8 +308,9 @@ public partial class NetworkDiagViewModel : ObservableObject
             list.Add((1, $"【{f.Name}】{f.Suggestion}"));
         foreach (var w in Items.Where(x => x.Status == CheckStatus.Warning))
             list.Add((2, $"【{w.Name}】{w.Suggestion}"));
-        if (_lastReport.SlowCauses.Count > 0)
-            list.Add((2, $"低速首要嫌疑：{_lastReport.SlowCauses[0].Title}——按“低速原因分析”清单逐项处置后复测对比。"));
+        var causes = _lastReport?.SlowCauses; // 独立方法内空流分析不继承调用方的非空守卫，需自证空安全
+        if (causes is { Count: > 0 })
+            list.Add((2, $"低速首要嫌疑：{causes[0].Title}——按“低速原因分析”清单逐项处置后复测对比。"));
         if (FixedCount > 0)
             list.Add((2, "已执行自动修复的项目建议在课后再次运行“快速体检”复核修复效果。"));
         list.Add((3, "建议每周运行一次全面诊断并留存报告，形成教室网络健康基线，便于故障回溯。"));
