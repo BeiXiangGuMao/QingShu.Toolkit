@@ -51,7 +51,16 @@ public partial class ImFileVm : ObservableObject
     /// <summary>账号分组头行（不可勾选，仅展示该账号汇总）。</summary>
     public ImFileVm(string headerText)
     {
-        Item = new ImFileItem();
+        // 头行不展示文件字段（FileVis=false），仅因 required 成员而显式补齐空值
+        Item = new ImFileItem
+        {
+            From = "",
+            Account = "",
+            Kind = "",
+            Path = "",
+            SizeBytes = 0,
+            LastWrite = DateTime.MinValue
+        };
         IsHeader = true;
         HeaderText = headerText;
         _isSelected = false;
