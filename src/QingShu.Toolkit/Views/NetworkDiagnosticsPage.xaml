@@ -112,15 +112,15 @@
                                 <StackPanel Spacing="2">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Border Background="{ThemeResource ErrorChipFillBrush}" CornerRadius="99" Padding="8,1"
-                                                Visibility="{x:Bind IsHigh, Mode=OneWay}">
+                                                Visibility="{x:Bind IsHigh, Mode=OneTime}">
                                             <TextBlock Text="高嫌疑" Foreground="{ThemeResource ErrorTextBrush}" FontSize="10.5" />
                                         </Border>
                                         <Border Background="{ThemeResource WarningChipFillBrush}" CornerRadius="99" Padding="8,1"
-                                                Visibility="{x:Bind IsMid, Mode=OneWay}">
+                                                Visibility="{x:Bind IsMid, Mode=OneTime}">
                                             <TextBlock Text="可能" Foreground="{ThemeResource WarningTextBrush}" FontSize="10.5" />
                                         </Border>
                                         <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="99" Padding="8,1"
-                                                Visibility="{x:Bind IsLow, Mode=OneWay}">
+                                                Visibility="{x:Bind IsLow, Mode=OneTime}">
                                             <TextBlock Text="轻微" Foreground="{ThemeResource InfoTextBrush}" FontSize="10.5" />
                                         </Border>
                                         <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlock}" FontWeight="SemiBold"

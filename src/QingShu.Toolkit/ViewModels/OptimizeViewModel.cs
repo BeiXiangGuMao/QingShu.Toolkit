@@ -34,8 +34,14 @@ public partial class ProcessRowVm : ObservableObject
 
 public partial class WhitelistRowVm : ObservableObject
 {
-    public WhitelistRowVm(string name) => Name = name;
+    private readonly OptimizeViewModel _owner;
+
+    public WhitelistRowVm(string name, OptimizeViewModel owner) { Name = name; _owner = owner; }
+
     public string Name { get; }
+
+    /// <summary>行模板内经 x:Bind Owner.Xxx 触达页面级命令（x:DataType 模板内无法直接引用页面）。</summary>
+    public OptimizeViewModel Owner => _owner;
 }
 
 public partial class StartupRowVm
@@ -164,7 +170,7 @@ public partial class OptimizeViewModel : ObservableObject
     private void ReloadWhitelist()
     {
         Whitelist.Clear();
-        foreach (var name in _settings.Current.PopupWhitelist.OrderBy(x => x)) Whitelist.Add(new WhitelistRowVm(name));
+        foreach (var name in _settings.Current.PopupWhitelist.OrderBy(x => x)) Whitelist.Add(new WhitelistRowVm(name, this));
     }
 
     [RelayCommand]

@@ -137,7 +137,7 @@
                                         <TextBlock Text="{x:Bind Name}" FontSize="11.5"
                                                    Foreground="{ThemeResource TextPrimaryBrush}" VerticalAlignment="Center" />
                                         <Button Content="✕" Padding="2,0" Background="Transparent" BorderThickness="0"
-                                                FontSize="10" Command="{x:Bind Vm.RemoveWhitelistCommand}"
+                                                FontSize="10" Command="{x:Bind Owner.RemoveWhitelistCommand}"
                                                 CommandParameter="{x:Bind Name}" />
                                     </StackPanel>
                                 </Border>
