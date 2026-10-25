@@ -108,12 +108,14 @@ public sealed partial class MainWindow : Window
         {
             var dark = RootGrid.ActualTheme == ElementTheme.Dark;
             var tb = AppWindow.TitleBar;
-            tb.ButtonBackgroundColor = Colors.Transparent;
-            tb.ButtonInactiveBackgroundColor = Colors.Transparent;
-            tb.ButtonForegroundColor = dark ? Colors.White : Colors.Black;
+            // WinUI 3 投影不含 Windows.UI.Colors（其实现位于 Windows.UI.Xaml.dll，
+            // 被 WinUI 3 排除，裸用报 CS0103），统一经本地 FromHex 构造 Windows.UI.Color
+            tb.ButtonBackgroundColor = FromHex("#00000000");
+            tb.ButtonInactiveBackgroundColor = FromHex("#00000000");
+            tb.ButtonForegroundColor = dark ? FromHex("#FFFFFF") : FromHex("#000000");
             tb.ButtonHoverBackgroundColor = dark ? FromHex("#22FFFFFF") : FromHex("#140F172A");
             tb.ButtonPressedBackgroundColor = dark ? FromHex("#38FFFFFF") : FromHex("#290F172A");
-            tb.ButtonHoverForegroundColor = dark ? Colors.White : Colors.Black;
+            tb.ButtonHoverForegroundColor = dark ? FromHex("#FFFFFF") : FromHex("#000000");
             tb.ButtonInactiveForegroundColor = dark ? FromHex("#7F94A3B8") : FromHex("#7F64748B");
         }
         catch { }

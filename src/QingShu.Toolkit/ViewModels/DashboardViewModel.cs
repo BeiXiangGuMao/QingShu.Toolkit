@@ -145,7 +145,7 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
             diskPct = 100.0 * (c.TotalSize - c.AvailableFreeSpace) / c.TotalSize;
             diskText = $"C 盘剩余 {FormatHelper.Bytes(c.AvailableFreeSpace)} / 共 {FormatHelper.Bytes(c.TotalSize)}";
         }
-        return (cpu, cpuText, load, memText, total, diskOk, diskPct, diskText);
+        return (cpu, cpuText, load, memText, (long)total, diskOk, diskPct, diskText);
     }
 
     private void OnPowerChanged(PowerUpdate u) => UpdatePower(u.State, u.IsOnBattery, u.ModeText, u.Description);

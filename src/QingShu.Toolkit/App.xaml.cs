@@ -44,7 +44,10 @@ public partial class App : Application
         //   此处安装基于 DispatcherQueue 的同步上下文，使 ConfigureAwait(true) 恒定回 UI 线程。
         if (SynchronizationContext.Current is null)
             SynchronizationContext.SetSynchronizationContext(
-                new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+                // 全限定：Microsoft.UI.Dispatching 下存在 WinUI 3 平台同名类型，
+                // 裸名会触发 CS0104 歧义；此处明确使用 Helpers 内自研实现
+                new QingShu.Toolkit.Helpers.DispatcherQueueSynchronizationContext(
+                    DispatcherQueue.GetForCurrentThread()));
         UiDispatcher.Initialize(DispatcherQueue.GetForCurrentThread());
 
         var services = new ServiceCollection();
