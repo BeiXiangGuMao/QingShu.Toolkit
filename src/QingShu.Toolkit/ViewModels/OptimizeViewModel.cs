@@ -19,6 +19,8 @@ public partial class ProcessRowVm : ObservableObject
     public ProcessRowVm(string name, int pid, long ws, bool ecoApplied = false)
     {
         Name = name; Pid = pid; WorkingSet = ws; EcoApplied = ecoApplied;
+        Purpose = ProcessKnowledge.Describe(name);
+        IsSystem = ProcessKnowledge.IsSystemComponent(name);
     }
 
     public string Name { get; }
@@ -28,6 +30,10 @@ public partial class ProcessRowVm : ObservableObject
     public string WsText => FormatHelper.Bytes(WorkingSet);
     public string PidText => Pid.ToString();
     public bool EcoVis => EcoApplied;
+    /// <summary>进程作用说明（让用户一眼知道这是干什么的）。</summary>
+    public string Purpose { get; }
+    /// <summary>系统关键组件标记（整理/降频需谨慎）。</summary>
+    public bool IsSystem { get; }
 
     [ObservableProperty] private bool _isSelected;
 }
@@ -86,6 +92,8 @@ public partial class OptimizeViewModel : ObservableObject
         _popup.Blocked += c => PopupCountText = c.ToString();
         PopupCountText = popup.BlockedCount.ToString();
         ReloadWhitelist();
+        // 白名单可能从右侧状态栏对话框同步修改：设置变更时自动刷新，避免两处 UI 不一致
+        _settings.Changed += ReloadWhitelist;
         _ = RefreshMemoryAsync();
         _ = RefreshStartupAsync();
     }
@@ -180,9 +188,8 @@ public partial class OptimizeViewModel : ObservableObject
         if (string.IsNullOrEmpty(name)) return;
         if (_settings.Current.PopupWhitelist.Contains(name)) return;
         _settings.Current.PopupWhitelist.Add(name);
-        _ = _settings.SaveAsync();
         _newWhitelistName = "";
-        ReloadWhitelist();
+        _ = _settings.SaveAsync(); // 保存后的 Changed 事件会自动 ReloadWhitelist
     }
 
     [RelayCommand]
@@ -190,8 +197,7 @@ public partial class OptimizeViewModel : ObservableObject
     {
         if (param is not string name) return;
         _settings.Current.PopupWhitelist.Remove(name);
-        _ = _settings.SaveAsync();
-        ReloadWhitelist();
+        _ = _settings.SaveAsync(); // 保存后的 Changed 事件会自动 ReloadWhitelist
     }
 
     [RelayCommand]

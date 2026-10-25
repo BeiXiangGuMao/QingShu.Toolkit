@@ -17,6 +17,12 @@ public sealed class AppSettings
     // ---------- 网络诊断 ----------
     /// <summary>城域网认证门户地址（如 http://10.x.x.x 或认证域名）</summary>
     public string PortalBaseUrl { get; set; } = "";
+    /// <summary>门户自动登录（实验性）：配置账号后一键修复会尝试直接提交认证表单</summary>
+    public bool PortalAutoLogin { get; set; } = false;
+    /// <summary>认证账号（仅保存在本机 config.json）</summary>
+    public string PortalUsername { get; set; } = "";
+    /// <summary>认证密码（仅保存在本机 config.json）</summary>
+    public string PortalPassword { get; set; } = "";
     /// <summary>认证状态查询接口（可选，如门户的 /status 页）</summary>
     public string AuthStatusUrl { get; set; } = "";
     /// <summary>判定“认证在线”的关键字（| 分隔）</summary>

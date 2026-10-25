@@ -30,6 +30,7 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
     private readonly ILogService _log;
     private readonly DispatcherTimer _timer;
     private PerformanceCounter? _cpuCounter;
+    private bool _cpuPrimed; // CPU 计数器首采基线标记
 
     [ObservableProperty] private string _hostName = Environment.MachineName;
     [ObservableProperty] private string _osVersion = "…";
@@ -125,7 +126,14 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         try
         {
             _cpuCounter ??= new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
-            if (Math.Abs(CpuPercent) < 0.001 && _cpuCounter.RawValue >= 0) _cpuCounter.NextValue(); // 首次采样预热
+            // 性能计数器需要两次“带时间间隔”的采样才有真实值：首次调用恒返回 0。
+            // 旧写法两次 NextValue() 背靠背执行，第一屏永远是 0%（“CPU 无法第一时间出现”）。
+            if (!_cpuPrimed)
+            {
+                _cpuCounter.NextValue();
+                System.Threading.Thread.Sleep(800); // 线程池线程内等待，不阻塞 UI；仅首次采样多花 0.8s
+                _cpuPrimed = true;
+            }
             cpu = Math.Clamp(_cpuCounter.NextValue(), 0, 100);
             cpuText = $"{cpu:0.#}%";
         }

@@ -32,7 +32,7 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <AssemblyName>QingShu.Toolkit</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Authors>BeiXiangGuMao</Authors>

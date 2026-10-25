@@ -63,8 +63,26 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         new NetworkChecks.DownloadSpeedCheck(),
         new NetworkChecks.BackgroundUsageCheck(),
         new NetworkChecks.TcpTuningCheck(),
-        new NetworkChecks.DelivOptCheck()
+        new NetworkChecks.DelivOptCheck(),
+        // 疑难排查层（罕见/边缘问题，仅全面诊断运行）
+        new NetworkChecks.Ipv6Check(),
+        new NetworkChecks.DnsHijackCheck(),
+        new NetworkChecks.GatewayLossCheck(),
+        new NetworkChecks.RouteConflictCheck(),
+        new NetworkChecks.ProxyDiffCheck(),
+        new NetworkChecks.Port53Check(),
+        new NetworkChecks.AuthClientCheck(),
+        new NetworkChecks.StackSelfTestCheck()
     };
+
+    /// <summary>逐项硬超时（秒）：坏网环境下慢超时检查不再拖住整个诊断列表（防「待检查」滞留）。</summary>
+    private static readonly Dictionary<string, int> TimeoutOverrides = new()
+    {
+        ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30
+    };
+
+    private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
 
     /// <summary>低速专项计划：8 项专项检查 + 与低速强相关的既有检查（避免重复实现，复用既有证据）。</summary>
     private static readonly string[] SpeedPlanIds =
@@ -152,9 +170,25 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                 CheckOutcome outcome;
                 try
                 {
-                    outcome = await check.RunAsync(ctx, ct).ConfigureAwait(true);
+                    // 逐项硬超时：HttpClient 默认 100s / ping 长等待会把坏网环境的诊断拖住几分钟，
+                    // 这里按项限时强制收尾，超时项给出结论后继续下一项（遗留任务随取消令自然终止）。
+                    var timeoutSec = TimeoutFor(item.Id);
+                    var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    linked.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+                    var runTask = check.RunAsync(ctx, linked.Token);
+                    var done = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(timeoutSec + 3))).ConfigureAwait(true);
+                    if (done == runTask)
+                        outcome = await runTask.ConfigureAwait(true); // 正常完成；异常由此抛出统一接住
+                    else
+                        outcome = CheckOutcome.Fail($"检查超时（超过 {timeoutSec} 秒已强制中止）",
+                            "该检查等待响应过久（多为网络无应答），已中止此项以保证其余检查不被卡住；请结合网关/DNS/外网连通项结论定位。",
+                            $"超时阈值：{timeoutSec} 秒");
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException)
+                {
+                    outcome = CheckOutcome.Fail("检查超时（已强制中止）", "该检查内部无响应被强制中止；其余检查不受影响。");
+                }
                 catch (Exception ex)
                 {
                     outcome = CheckOutcome.Fail($"检查执行异常：{ex.Message}", "该检查项内部出现未预期错误，已跳过；不影响其他检查项。");

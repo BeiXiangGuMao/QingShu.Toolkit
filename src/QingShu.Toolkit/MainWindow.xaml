@@ -112,13 +112,19 @@
                     <TextBlock x:Name="VersionText" FontSize="11" Foreground="{ThemeResource PlaceholderTextBrush}" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="16">
-                    <!-- 弹窗拦截计数 -->
-                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE720;" FontSize="12"
-                                  Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBlock x:Name="PopupCountText" Text="拦截 0" FontSize="11"
-                                   Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <!-- 弹窗拦截计数（点击打开白名单管理） -->
+                    <Button x:Name="BtnWhitelist"
+                            Background="Transparent" BorderThickness="0" CornerRadius="5" Padding="8,3"
+                            VerticalAlignment="Center"
+                            Click="BtnWhitelist_Click"
+                            ToolTipService.ToolTip="弹窗拦截：白名单与最近拦截记录">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE720;" FontSize="12"
+                                      Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <TextBlock x:Name="PopupCountText" Text="拦截 0" FontSize="11"
+                                       Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <!-- 功耗三色小标识 -->
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                         <Ellipse x:Name="PowerDot" Width="9" Height="9" Fill="{ThemeResource PowerBalancedBrush}"

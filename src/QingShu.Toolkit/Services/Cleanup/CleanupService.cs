@@ -158,32 +158,41 @@ public sealed class CleanupService : ICleanupService
             foreach (var def in targets)
             {
                 ct.ThrowIfCancellationRequested();
-                if (def.IsRecycleBin)
-                {
-                    var (bytes, items) = NativeMethods.QueryRecycleBin();
-                    var t = new CleanScanTarget(def, bytes, (int)Math.Min(items, int.MaxValue));
-                    list.Add(t);
-                    progress?.Report(t);
-                    continue;
-                }
                 long size = 0;
                 int files = 0;
-                foreach (var path in def.Paths())
+                try
                 {
-                    if (Directory.Exists(path))
+                    if (def.IsRecycleBin)
                     {
-                        var (b, f) = FileOpsHelper.GetDirectorySize(path);
-                        size += b;
-                        files += f;
+                        var (bytes, items) = NativeMethods.QueryRecycleBin();
+                        size = bytes;
+                        files = (int)Math.Min(items, int.MaxValue);
                     }
-                    else if (def.Id == "thumbnails" && Directory.Exists(Path.GetDirectoryName(path)))
+                    else
                     {
-                        var dir = Path.GetDirectoryName(path)!;
-                        var (b, f) = FileOpsHelper.GetPatternSize(dir, "thumbcache_*.db");
-                        size += b; files += f;
-                        var (b2, f2) = FileOpsHelper.GetPatternSize(dir, "iconcache_*.db");
-                        size += b2; files += f2;
+                        foreach (var path in def.Paths())
+                        {
+                            if (Directory.Exists(path))
+                            {
+                                var (b, f) = FileOpsHelper.GetDirectorySize(path);
+                                size += b;
+                                files += f;
+                            }
+                            else if (def.Id == "thumbnails" && Directory.Exists(Path.GetDirectoryName(path)))
+                            {
+                                var dir = Path.GetDirectoryName(path)!;
+                                var (b, f) = FileOpsHelper.GetPatternSize(dir, "thumbcache_*.db");
+                                size += b; files += f;
+                                var (b2, f2) = FileOpsHelper.GetPatternSize(dir, "iconcache_*.db");
+                                size += b2; files += f2;
+                            }
+                        }
                     }
+                }
+                catch (Exception ex)
+                {
+                    // 逐目标故障隔离：单个坏路径/权限问题只影响自身统计，不再让整次扫描报错
+                    _log.App(LogLevel.Warn, "cleanup", $"扫描目标 {def.Id} 统计失败（部分目录不可访问）：{ex.Message}");
                 }
                 var target = new CleanScanTarget(def, size, files);
                 list.Add(target);

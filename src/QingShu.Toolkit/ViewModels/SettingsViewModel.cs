@@ -19,6 +19,9 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _themeIndex;          // 0=跟随系统 1=浅色 2=深色
     [ObservableProperty] private bool _useAcrylic;
     [ObservableProperty] private string _portalBaseUrl = "";
+    [ObservableProperty] private bool _portalAutoLogin;
+    [ObservableProperty] private string _portalUsername = "";
+    [ObservableProperty] private string _portalPassword = "";
     [ObservableProperty] private string _authStatusUrl = "";
     [ObservableProperty] private string _authOkKeywords = "";
     [ObservableProperty] private string _intranetProbeHost = "";
@@ -60,6 +63,9 @@ public partial class SettingsViewModel : ObservableObject
         _themeIndex = s.ThemeMode switch { "light" => 1, "dark" => 2, _ => 0 };
         _useAcrylic = s.UseAcrylicBackdrop;
         _portalBaseUrl = s.PortalBaseUrl;
+        _portalAutoLogin = s.PortalAutoLogin;
+        _portalUsername = s.PortalUsername;
+        _portalPassword = s.PortalPassword;
         _authStatusUrl = s.AuthStatusUrl;
         _authOkKeywords = s.AuthOkKeywords;
         _intranetProbeHost = s.IntranetProbeHost;
@@ -85,6 +91,9 @@ public partial class SettingsViewModel : ObservableObject
         s.ThemeMode = ThemeIndex switch { 1 => "light", 2 => "dark", _ => "system" };
         s.UseAcrylicBackdrop = UseAcrylic;
         s.PortalBaseUrl = PortalBaseUrl?.Trim() ?? "";
+        s.PortalAutoLogin = PortalAutoLogin;
+        s.PortalUsername = PortalUsername?.Trim() ?? "";
+        s.PortalPassword = PortalPassword ?? ""; // 密码不做 Trim（可能合法含首尾空格）
         s.AuthStatusUrl = AuthStatusUrl?.Trim() ?? "";
         s.AuthOkKeywords = AuthOkKeywords?.Trim() ?? "success|在线|已认证|认证成功";
         s.IntranetProbeHost = IntranetProbeHost?.Trim() ?? "";
@@ -153,6 +162,22 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnApplyEcoQosToSelfChanged(bool value) => _ = SaveAsync();
     partial void OnPopupEnabledChanged(bool value) => _ = SaveAsync();
     partial void OnAutoCheckUpdateChanged(bool value) => _ = SaveAsync();
+
+    // ---- 文本框类设置同样即时保存（TwoWay 绑定在失焦时回写，此前缺失处理器
+    //      导致门户地址/DNS/阈值/仓库/日志天数等“改了不生效”）----
+    partial void OnPortalBaseUrlChanged(string value) => _ = SaveAsync();
+    partial void OnPortalAutoLoginChanged(bool value) => _ = SaveAsync();
+    partial void OnPortalUsernameChanged(string value) => _ = SaveAsync();
+    partial void OnPortalPasswordChanged(string value) => _ = SaveAsync();
+    partial void OnAuthStatusUrlChanged(string value) => _ = SaveAsync();
+    partial void OnAuthOkKeywordsChanged(string value) => _ = SaveAsync();
+    partial void OnIntranetProbeHostChanged(string value) => _ = SaveAsync();
+    partial void OnDnsPreferredChanged(string value) => _ = SaveAsync();
+    partial void OnDnsAlternateChanged(string value) => _ = SaveAsync();
+    partial void OnImOldDaysTextChanged(string value) => _ = SaveAsync();
+    partial void OnLargeMinMbTextChanged(string value) => _ = SaveAsync();
+    partial void OnUpdateRepoChanged(string value) => _ = SaveAsync();
+    partial void OnLogRetentionTextChanged(string value) => _ = SaveAsync();
 
     [RelayCommand]
     private async Task SaveManualAsync() => await SaveAsync().ConfigureAwait(true);

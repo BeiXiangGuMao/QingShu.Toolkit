@@ -235,7 +235,7 @@ public static partial class NetworkChecks
                 ? $"已定位认证门户 {portalUrl}，"
                 : "";
             return CheckOutcome.Fail("检测到认证门户（当前未通过城域网认证）",
-                $"{portalHint}一键修复可直接打开认证页完成登录；也可在设置中配置门户地址获得更精确的过期判定。", canFix: true, detail.ToArray());
+                $"{portalHint}一键修复可完成认证（设置中配置账号后可自动登录，免每次手动输入）；也可在设置中配置门户地址获得更精确的过期判定。", canFix: true, detail.ToArray());
         }
     }
 

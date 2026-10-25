@@ -48,7 +48,20 @@ public partial class ImFileVm : ObservableObject
         _isSelected = true;
     }
 
+    /// <summary>账号分组头行（不可勾选，仅展示该账号汇总）。</summary>
+    public ImFileVm(string headerText)
+    {
+        Item = new ImFileItem();
+        IsHeader = true;
+        HeaderText = headerText;
+        _isSelected = false;
+    }
+
     public ImFileItem Item { get; }
+    public bool IsHeader { get; }
+    public string HeaderText { get; } = "";
+    public bool HeaderVis => IsHeader;
+    public bool FileVis => !IsHeader;
     public string FromText => Item.From;
     public string KindText => Item.Kind;
     public string AccountText => Item.Account;
@@ -129,7 +142,16 @@ public partial class CleanupViewModel : ObservableObject
         _large = large;
         _settings = settings;
         _log = log;
-        foreach (var t in cleanup.Targets) RegularTargets.Add(new CleanTargetVm(t));
+        foreach (var t in cleanup.Targets)
+        {
+            var row = new CleanTargetVm(t);
+            row.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(CleanTargetVm.IsScanned)) OnPropertyChanged(nameof(RegularReady));
+                if (e.PropertyName == nameof(CleanTargetVm.IsSelected)) UpdateRegularSelected();
+            };
+            RegularTargets.Add(row);
+        }
         _imOldDaysText = settings.Current.ImOldDays.ToString();
         _largeMinMbText = settings.Current.LargeFileMinMb.ToString();
         DeleteToRecycleBin = settings.Current.DeleteToRecycleBin;
@@ -226,9 +248,16 @@ public partial class CleanupViewModel : ObservableObject
 
     // ---- 页面展示辅助 ----
     public bool RegularReady => !IsRegularBusy && RegularTargets.Any(x => x.IsScanned);
+    /// <summary>扫描按钮独立使能：首次使用（尚无扫描结果）也必须可以点（旧绑定误用 RegularReady 导致永远禁用）。</summary>
+    public bool RegularCanScan => !IsRegularBusy;
     public bool RegularBusyVis => IsRegularBusy;
 
-    partial void OnIsRegularBusyChanged(bool value) => OnPropertyChanged(nameof(RegularBusyVis));
+    partial void OnIsRegularBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(RegularBusyVis));
+        OnPropertyChanged(nameof(RegularReady));
+        OnPropertyChanged(nameof(RegularCanScan));
+    }
 
     // ================= 微信 / QQ =================
 
@@ -242,7 +271,7 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
-            foreach (var f in files) WeChatFiles.Add(new ImFileVm(f));
+            FillGrouped(WeChatFiles, files, "微信");
             UpdateImSelected();
             WeChatStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
@@ -262,7 +291,7 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
-            foreach (var f in files) QqFiles.Add(new ImFileVm(f));
+            FillGrouped(QqFiles, files, "QQ");
             UpdateImSelected();
             QqStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
@@ -275,35 +304,54 @@ public partial class CleanupViewModel : ObservableObject
     [RelayCommand]
     private void SelectAllIm()
     {
-        foreach (var f in WeChatFiles) f.IsSelected = true;
-        foreach (var f in QqFiles) f.IsSelected = true;
+        foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = true;
+        foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = true;
         UpdateImSelected();
     }
 
     [RelayCommand]
     private void SelectNoneIm()
     {
-        foreach (var f in WeChatFiles) f.IsSelected = false;
-        foreach (var f in QqFiles) f.IsSelected = false;
+        foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = false;
+        foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = false;
         UpdateImSelected();
+    }
+
+    /// <summary>按账号文件夹分组展示：组头行（账号 · 文件数 · 总量）+ 组内按大小降序。</summary>
+    private void FillGrouped(ObservableCollection<ImFileVm> target, List<ImFileItem> files, string label)
+    {
+        target.Clear();
+        foreach (var g in files.GroupBy(f => f.Account).OrderByDescending(g => g.Sum(f => f.SizeBytes)))
+        {
+            target.Add(new ImFileVm($"{label}账号：{g.Key}  ·  {g.Count()} 个文件  ·  共 {FormatHelper.Bytes(g.Sum(f => f.SizeBytes))}"));
+            foreach (var f in g.OrderByDescending(f => f.SizeBytes))
+            {
+                var row = new ImFileVm(f);
+                row.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(ImFileVm.IsSelected)) UpdateImSelected();
+                };
+                target.Add(row);
+            }
+        }
     }
 
     private void UpdateImSelected()
     {
-        var count = WeChatFiles.Count(x => x.IsSelected) + QqFiles.Count(x => x.IsSelected);
-        var bytes = WeChatFiles.Where(x => x.IsSelected).Sum(x => x.Item.SizeBytes)
-                  + QqFiles.Where(x => x.IsSelected).Sum(x => x.Item.SizeBytes);
+        var count = WeChatFiles.Count(x => x.IsSelected && !x.IsHeader) + QqFiles.Count(x => x.IsSelected && !x.IsHeader);
+        var bytes = WeChatFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes)
+                  + QqFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes);
         ImSelectedText = $"已选 {count} 项 · {FormatHelper.Bytes(bytes)}";
     }
 
     [RelayCommand]
     private async Task DeleteImAsync()
     {
-        var paths = WeChatFiles.Where(x => x.IsSelected).Select(x => x.Item.Path)
-            .Concat(QqFiles.Where(x => x.IsSelected).Select(x => x.Item.Path)).ToList();
+        var paths = WeChatFiles.Where(x => x.IsSelected && !x.IsHeader).Select(x => x.Item.Path)
+            .Concat(QqFiles.Where(x => x.IsSelected && !x.IsHeader).Select(x => x.Item.Path)).ToList();
         if (paths.Count == 0) return;
-        var bytes = WeChatFiles.Where(x => x.IsSelected).Sum(x => x.Item.SizeBytes)
-                  + QqFiles.Where(x => x.IsSelected).Sum(x => x.Item.SizeBytes);
+        var bytes = WeChatFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes)
+                  + QqFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes);
         var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
         WeChatStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
         QqStatus = "";

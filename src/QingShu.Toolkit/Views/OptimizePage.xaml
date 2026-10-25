@@ -14,8 +14,14 @@
 
             <StackPanel>
                 <TextBlock Text="性能优化" Style="{StaticResource PageTitleTextBlock}" />
-                <TextBlock Text="只做安全且可逆的优化：工作集整理、进程级 EcoQoS 节能、被动弹窗拦截。绝不触碰服务/虚拟内存/注册表/Defender。"
+                <TextBlock Text="只做安全且可逆的优化，按影响范围分为应用级与系统级两档。绝不触碰服务/虚拟内存/注册表/Defender。"
                            Style="{StaticResource PageSubtitleTextBlock}" />
+            </StackPanel>
+
+            <!-- ============ 应用级优化 ============ -->
+            <StackPanel Spacing="2">
+                <TextBlock Text="应用级优化 —— 只影响所选进程，全部可逆" Style="{StaticResource SectionTitleTextBlock}" />
+                <TextBlock Text="针对单个程序的内存与功耗动作；系统关键组件已标注并在引擎内受保护。" Style="{StaticResource CaptionTextBlock}" />
             </StackPanel>
 
             <!-- 内存整理 -->
@@ -49,7 +55,16 @@
                                         <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="0" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                    <StackPanel Grid.Column="1" Spacing="0">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                            <Border Background="{ThemeResource WarningChipFillBrush}" CornerRadius="4" Padding="5,0"
+                                                    Visibility="{x:Bind IsSystem}">
+                                                <TextBlock Text="系统组件" Foreground="{ThemeResource WarningTextBrush}" FontSize="10" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind Purpose}" Style="{StaticResource CaptionTextBlock}" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="2" Text="{x:Bind PidText}" Style="{StaticResource MonoTextBlock}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="3" Text="{x:Bind WsText}" Style="{StaticResource BodyTextBlock}"
                                                FontWeight="SemiBold" VerticalAlignment="Center" Margin="14,0,0,0" />
@@ -90,7 +105,16 @@
                                         <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="0" VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                    <StackPanel Grid.Column="1" Spacing="0">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                            <Border Background="{ThemeResource WarningChipFillBrush}" CornerRadius="4" Padding="5,0"
+                                                    Visibility="{x:Bind IsSystem}">
+                                                <TextBlock Text="系统组件" Foreground="{ThemeResource WarningTextBrush}" FontSize="10" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Bind Purpose}" Style="{StaticResource CaptionTextBlock}" />
+                                    </StackPanel>
                                     <Border Grid.Column="2" Background="{ThemeResource SuccessChipFillBrush}" CornerRadius="4" Padding="6,1"
                                             Visibility="{x:Bind EcoVis, Mode=OneWay}">
                                         <TextBlock Text="EcoQoS" Foreground="{ThemeResource SuccessTextBrush}" FontSize="10" />
@@ -105,6 +129,12 @@
                                Foreground="{ThemeResource InfoTextBrush}" />
                 </StackPanel>
             </Border>
+
+            <!-- ============ 系统级优化 ============ -->
+            <StackPanel Spacing="2">
+                <TextBlock Text="系统级优化 —— 影响整机行为，逐项确认" Style="{StaticResource SectionTitleTextBlock}" />
+                <TextBlock Text="弹窗拦截作用于全系统新出现的窗口；启动项影响开机加载。均不修改系统服务/注册表/Defender。" Style="{StaticResource CaptionTextBlock}" />
+            </StackPanel>
 
             <!-- 弹窗拦截 -->
             <Border Style="{StaticResource CardStyle}">
@@ -132,13 +162,19 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:WhitelistRowVm">
-                                <Border Background="{ThemeResource HoverFillBrush}" CornerRadius="99" Padding="10,3" Margin="0">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="99" Padding="11,4" Margin="0,2,8,2">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE72E;" FontSize="10"
+                                                  Foreground="{ThemeResource InfoTextBrush}" VerticalAlignment="Center" />
                                         <TextBlock Text="{x:Bind Name}" FontSize="11.5"
                                                    Foreground="{ThemeResource TextPrimaryBrush}" VerticalAlignment="Center" />
-                                        <Button Content="✕" Padding="2,0" Background="Transparent" BorderThickness="0"
-                                                FontSize="10" Command="{x:Bind Owner.RemoveWhitelistCommand}"
-                                                CommandParameter="{x:Bind Name}" />
+                                        <Button Padding="3,0" MinWidth="0" MinHeight="0" Background="Transparent" BorderThickness="0"
+                                                CornerRadius="99" VerticalAlignment="Center"
+                                                Command="{x:Bind Owner.RemoveWhitelistCommand}"
+                                                CommandParameter="{x:Bind Name}">
+                                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE711;" FontSize="9"
+                                                      Foreground="{ThemeResource TextSecondaryBrush}" />
+                                        </Button>
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>

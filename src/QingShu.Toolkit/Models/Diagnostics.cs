@@ -23,7 +23,8 @@ public enum CheckCategory
     Clock,          // 系统时钟
     ProxyVpn,       // 代理与 VPN
     Quality,        // 连接质量
-    Throughput      // 测速与吞吐（低速专项）
+    Throughput,     // 测速与吞吐（低速专项）
+    Rare            // 疑难排查（罕见/边缘问题）
 }
 
 public static class CheckCategoryText
@@ -43,6 +44,7 @@ public static class CheckCategoryText
         CheckCategory.ProxyVpn => "代理与 VPN",
         CheckCategory.Quality => "连接质量",
         CheckCategory.Throughput => "测速吞吐",
+        CheckCategory.Rare => "疑难排查",
         _ => "其他"
     };
 }

@@ -44,6 +44,15 @@
                     <TextBlock Text="网络诊断" Style="{StaticResource SectionTitleTextBlock}" />
                     <TextBox Header="城域网认证门户地址" PlaceholderText="如 http://10.10.10.55 或认证域名"
                              Text="{x:Bind Vm.PortalBaseUrl, Mode=TwoWay}" Style="{StaticResource SettingTextBox}" />
+                    <ToggleSwitch Header="门户自动登录（实验性）" OnContent="开启：一键修复直接提交认证表单" OffContent="关闭（默认打开浏览器人工登录）"
+                                  IsOn="{x:Bind Vm.PortalAutoLogin, Mode=TwoWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBox Header="认证账号" PlaceholderText="学号 / 工号"
+                                 Text="{x:Bind Vm.PortalUsername, Mode=TwoWay}" Width="200" />
+                        <PasswordBox Header="认证密码" Password="{x:Bind Vm.PortalPassword, Mode=TwoWay}" Width="200" />
+                    </StackPanel>
+                    <TextBlock Text="账号密码仅保存在本机 config.json，不上传；提交成功与否以连通性复核为准，失败会自动回退浏览器人工登录。纯 JS 渲染或扫码类门户暂不支持自动登录。"
+                               Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap" />
                     <TextBox Header="认证状态接口（可选，用于精确判定过期）" PlaceholderText="如 http://门户/status"
                              Text="{x:Bind Vm.AuthStatusUrl, Mode=TwoWay}" Style="{StaticResource SettingTextBox}" />
                     <TextBox Header="在线判定关键字（| 分隔）" Text="{x:Bind Vm.AuthOkKeywords, Mode=TwoWay}"
