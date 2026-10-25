@@ -5,6 +5,11 @@
     xmlns:vm="using:QingShu.Toolkit.ViewModels">
 
     <Grid RowSpacing="12" Padding="28,20,28,12">
+        <Grid.Transitions>
+            <TransitionCollection>
+                <EntranceThemeTransition FromVerticalOffset="12" IsStaggeringEnabled="True" />
+            </TransitionCollection>
+        </Grid.Transitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />

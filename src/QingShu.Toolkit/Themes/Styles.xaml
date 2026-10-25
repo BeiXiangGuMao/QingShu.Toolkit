@@ -1,22 +1,37 @@
 <!--
   青枢工具箱 · 全局样式
   卡片 / 文字层级 / 等宽文本 —— 全部绑定 ThemeResource，随主题切换
+  视觉基调：现代系统级设计 —— 中性灰阶底、连续大圆角、含蓄入场动画、系统无衬线字体栈
 -->
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+      全局字体栈：优先使用设备上的现代系统无衬线字体（SF Pro 系列），
+      依次回退到 Windows 11 变量字体 / Segoe UI，中文回退微软雅黑；
+      ContentControlThemeFontFamily 为框架级资源键，此处覆写即全局生效。
+    -->
+    <FontFamily x:Key="ContentControlThemeFontFamily">SF Pro Text, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
+    <FontFamily x:Key="AppDisplayFontFamily">SF Pro Display, Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI</FontFamily>
+    <FontFamily x:Key="AppMonoFontFamily">SF Mono, Cascadia Mono, Consolas</FontFamily>
+
+    <!-- 连续大圆角：常规控件 8px，浮层/对话框 12px（框架级资源键覆写） -->
+    <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
+    <CornerRadius x:Key="OverlayCornerRadius">12</CornerRadius>
 
     <!-- 卡片容器 -->
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="CornerRadius" Value="12" />
         <Setter Property="Padding" Value="16" />
     </Style>
 
     <!-- 页面主标题 -->
     <Style x:Key="PageTitleTextBlock" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppDisplayFontFamily}" />
         <Setter Property="FontSize" Value="24" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
@@ -63,7 +78,7 @@
 
     <!-- 等宽（路径 / 命令 / 日志） -->
     <Style x:Key="MonoTextBlock" TargetType="TextBlock">
-        <Setter Property="FontFamily" Value="Consolas" />
+        <Setter Property="FontFamily" Value="{StaticResource AppMonoFontFamily}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
@@ -71,6 +86,7 @@
 
     <!-- 数字指标 -->
     <Style x:Key="StatNumberTextBlock" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource AppDisplayFontFamily}" />
         <Setter Property="FontSize" Value="28" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
@@ -80,6 +96,6 @@
     <Style x:Key="SettingTextBox" TargetType="TextBox">
         <Setter Property="Width" Value="320" />
         <Setter Property="HorizontalAlignment" Value="Left" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="8" />
     </Style>
 </ResourceDictionary>

@@ -16,11 +16,11 @@
             <!-- 左侧：Logo + 标题（拖拽区） -->
             <Grid x:Name="TitleDragArea" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0" Spacing="10">
-                    <Border Width="26" Height="26" CornerRadius="7">
+                    <Border Width="26" Height="26" CornerRadius="8">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#2563EB" Offset="0" />
-                                <GradientStop Color="#3B82F6" Offset="1" />
+                                <GradientStop Color="#0A84FF" Offset="0" />
+                                <GradientStop Color="#409CFF" Offset="1" />
                             </LinearGradientBrush>
                         </Border.Background>
                         <TextBlock Text="枢" Foreground="White" FontSize="14" FontWeight="Bold"

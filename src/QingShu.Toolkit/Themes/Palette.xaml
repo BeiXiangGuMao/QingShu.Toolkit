@@ -1,8 +1,8 @@
 <!--
   青枢工具箱 · 全局色板（品牌 / 语义 / 功耗标识）
-  规范来源：docs/DESIGN.md（视觉规范）
-  浅色主色 #2563EB，深色主色 #3B82F6（提亮防发灰）
-  状态文字使用 WCAG AA 达标的深/浅变体（SuccessText 等）
+  规范：现代系统级中性色板 —— 克制的灰阶中性底 + 单一强调蓝 + 配套可访问性状态文字变体
+  浅色强调 #007AFF，深色强调 #0A84FF（提亮防发灰）
+  状态文字使用深/浅变体（SuccessText 等），保持 WCAG AA
 -->
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -14,113 +14,113 @@
         <ResourceDictionary x:Key="Light">
 
             <!-- 系统强调色覆写（按钮/滑块等原生控件自动生效） -->
-            <Color x:Key="SystemAccentColor">#2563EB</Color>
-            <Color x:Key="SystemAccentColorLight1">#5B8DEF</Color>
-            <Color x:Key="SystemAccentColorLight2">#8FB3F4</Color>
-            <Color x:Key="SystemAccentColorLight3">#B9CFF9</Color>
-            <Color x:Key="SystemAccentColorDark1">#1D4ED8</Color>
-            <Color x:Key="SystemAccentColorDark2">#1739A8</Color>
-            <Color x:Key="SystemAccentColorDark3">#12277E</Color>
+            <Color x:Key="SystemAccentColor">#007AFF</Color>
+            <Color x:Key="SystemAccentColorLight1">#4DA3FF</Color>
+            <Color x:Key="SystemAccentColorLight2">#80BDFF</Color>
+            <Color x:Key="SystemAccentColorLight3">#B3D7FF</Color>
+            <Color x:Key="SystemAccentColorDark1">#0062CC</Color>
+            <Color x:Key="SystemAccentColorDark2">#004C9E</Color>
+            <Color x:Key="SystemAccentColorDark3">#00376F</Color>
 
             <!-- 品牌 -->
-            <SolidColorBrush x:Key="BrandPrimaryBrush" Color="#2563EB" />
-            <SolidColorBrush x:Key="BrandPrimaryHoverBrush" Color="#1D4ED8" />
-            <SolidColorBrush x:Key="BrandPrimaryPressedBrush" Color="#1E40AF" />
+            <SolidColorBrush x:Key="BrandPrimaryBrush" Color="#007AFF" />
+            <SolidColorBrush x:Key="BrandPrimaryHoverBrush" Color="#3395FF" />
+            <SolidColorBrush x:Key="BrandPrimaryPressedBrush" Color="#0062CC" />
 
-            <!-- 页面 / 卡片 / 分割 -->
-            <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F8FAFC" />
-            <SolidColorBrush x:Key="PageBackgroundAcrylicBrush" Color="#B3F8FAFC" />
+            <!-- 页面 / 卡片 / 分割（中性灰阶，分组式底色） -->
+            <SolidColorBrush x:Key="PageBackgroundBrush" Color="#F2F2F7" />
+            <SolidColorBrush x:Key="PageBackgroundAcrylicBrush" Color="#B3F2F2F7" />
             <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="CardBorderBrush" Color="#E2E8F0" />
-            <SolidColorBrush x:Key="DividerStrokeBrush" Color="#E2E8F0" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="#333C3C43" />
+            <SolidColorBrush x:Key="DividerStrokeBrush" Color="#4A3C3C43" />
 
             <!-- 文本 -->
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1E293B" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#64748B" />
-            <SolidColorBrush x:Key="PlaceholderTextBrush" Color="#94A3B8" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1D1D1F" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6E6E73" />
+            <SolidColorBrush x:Key="PlaceholderTextBrush" Color="#AEAEB2" />
 
-            <!-- 交互 -->
-            <SolidColorBrush x:Key="HoverFillBrush" Color="#EFF6FF" />
-            <SolidColorBrush x:Key="PressedFillBrush" Color="#DBEAFE" />
+            <!-- 交互（强调色低透明度着色） -->
+            <SolidColorBrush x:Key="HoverFillBrush" Color="#12007AFF" />
+            <SolidColorBrush x:Key="PressedFillBrush" Color="#29007AFF" />
 
             <!-- 状态（填充/图标用） -->
-            <SolidColorBrush x:Key="SuccessBrush" Color="#10B981" />
-            <SolidColorBrush x:Key="WarningBrush" Color="#F59E0B" />
-            <SolidColorBrush x:Key="ErrorBrush" Color="#EF4444" />
-            <SolidColorBrush x:Key="InfoBrush" Color="#2563EB" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#34C759" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#FF9500" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="#FF3B30" />
+            <SolidColorBrush x:Key="InfoBrush" Color="#007AFF" />
 
             <!-- 状态文字（浅色底上满足 WCAG AA） -->
-            <SolidColorBrush x:Key="SuccessTextBrush" Color="#047857" />
-            <SolidColorBrush x:Key="WarningTextBrush" Color="#92400E" />
-            <SolidColorBrush x:Key="ErrorTextBrush" Color="#B91C1C" />
-            <SolidColorBrush x:Key="InfoTextBrush" Color="#1D4ED8" />
+            <SolidColorBrush x:Key="SuccessTextBrush" Color="#248A3D" />
+            <SolidColorBrush x:Key="WarningTextBrush" Color="#C93400" />
+            <SolidColorBrush x:Key="ErrorTextBrush" Color="#D70015" />
+            <SolidColorBrush x:Key="InfoTextBrush" Color="#0062CC" />
 
             <!-- 状态浅底（10% 透明度） -->
-            <SolidColorBrush x:Key="SuccessChipFillBrush" Color="#1AD1FAE5" />
-            <SolidColorBrush x:Key="WarningChipFillBrush" Color="#1AFEF3C7" />
-            <SolidColorBrush x:Key="ErrorChipFillBrush" Color="#1AFEE2E5" />
-            <SolidColorBrush x:Key="InfoChipFillBrush" Color="#1ADBEAFE" />
+            <SolidColorBrush x:Key="SuccessChipFillBrush" Color="#1A34C759" />
+            <SolidColorBrush x:Key="WarningChipFillBrush" Color="#1AFF9500" />
+            <SolidColorBrush x:Key="ErrorChipFillBrush" Color="#1AFF3B30" />
+            <SolidColorBrush x:Key="InfoChipFillBrush" Color="#1A007AFF" />
 
             <!-- 功耗标识（仅小面积标识使用，禁止大面积填充） -->
-            <SolidColorBrush x:Key="PowerEcoBrush" Color="#059669" />
-            <SolidColorBrush x:Key="PowerBalancedBrush" Color="#2563EB" />
-            <SolidColorBrush x:Key="PowerHighBrush" Color="#DC2626" />
+            <SolidColorBrush x:Key="PowerEcoBrush" Color="#34C759" />
+            <SolidColorBrush x:Key="PowerBalancedBrush" Color="#007AFF" />
+            <SolidColorBrush x:Key="PowerHighBrush" Color="#FF3B30" />
         </ResourceDictionary>
 
         <!-- ================= 深色模式 ================= -->
         <ResourceDictionary x:Key="Dark">
 
-            <Color x:Key="SystemAccentColor">#3B82F6</Color>
-            <Color x:Key="SystemAccentColorLight1">#60A5FA</Color>
-            <Color x:Key="SystemAccentColorLight2">#93C5FD</Color>
-            <Color x:Key="SystemAccentColorLight3">#BFDBFE</Color>
-            <Color x:Key="SystemAccentColorDark1">#2563EB</Color>
-            <Color x:Key="SystemAccentColorDark2">#1D4ED8</Color>
-            <Color x:Key="SystemAccentColorDark3">#1739A8</Color>
+            <Color x:Key="SystemAccentColor">#0A84FF</Color>
+            <Color x:Key="SystemAccentColorLight1">#409CFF</Color>
+            <Color x:Key="SystemAccentColorLight2">#73B8FF</Color>
+            <Color x:Key="SystemAccentColorLight3">#A6D4FF</Color>
+            <Color x:Key="SystemAccentColorDark1">#0864C4</Color>
+            <Color x:Key="SystemAccentColorDark2">#064C96</Color>
+            <Color x:Key="SystemAccentColorDark3">#043569</Color>
 
             <!-- 品牌（深色提亮） -->
-            <SolidColorBrush x:Key="BrandPrimaryBrush" Color="#3B82F6" />
-            <SolidColorBrush x:Key="BrandPrimaryHoverBrush" Color="#60A5FA" />
-            <SolidColorBrush x:Key="BrandPrimaryPressedBrush" Color="#2563EB" />
+            <SolidColorBrush x:Key="BrandPrimaryBrush" Color="#0A84FF" />
+            <SolidColorBrush x:Key="BrandPrimaryHoverBrush" Color="#409CFF" />
+            <SolidColorBrush x:Key="BrandPrimaryPressedBrush" Color="#0864C4" />
 
-            <!-- 页面 / 卡片 / 分割（深炭蓝，不用纯黑） -->
-            <SolidColorBrush x:Key="PageBackgroundBrush" Color="#0F172A" />
-            <SolidColorBrush x:Key="PageBackgroundAcrylicBrush" Color="#D90F172A" />
-            <SolidColorBrush x:Key="CardBackgroundBrush" Color="#1E293B" />
-            <SolidColorBrush x:Key="CardBorderBrush" Color="#334155" />
-            <SolidColorBrush x:Key="DividerStrokeBrush" Color="#334155" />
+            <!-- 页面 / 卡片 / 分割（中性炭灰阶，不用纯黑） -->
+            <SolidColorBrush x:Key="PageBackgroundBrush" Color="#1C1C1E" />
+            <SolidColorBrush x:Key="PageBackgroundAcrylicBrush" Color="#D91C1C1E" />
+            <SolidColorBrush x:Key="CardBackgroundBrush" Color="#2C2C2E" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="#73545458" />
+            <SolidColorBrush x:Key="DividerStrokeBrush" Color="#A6545458" />
 
             <!-- 文本 -->
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F1F5F9" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#94A3B8" />
-            <SolidColorBrush x:Key="PlaceholderTextBrush" Color="#64748B" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F5F5F7" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#A1A1A6" />
+            <SolidColorBrush x:Key="PlaceholderTextBrush" Color="#636366" />
 
             <!-- 交互 -->
-            <SolidColorBrush x:Key="HoverFillBrush" Color="#1E3A8A" />
-            <SolidColorBrush x:Key="PressedFillBrush" Color="#1E40AF" />
+            <SolidColorBrush x:Key="HoverFillBrush" Color="#1F0A84FF" />
+            <SolidColorBrush x:Key="PressedFillBrush" Color="#330A84FF" />
 
             <!-- 状态 -->
-            <SolidColorBrush x:Key="SuccessBrush" Color="#10B981" />
-            <SolidColorBrush x:Key="WarningBrush" Color="#F59E0B" />
-            <SolidColorBrush x:Key="ErrorBrush" Color="#EF4444" />
-            <SolidColorBrush x:Key="InfoBrush" Color="#3B82F6" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#30D158" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#FF9F0A" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="#FF453A" />
+            <SolidColorBrush x:Key="InfoBrush" Color="#0A84FF" />
 
             <!-- 状态文字（深色底上提亮，满足 WCAG AA） -->
-            <SolidColorBrush x:Key="SuccessTextBrush" Color="#6EE7B7" />
-            <SolidColorBrush x:Key="WarningTextBrush" Color="#FCD34D" />
-            <SolidColorBrush x:Key="ErrorTextBrush" Color="#FCA5A5" />
-            <SolidColorBrush x:Key="InfoTextBrush" Color="#93C5FD" />
+            <SolidColorBrush x:Key="SuccessTextBrush" Color="#30D158" />
+            <SolidColorBrush x:Key="WarningTextBrush" Color="#FF9F0A" />
+            <SolidColorBrush x:Key="ErrorTextBrush" Color="#FF6961" />
+            <SolidColorBrush x:Key="InfoTextBrush" Color="#409CFF" />
 
             <!-- 状态浅底（15% 透明度） -->
-            <SolidColorBrush x:Key="SuccessChipFillBrush" Color="#2610B981" />
-            <SolidColorBrush x:Key="WarningChipFillBrush" Color="#26F59E0B" />
-            <SolidColorBrush x:Key="ErrorChipFillBrush" Color="#26EF4444" />
-            <SolidColorBrush x:Key="InfoChipFillBrush" Color="#263B82F6" />
+            <SolidColorBrush x:Key="SuccessChipFillBrush" Color="#2630D158" />
+            <SolidColorBrush x:Key="WarningChipFillBrush" Color="#26FF9F0A" />
+            <SolidColorBrush x:Key="ErrorChipFillBrush" Color="#26FF453A" />
+            <SolidColorBrush x:Key="InfoChipFillBrush" Color="#260A84FF" />
 
             <!-- 功耗标识 -->
-            <SolidColorBrush x:Key="PowerEcoBrush" Color="#34D399" />
-            <SolidColorBrush x:Key="PowerBalancedBrush" Color="#3B82F6" />
-            <SolidColorBrush x:Key="PowerHighBrush" Color="#F87171" />
+            <SolidColorBrush x:Key="PowerEcoBrush" Color="#30D158" />
+            <SolidColorBrush x:Key="PowerBalancedBrush" Color="#0A84FF" />
+            <SolidColorBrush x:Key="PowerHighBrush" Color="#FF453A" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

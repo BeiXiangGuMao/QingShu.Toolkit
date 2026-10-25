@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="1080" HorizontalAlignment="Stretch" Spacing="14">
             <StackPanel.Transitions>
                 <TransitionCollection>
-                    <EntranceThemeTransition FromVerticalOffset="24" IsStaggeringEnabled="True" />
+                    <EntranceThemeTransition FromVerticalOffset="12" IsStaggeringEnabled="True" />
                 </TransitionCollection>
             </StackPanel.Transitions>
 

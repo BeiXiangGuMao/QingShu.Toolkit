@@ -77,15 +77,15 @@ public sealed class WindowBackdropService : IDisposable
         if (dark)
         {
             // 深色：提高不透明度（TintOpacity 越大越实），避免文字对比度不足
-            _acrylic.TintColor = Color.FromArgb(255, 15, 23, 42);   // #0F172A
+            _acrylic.TintColor = Color.FromArgb(255, 28, 28, 30);   // #1C1C1E
             _acrylic.TintOpacity = 0.85f;
-            _acrylic.FallbackColor = Color.FromArgb(235, 15, 23, 42);
+            _acrylic.FallbackColor = Color.FromArgb(235, 28, 28, 30);
         }
         else
         {
-            _acrylic.TintColor = Color.FromArgb(255, 248, 250, 252); // #F8FAFC
+            _acrylic.TintColor = Color.FromArgb(255, 242, 242, 247); // #F2F2F7
             _acrylic.TintOpacity = 0.72f;
-            _acrylic.FallbackColor = Color.FromArgb(230, 248, 250, 252);
+            _acrylic.FallbackColor = Color.FromArgb(230, 242, 242, 247);
         }
     }
 

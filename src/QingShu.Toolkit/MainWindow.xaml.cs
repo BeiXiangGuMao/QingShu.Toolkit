@@ -113,10 +113,10 @@ public sealed partial class MainWindow : Window
             tb.ButtonBackgroundColor = FromHex("#00000000");
             tb.ButtonInactiveBackgroundColor = FromHex("#00000000");
             tb.ButtonForegroundColor = dark ? FromHex("#FFFFFF") : FromHex("#000000");
-            tb.ButtonHoverBackgroundColor = dark ? FromHex("#22FFFFFF") : FromHex("#140F172A");
-            tb.ButtonPressedBackgroundColor = dark ? FromHex("#38FFFFFF") : FromHex("#290F172A");
+            tb.ButtonHoverBackgroundColor = dark ? FromHex("#1AFFFFFF") : FromHex("#0F000000");
+            tb.ButtonPressedBackgroundColor = dark ? FromHex("#2EFFFFFF") : FromHex("#1F000000");
             tb.ButtonHoverForegroundColor = dark ? FromHex("#FFFFFF") : FromHex("#000000");
-            tb.ButtonInactiveForegroundColor = dark ? FromHex("#7F94A3B8") : FromHex("#7F64748B");
+            tb.ButtonInactiveForegroundColor = dark ? FromHex("#7F98989D") : FromHex("#7F8E8E93");
         }
         catch { }
     }

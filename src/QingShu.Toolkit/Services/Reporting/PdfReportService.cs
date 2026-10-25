@@ -51,17 +51,17 @@ public sealed class PdfReportService : IPdfReportService
                 {
                     page.Size(PageSizes.A4);
                     page.Margin(40);
-                    page.DefaultTextStyle(x => x.FontFamily("Microsoft YaHei").FontSize(9.5f).FontColor("#1E293B").LineHeight(1.5f));
+                    page.DefaultTextStyle(x => x.FontFamily("Microsoft YaHei").FontSize(9.5f).FontColor("#1D1D1F").LineHeight(1.5f));
 
                     page.Header().Element(c => ComposeHeader(c, data));
                     page.Content().Element(c => ComposeContent(c, data));
                     page.Footer().Row(row =>
                     {
                         row.RelativeItem().Text($"青枢工具箱 v{data.Meta.ToolVersion} 自动生成 · 报告编号 {reportId}")
-                            .FontSize(8).FontColor("#94A3B8");
+                            .FontSize(8).FontColor("#8E8E93");
                         row.AutoItem().Width(120, Unit.Point).AlignRight().Text(t =>
                         {
-                            t.DefaultTextStyle(x => x.FontSize(8).FontColor("#94A3B8"));
+                            t.DefaultTextStyle(x => x.FontSize(8).FontColor("#8E8E93"));
                             t.Span("第 ");
                             t.CurrentPageNumber();
                             t.Span(" 页 / 共 ");
@@ -87,20 +87,20 @@ public sealed class PdfReportService : IPdfReportService
         c.Row(row =>
         {
             row.AutoItem().Width(4, Unit.Point).Height(34, Unit.Point)
-                .Background("#2563EB");
+                .Background("#007AFF");
             row.RelativeItem().PaddingLeft(10).Column(col =>
             {
-                col.Item().Text("网络故障诊断报告").FontSize(17).SemiBold().FontColor("#0F172A");
-                col.Item().Text("青枢工具箱 QingShu.Toolkit · 校园网络专项诊断").FontSize(9).FontColor("#64748B");
+                col.Item().Text("网络故障诊断报告").FontSize(17).SemiBold().FontColor("#1D1D1F");
+                col.Item().Text("青枢工具箱 QingShu.Toolkit · 校园网络专项诊断").FontSize(9).FontColor("#6E6E73");
             });
             row.RelativeItem().AlignRight().Column(col =>
             {
-                col.Item().AlignRight().Text(data.Meta.ReportId).FontSize(10).SemiBold().FontColor("#2563EB");
-                col.Item().AlignRight().Text($"生成时间 {data.Meta.GeneratedAt:yyyy-MM-dd HH:mm}").FontSize(8).FontColor("#94A3B8");
+                col.Item().AlignRight().Text(data.Meta.ReportId).FontSize(10).SemiBold().FontColor("#007AFF");
+                col.Item().AlignRight().Text($"生成时间 {data.Meta.GeneratedAt:yyyy-MM-dd HH:mm}").FontSize(8).FontColor("#8E8E93");
             });
         });
         // 分隔线（LineHorizontal 返回 void，用 1pt 高色带等效实现）
-        c.PaddingTop(6).Height(1, Unit.Point).Background("#E2E8F0");
+        c.PaddingTop(6).Height(1, Unit.Point).Background("#E5E5EA");
     }
 
     // ================= 正文 =================
@@ -123,8 +123,8 @@ public sealed class PdfReportService : IPdfReportService
     {
         col.Item().PaddingTop(14).PaddingBottom(6).Row(r =>
         {
-            r.AutoItem().Width(3, Unit.Point).Height(12, Unit.Point).Background("#2563EB").PaddingTop(0);
-            r.RelativeItem().PaddingLeft(6).Text(title).FontSize(12.5f).SemiBold().FontColor("#0F172A");
+            r.AutoItem().Width(3, Unit.Point).Height(12, Unit.Point).Background("#007AFF").PaddingTop(0);
+            r.RelativeItem().PaddingLeft(6).Text(title).FontSize(12.5f).SemiBold().FontColor("#1D1D1F");
         });
     }
 
@@ -161,11 +161,11 @@ public sealed class PdfReportService : IPdfReportService
         {
             // Text(Action<TextDescriptor>) 重载返回 void，块级样式须经 DefaultTextStyle 设置（同页脚写法）
             t.DefaultTextStyle(x => x.FontSize(9));
-            t.Span("诊断模式：").FontColor("#64748B");
+            t.Span("诊断模式：").FontColor("#6E6E73");
             t.Span($"{m.ModeText}    ").SemiBold();
             if (!string.IsNullOrWhiteSpace(m.LinkSpeedText))
-                t.Span($"链路速率：{m.LinkSpeedText}    ").FontColor("#64748B");
-            t.Span($"起止：{m.StartedAt:HH:mm:ss} — {m.FinishedAt:HH:mm:ss}").FontColor("#64748B");
+                t.Span($"链路速率：{m.LinkSpeedText}    ").FontColor("#6E6E73");
+            t.Span($"起止：{m.StartedAt:HH:mm:ss} — {m.FinishedAt:HH:mm:ss}").FontColor("#6E6E73");
         });
     }
 
@@ -182,10 +182,10 @@ public sealed class PdfReportService : IPdfReportService
             });
             foreach (var (k, v) in rows)
             {
-                table.Cell().BorderBottom(0.5f).BorderColor("#E2E8F0").PaddingVertical(3.5f)
-                    .Text(k).FontSize(8.5f).FontColor("#64748B");
-                table.Cell().BorderBottom(0.5f).BorderColor("#E2E8F0").PaddingVertical(3.5f)
-                    .Text(v).FontSize(8.5f).FontColor("#1E293B");
+                table.Cell().BorderBottom(0.5f).BorderColor("#E5E5EA").PaddingVertical(3.5f)
+                    .Text(k).FontSize(8.5f).FontColor("#6E6E73");
+                table.Cell().BorderBottom(0.5f).BorderColor("#E5E5EA").PaddingVertical(3.5f)
+                    .Text(v).FontSize(8.5f).FontColor("#1D1D1F");
             }
         });
     }
@@ -208,11 +208,11 @@ public sealed class PdfReportService : IPdfReportService
         }
         col.Item().Row(row =>
         {
-            Chip(row, "#047857", "#ECFDF5", "通过", pass);
-            Chip(row, "#B45309", "#FFFBEB", "警告", warn);
-            Chip(row, "#B91C1C", "#FEF2F2", "未通过", fail);
-            Chip(row, "#1D4ED8", "#EFF6FF", "已修复", fixedCount);
-            Chip(row, "#475569", "#F8FAFC", "跳过", skip);
+            Chip(row, "#248A3D", "#E9F9EE", "通过", pass);
+            Chip(row, "#C93400", "#FFF4E5", "警告", warn);
+            Chip(row, "#D70015", "#FFEBEA", "未通过", fail);
+            Chip(row, "#0062CC", "#E8F2FF", "已修复", fixedCount);
+            Chip(row, "#6E6E73", "#F5F5F7", "跳过", skip);
         });
 
         string conclusion;
@@ -241,7 +241,7 @@ public sealed class PdfReportService : IPdfReportService
         var groups = data.Results.GroupBy(r => r.Category).ToList();
         foreach (var g in groups)
         {
-            col.Item().PaddingTop(6).Text(CheckCategoryText.Of(g.Key)).FontSize(10).SemiBold().FontColor("#334155");
+            col.Item().PaddingTop(6).Text(CheckCategoryText.Of(g.Key)).FontSize(10).SemiBold().FontColor("#48484A");
 
             col.Item().PaddingTop(3).Table(table =>
             {
@@ -263,14 +263,14 @@ public sealed class PdfReportService : IPdfReportService
                 {
                     var bg = r.Status switch
                     {
-                        CheckStatus.Fail => "#FEF2F2",
-                        CheckStatus.Warning => "#FFFBEB",
+                        CheckStatus.Fail => "#FFEBEA",
+                        CheckStatus.Warning => "#FFF4E5",
                         _ => "#FFFFFF"
                     };
                     BodyCell(table, StatusText(r.Status), bg, StatusColor(r.Status), true);
-                    BodyCell(table, r.Name, bg, "#1E293B");
-                    BodyCell(table, string.IsNullOrWhiteSpace(r.Summary) ? "—" : r.Summary, bg, "#334155");
-                    BodyCell(table, string.IsNullOrWhiteSpace(r.Suggestion) ? "—" : r.Suggestion, bg, "#475569");
+                    BodyCell(table, r.Name, bg, "#1D1D1F");
+                    BodyCell(table, string.IsNullOrWhiteSpace(r.Summary) ? "—" : r.Summary, bg, "#48484A");
+                    BodyCell(table, string.IsNullOrWhiteSpace(r.Suggestion) ? "—" : r.Suggestion, bg, "#6E6E73");
                 }
             });
         }
@@ -288,21 +288,21 @@ public sealed class PdfReportService : IPdfReportService
 
     private static string StatusColor(CheckStatus s) => s switch
     {
-        CheckStatus.Pass or CheckStatus.Fixed => "#047857",
-        CheckStatus.Warning => "#B45309",
-        CheckStatus.Fail => "#B91C1C",
-        _ => "#64748B"
+        CheckStatus.Pass or CheckStatus.Fixed => "#248A3D",
+        CheckStatus.Warning => "#C93400",
+        CheckStatus.Fail => "#D70015",
+        _ => "#6E6E73"
     };
 
     private static void HeadCell(TableCellDescriptor t, string text)
     {
-        t.Cell().Background("#2563EB").PaddingVertical(4).PaddingHorizontal(5)
+        t.Cell().Background("#007AFF").PaddingVertical(4).PaddingHorizontal(5)
             .Text(text).FontSize(8.5f).SemiBold().FontColor("#FFFFFF");
     }
 
     private static void BodyCell(TableDescriptor t, string text, string bg, string color, bool semiBold = false)
     {
-        var d = t.Cell().Background(bg).BorderBottom(0.5f).BorderColor("#E2E8F0")
+        var d = t.Cell().Background(bg).BorderBottom(0.5f).BorderColor("#E5E5EA")
             .PaddingVertical(4).PaddingHorizontal(5).Text(text).FontSize(8.2f).FontColor(color);
         if (semiBold) d.SemiBold();
     }
@@ -316,7 +316,7 @@ public sealed class PdfReportService : IPdfReportService
         if (!s.Success)
         {
             col.Item().PaddingTop(4).Text($"本次未测得有效吞吐数据（{s.Error}）。低速判断以分段延迟画像、链路协商与 DNS 耗时为准。")
-                .FontSize(9.5f).FontColor("#B45309");
+                .FontSize(9.5f).FontColor("#C93400");
             return;
         }
         (string, string)[] left =
@@ -353,16 +353,16 @@ public sealed class PdfReportService : IPdfReportService
                 table.Header(h => { HeadCell(h, "测速节点"); HeadCell(h, "平均速率"); HeadCell(h, "峰值"); HeadCell(h, "下载量 / 结果"); });
                 foreach (var e in s.Endpoints)
                 {
-                    var bg = e.Success ? "#FFFFFF" : "#FFFBEB";
-                    BodyCell(table, e.Label, bg, "#1E293B");
-                    BodyCell(table, e.Success ? $"{e.MbpsAvg:0.#} Mbps" : "—", bg, "#047857", true);
-                    BodyCell(table, e.Success ? $"{e.MbpsPeak:0.#} Mbps" : "—", bg, "#334155");
-                    BodyCell(table, e.Success ? $"{FormatHelper.Bytes(e.BytesTotal)} / {e.DurationMs / 1000.0:0.#} s" : e.Error, bg, "#475569");
+                    var bg = e.Success ? "#FFFFFF" : "#FFF4E5";
+                    BodyCell(table, e.Label, bg, "#1D1D1F");
+                    BodyCell(table, e.Success ? $"{e.MbpsAvg:0.#} Mbps" : "—", bg, "#248A3D", true);
+                    BodyCell(table, e.Success ? $"{e.MbpsPeak:0.#} Mbps" : "—", bg, "#48484A");
+                    BodyCell(table, e.Success ? $"{FormatHelper.Bytes(e.BytesTotal)} / {e.DurationMs / 1000.0:0.#} s" : e.Error, bg, "#6E6E73");
                 }
             });
         }
         col.Item().PaddingTop(4).Text("注：下载实测受测速节点、出口拥塞与高峰时段影响，应与链路协商速率、分段延迟画像结合解读。")
-            .FontSize(8).FontColor("#94A3B8");
+            .FontSize(8).FontColor("#8E8E93");
     }
 
     // ---------- 低速原因分析 ----------
@@ -387,15 +387,15 @@ public sealed class PdfReportService : IPdfReportService
             {
                 var (bg, tc) = cs.Level switch
                 {
-                    "高" => ("#FEF2F2", "#B91C1C"),
-                    "中" => ("#FFFBEB", "#B45309"),
-                    _ => ("#FFFFFF", "#475569")
+                    "高" => ("#FFEBEA", "#D70015"),
+                    "中" => ("#FFF4E5", "#C93400"),
+                    _ => ("#FFFFFF", "#6E6E73")
                 };
                 BodyCell(table, i++.ToString(), bg, tc, true);
                 BodyCell(table, cs.Level, bg, tc, true);
-                BodyCell(table, cs.Title, bg, "#1E293B");
+                BodyCell(table, cs.Title, bg, "#1D1D1F");
                 var merged = "依据：" + cs.EvidenceText + "\n处置：" + cs.ActionText;
-                BodyCell(table, merged, bg, "#334155");
+                BodyCell(table, merged, bg, "#48484A");
             }
         });
     }
@@ -416,12 +416,12 @@ public sealed class PdfReportService : IPdfReportService
             table.Header(h => { HeadCell(h, "修复动作"); HeadCell(h, "结果"); HeadCell(h, "输出"); });
             foreach (var r in data.Repairs)
             {
-                var bg = r.Status == RepairStatus.Fail ? "#FEF2F2" : "#FFFFFF";
-                BodyCell(table, r.Title, bg, "#1E293B");
-                BodyCell(table, r.StatusText, bg, r.Status == RepairStatus.Ok ? "#047857" : "#B91C1C", true);
+                var bg = r.Status == RepairStatus.Fail ? "#FFEBEA" : "#FFFFFF";
+                BodyCell(table, r.Title, bg, "#1D1D1F");
+                BodyCell(table, r.StatusText, bg, r.Status == RepairStatus.Ok ? "#248A3D" : "#D70015", true);
                 var output = (r.Output ?? "").Replace("\r", " ").Replace("\n", " ");
                 if (output.Length > 160) output = output[..160] + "…";
-                BodyCell(table, string.IsNullOrEmpty(output) ? "—" : output, bg, "#475569");
+                BodyCell(table, string.IsNullOrEmpty(output) ? "—" : output, bg, "#6E6E73");
             }
         });
     }
@@ -449,22 +449,22 @@ public sealed class PdfReportService : IPdfReportService
             {
                 var (pt, pc, pb) = priority switch
                 {
-                    1 => ("P1 立即", "#B91C1C", "#FEF2F2"),
-                    2 => ("P2 今日", "#B45309", "#FFFBEB"),
-                    _ => ("P3 观察", "#475569", "#F8FAFC")
+                    1 => ("P1 立即", "#D70015", "#FFEBEA"),
+                    2 => ("P2 今日", "#C93400", "#FFF4E5"),
+                    _ => ("P3 观察", "#6E6E73", "#F5F5F7")
                 };
                 var owner = OwnerOf(text);
-                var bg = priority == 1 ? "#FEF2F2" : priority == 2 ? "#FFFBEB" : "#FFFFFF";
+                var bg = priority == 1 ? "#FFEBEA" : priority == 2 ? "#FFF4E5" : "#FFFFFF";
                 BodyCell(table, $"{index++}. {pt}", bg, pc, true);
-                BodyCell(table, text, bg, "#334155");
-                BodyCell(table, owner, bg, "#64748B");
+                BodyCell(table, text, bg, "#48484A");
+                BodyCell(table, owner, bg, "#6E6E73");
             }
         });
 
         col.Item().PaddingTop(8).Column(c2 =>
         {
             c2.Item().Text("升级路径：物理层/驱动问题 → 本校信息中心或设备供应商；认证过期 → 教体局城域网认证平台重新登录；出口/策略问题 → 教体局信息中心。")
-                .FontSize(8.5f).FontColor("#64748B").LineHeight(1.5f);
+                .FontSize(8.5f).FontColor("#6E6E73").LineHeight(1.5f);
         });
     }
 
@@ -494,8 +494,8 @@ public sealed class PdfReportService : IPdfReportService
                 c2.Item().PaddingTop(14).Text("日期：______ 年 ____ 月 ____ 日").FontSize(9.5f);
             });
         });
-        col.Item().PaddingTop(10).Height(0.5f, Unit.Point).Background("#E2E8F0");
+        col.Item().PaddingTop(10).Height(0.5f, Unit.Point).Background("#E5E5EA");
         col.Item().PaddingTop(6).Text("本报告由青枢工具箱在本机自动生成，全部诊断数据仅在本地采集与留存，不包含任何云端上传行为。诊断时间戳以本机系统时钟为准。")
-            .FontSize(8).FontColor("#94A3B8").LineHeight(1.5f);
+            .FontSize(8).FontColor("#8E8E93").LineHeight(1.5f);
     }
 }
