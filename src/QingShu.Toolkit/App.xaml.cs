@@ -1,7 +1,10 @@
 using System;
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Cleanup;
@@ -35,6 +38,15 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // ★ WinUI 3 桌面端 UI 线程默认没有 SynchronizationContext：
+        //   await 后续代码 / Progress<T> 回调 / TaskScheduler.FromCurrentSynchronizationContext
+        //   全部落在线程池线程上，触碰 XAML 绑定属性即抛 COMException 0x8001010E。
+        //   此处安装基于 DispatcherQueue 的同步上下文，使 ConfigureAwait(true) 恒定回 UI 线程。
+        if (SynchronizationContext.Current is null)
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+        UiDispatcher.Initialize(DispatcherQueue.GetForCurrentThread());
+
         var services = new ServiceCollection();
         ConfigureServices(services);
         Services = services.BuildServiceProvider();

@@ -19,17 +19,17 @@ public sealed class HardwareProbeService : IHardwareProbeService
 {
     public DeviceFacts Facts { get; } = new();
 
+    private Task<DeviceFacts>? _loadTask; // 缓存任务而非标志位：避免并发调用拿到半成品数据
+
     public Task<DeviceFacts> EnsureLoadedAsync()
     {
-        if (Facts.Loaded) return Task.FromResult(Facts);
-        Facts.Loaded = true;
+        if (_loadTask != null) return _loadTask;
         Facts.ToolVersion = AppVersion.Text;
         Facts.HostName = Environment.MachineName;
-
         var (memLoad, totalPhys, _) = NativeMethods.GetMemoryStatus();
         Facts.TotalRamBytes = totalPhys;
 
-        return Task.Run(async () =>
+        _loadTask = Task.Run(async () =>
         {
             try
             {
@@ -72,8 +72,10 @@ public sealed class HardwareProbeService : IHardwareProbeService
                 }
             }
             catch { }
+            Facts.Loaded = true;
             return Facts;
         });
+        return _loadTask;
     }
 }
 

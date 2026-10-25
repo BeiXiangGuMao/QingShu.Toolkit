@@ -59,6 +59,7 @@ public sealed partial class MainWindow : Window
         {
             _backdrop.UpdateTheme(RootGrid.ActualTheme);
             RefreshRootBackground();
+            ApplyCaptionTheme(); // 系统标题栏按钮颜色必须随主题重着色，否则深浅切换后不协调
         };
 
         ApplyTheme();
@@ -97,6 +98,25 @@ public sealed partial class MainWindow : Window
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
+        ApplyCaptionTheme();
+    }
+
+    /// <summary>自定义标题栏下，系统最小化/最大化/关闭按钮必须随主题着色，否则深浅切换后观感割裂。</summary>
+    private void ApplyCaptionTheme()
+    {
+        try
+        {
+            var dark = RootGrid.ActualTheme == ElementTheme.Dark;
+            var tb = AppWindow.TitleBar;
+            tb.ButtonBackgroundColor = Colors.Transparent;
+            tb.ButtonInactiveBackgroundColor = Colors.Transparent;
+            tb.ButtonForegroundColor = dark ? Colors.White : Colors.Black;
+            tb.ButtonHoverBackgroundColor = dark ? FromHex("#22FFFFFF") : FromHex("#140F172A");
+            tb.ButtonPressedBackgroundColor = dark ? FromHex("#38FFFFFF") : FromHex("#290F172A");
+            tb.ButtonHoverForegroundColor = dark ? Colors.White : Colors.Black;
+            tb.ButtonInactiveForegroundColor = dark ? FromHex("#7F94A3B8") : FromHex("#7F64748B");
+        }
+        catch { }
     }
 
     // ================= 导航 =================
@@ -152,12 +172,14 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    /// <summary>解析 #RRGGBB（WinUI 3 的 ColorHelper 无 FromHex，本地实现）。</summary>
+    /// <summary>解析 #RRGGBB / #AARRGGBB（WinUI 3 的 ColorHelper 无 FromHex，本地实现）。</summary>
     private static Windows.UI.Color FromHex(string hex)
     {
         var s = hex.TrimStart('#');
-        return Windows.UI.Color.FromArgb(255,
-            Convert.ToByte(s.Substring(0, 2), 16),
+        byte a = 255;
+        if (s.Length == 8) { a = Convert.ToByte(s[..2], 16); s = s[2..]; }
+        return Windows.UI.Color.FromArgb(a,
+            Convert.ToByte(s[..2], 16),
             Convert.ToByte(s.Substring(2, 2), 16),
             Convert.ToByte(s.Substring(4, 2), 16));
     }
@@ -231,9 +253,9 @@ public sealed partial class MainWindow : Window
             {
                 UpdatePhase.Available => "\uE896",          // Download
                 UpdatePhase.ReadyToInstall => "\uE73E",     // CheckMark
-                UpdatePhase.UpToDate => "\uE72C",           // Refresh
+                UpdatePhase.UpToDate => "\uE895",           // Sync（更新语义）
                 UpdatePhase.Error => "\uE783",              // Error
-                _ => "\uE72C"
+                _ => "\uE895"
             };
             ToolTipService.SetToolTip(BtnUpdate, st.Phase switch
             {

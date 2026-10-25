@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services.Logging;
 
@@ -232,7 +233,11 @@ public sealed class UpdateService : IUpdateService
 
     private void Set(UpdateStatus s)
     {
-        Current = s;
-        StatusChanged?.Invoke(s);
+        // 后台 Http 全程 ConfigureAwait(false)：状态事件必须在源侧调度回 UI 线程
+        UiDispatcher.Run(() =>
+        {
+            Current = s;
+            StatusChanged?.Invoke(s);
+        });
     }
 }

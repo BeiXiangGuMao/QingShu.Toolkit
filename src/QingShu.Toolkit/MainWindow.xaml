@@ -46,7 +46,7 @@
                         Click="BtnUpdate_Click"
                         ToolTipService.ToolTip="检查更新">
                     <Grid>
-                        <FontIcon x:Name="UpdateIcon" FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;"
+                        <FontIcon x:Name="UpdateIcon" FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE895;"
                                   FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <ProgressRing x:Name="UpdateRing" Width="16" Height="16" IsActive="False" />
                         <Ellipse x:Name="UpdateDot" Width="7" Height="7" Fill="{ThemeResource ErrorBrush}"
@@ -64,6 +64,16 @@
                         IsTitleBarAutoPaddingEnabled="False"
                         OpenPaneLength="216"
                         SelectionChanged="NavView_SelectionChanged">
+            <NavigationView.Resources>
+                <ResourceDictionary>
+                    <!-- 底色统一：窗格/内容区透明，露出统一的页面底色，消除深浅色模式下
+                         系统默认灰白块与自定义色板的拼接感 -->
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+                    <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="Transparent" />
+                    <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
+                </ResourceDictionary>
+            </NavigationView.Resources>
             <NavigationView.MenuItems>
                 <NavigationViewItem Tag="dashboard" Content="总览仪表盘">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
@@ -104,7 +114,7 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="16">
                     <!-- 弹窗拦截计数 -->
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE720;" FontSize="12"
+                        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE720;" FontSize="12"
                                   Foreground="{ThemeResource TextSecondaryBrush}" />
                         <TextBlock x:Name="PopupCountText" Text="拦截 0" FontSize="11"
                                    Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />

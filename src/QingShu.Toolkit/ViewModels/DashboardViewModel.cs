@@ -72,55 +72,80 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         _timer.Start();
         _ = RefreshLiveAsync();
         _ = LoadFactsAsync();
-        LoadStats();
+        _ = LoadStatsAsync();
     }
 
     private async Task LoadFactsAsync()
     {
         var f = await _probe.EnsureLoadedAsync().ConfigureAwait(true);
+        // WMI/netsh 类探测放在线程池；（同步上下文已安装）await 后回到 UI 线程再更新绑定
+        var nic = await Task.Run(() =>
+        {
+            var primary = NetworkProbeHelper.GetPrimaryAdapter();
+            return primary == null ? "无活动网卡"
+                : $"{primary.Name} · {primary.IpV4 ?? "无IP"} · {(primary.IsUp ? "已连接" : "断开")}";
+        }).ConfigureAwait(true);
         OsVersion = string.IsNullOrEmpty(f.OsVersion) ? $"Windows（Build {f.OsBuild}）" : f.OsVersion;
         CpuName = string.IsNullOrEmpty(f.CpuName) ? "未知处理器" : f.CpuName;
         SerialNumber = f.SerialNumber;
         MachineGuid = string.IsNullOrEmpty(f.MachineGuid) ? "未知" : f.MachineGuid;
-        var adapters = NetworkProbeHelper.GetAllAdapters();
-        var primary = NetworkProbeHelper.GetPrimaryAdapter();
-        NicText = primary == null ? "无活动网卡"
-            : $"{primary.Name} · {primary.IpV4 ?? "无IP"} · {(primary.IsUp ? "已连接" : "断开")}";
+        NicText = nic;
     }
+
+    private bool _sampling; // 采样重入保护：耗时超过 2s 时跳过一拍
 
     private async Task RefreshLiveAsync()
     {
+        if (_sampling) return;
+        _sampling = true;
         try
         {
-            // CPU
-            try
+            var s = await Task.Run(SampleLive).ConfigureAwait(true);
+            CpuPercent = s.CpuPct;
+            CpuText = s.CpuText;
+            if (s.MemTotal > 0)
             {
-                _cpuCounter ??= new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
-                if (Math.Abs(CpuPercent) < 0.001 && _cpuCounter.RawValue >= 0) _cpuCounter.NextValue(); // 首次采样预热
-                var cpu = _cpuCounter.NextValue();
-                CpuPercent = Math.Clamp(cpu, 0, 100);
-                CpuText = $"{CpuPercent:0.#}%";
+                MemPercent = s.MemPct;
+                MemText = s.MemText;
             }
-            catch { CpuText = "N/A"; }
-
-            // 内存
-            var (load, total, avail) = NativeMethods.GetMemoryStatus();
-            if (total > 0)
+            if (s.DiskOk)
             {
-                MemPercent = load;
-                MemText = $"{FormatHelper.Bytes((long)(total - avail))} / {FormatHelper.Bytes((long)total)}（占用 {load}%）";
-            }
-
-            // C 盘
-            var c = DriveInfo.GetDrives().FirstOrDefault(d => d.Name == @"C:\" && d.IsReady);
-            if (c != null)
-            {
-                DiskPercent = 100.0 * (c.TotalSize - c.AvailableFreeSpace) / c.TotalSize;
-                DiskText = $"C 盘剩余 {FormatHelper.Bytes(c.AvailableFreeSpace)} / 共 {FormatHelper.Bytes(c.TotalSize)}";
+                DiskPercent = s.DiskPct;
+                DiskText = s.DiskText;
             }
         }
         catch { }
-        await Task.CompletedTask;
+        finally { _sampling = false; }
+    }
+
+    private (double CpuPct, string CpuText, double MemPct, string MemText, long MemTotal, bool DiskOk, double DiskPct, string DiskText) SampleLive()
+    {
+        double cpu = CpuPercent;
+        string cpuText = CpuText;
+        try
+        {
+            _cpuCounter ??= new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
+            if (Math.Abs(CpuPercent) < 0.001 && _cpuCounter.RawValue >= 0) _cpuCounter.NextValue(); // 首次采样预热
+            cpu = Math.Clamp(_cpuCounter.NextValue(), 0, 100);
+            cpuText = $"{cpu:0.#}%";
+        }
+        catch { cpuText = "N/A"; }
+
+        var (load, total, avail) = NativeMethods.GetMemoryStatus();
+        string memText = total > 0
+            ? $"{FormatHelper.Bytes((long)(total - avail))} / {FormatHelper.Bytes((long)total)}（占用 {load}%）"
+            : "";
+
+        var c = DriveInfo.GetDrives().FirstOrDefault(d => d.Name == @"C:\" && d.IsReady);
+        bool diskOk = c != null && c.TotalSize > 0;
+        double diskPct = 0;
+        string diskText = "";
+        if (c != null && c.TotalSize > 0)
+        {
+            diskPct = 100.0 * (c.TotalSize - c.AvailableFreeSpace) / c.TotalSize;
+            diskText = $"C 盘剩余 {FormatHelper.Bytes(c.AvailableFreeSpace)} / 共 {FormatHelper.Bytes(c.TotalSize)}";
+        }
+        return (cpu, cpuText, load, memText, total, diskOk, diskPct, diskText);
     }
 
     private void OnPowerChanged(PowerUpdate u) => UpdatePower(u.State, u.IsOnBattery, u.ModeText, u.Description);
@@ -159,35 +184,36 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         PopupBlockedText = _popup.BlockedCount.ToString();
     }
 
-    private void LoadStats()
+    private async Task LoadStatsAsync()
     {
         DiagTodayText = _log.GetDiagSessionCount(DateTime.Today).ToString();
         PopupBlockedText = _popup.BlockedCount.ToString();
+        LastDiagText = DiagTodayText == "0" ? "今天还没有诊断过" : $"今天已运行 {DiagTodayText} 次诊断";
+        // 最近一次清理报告（磁盘 IO，线程池执行）
+        var lastCleanup = await Task.Run(FindLastCleanupText).ConfigureAwait(true);
+        if (lastCleanup != null) LastCleanupText = lastCleanup;
+    }
+
+    private string? FindLastCleanupText()
+    {
         try
         {
-            // 最近一次清理报告
             var dirs = _log.GetDateDirs();
             foreach (var (dir, date, _) in dirs)
             {
                 var cleanup = _log.GetDateFiles(dir).FirstOrDefault(f => f.FileName.StartsWith("cleanup-", StringComparison.Ordinal));
-                if (cleanup.FileName != null)
+                if (cleanup.FileName == null) continue;
+                try
                 {
-                    try
-                    {
-                        var json = File.ReadAllText(cleanup.FullPath);
-                        var report = JsonSerializer.Deserialize<CleanupReport>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        if (report != null)
-                        {
-                            LastCleanupText = $"{date} 释放 {FormatHelper.Bytes(report.FreedBytes)}（{report.DeletedFiles} 项）";
-                            break;
-                        }
-                    }
-                    catch { }
+                    var json = File.ReadAllText(cleanup.FullPath);
+                    var report = JsonSerializer.Deserialize<CleanupReport>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (report != null) return $"{date} 释放 {FormatHelper.Bytes(report.FreedBytes)}（{report.DeletedFiles} 项）";
                 }
+                catch { }
             }
         }
         catch { }
-        LastDiagText = DiagTodayText == "0" ? "今天还没有诊断过" : $"今天已运行 {DiagTodayText} 次诊断";
+        return null;
     }
 
     [RelayCommand]

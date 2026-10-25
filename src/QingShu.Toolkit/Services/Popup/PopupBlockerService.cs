@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Services.Logging;
 
@@ -104,7 +105,7 @@ public sealed class PopupBlockerService : IPopupBlockerService, IDisposable
     {
         try
         {
-            if (DateTime.Today != _day) { _day = DateTime.Today; Interlocked.Exchange(ref _blocked, 0); Blocked?.Invoke(0); }
+            if (DateTime.Today != _day) { _day = DateTime.Today; Interlocked.Exchange(ref _blocked, 0); UiDispatcher.Run(() => Blocked?.Invoke(0)); }
             if (!Enabled) return;
             Scan();
         }
@@ -143,7 +144,8 @@ public sealed class PopupBlockerService : IPopupBlockerService, IDisposable
                         if (_recent.Count > 200) _recent.RemoveAt(_recent.Count - 1);
                     }
                     _log.App(LogLevel.Warn, "popup", $"已拦截新窗口：\"{w.Title}\" class={w.ClassName} process={w.ProcessName}.exe pid={w.Pid}");
-                    Blocked?.Invoke(_blocked);
+                    var count = _blocked; // Timer 回调线程池线程，事件需调度回 UI 线程
+                    UiDispatcher.Run(() => Blocked?.Invoke(count));
                 }
             }
             catch { }

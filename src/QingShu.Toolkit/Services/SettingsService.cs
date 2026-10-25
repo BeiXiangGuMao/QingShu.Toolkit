@@ -2,7 +2,9 @@ using System;
 using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Models;
 
 namespace QingShu.Toolkit.Services;
@@ -35,6 +37,8 @@ public sealed class SettingsService : ISettingsService
 
     public event Action? Changed;
 
+    private readonly SemaphoreSlim _saveGate = new(1, 1); // 多处 fire-and-forget 保存需串行化，防并发写坏配置
+
     public SettingsService()
     {
         Load();
@@ -58,20 +62,27 @@ public sealed class SettingsService : ISettingsService
 
     public async Task SaveAsync()
     {
+        var snapshot = Current; // Reset 可能替换引用，先捕获快照
+        await _saveGate.WaitAsync().ConfigureAwait(false);
         try
         {
             Directory.CreateDirectory(DataDir);
-            var json = JsonSerializer.Serialize(Current, JsonOpts);
-            await File.WriteAllTextAsync(ConfigPath, json).ConfigureAwait(false);
+            var json = JsonSerializer.Serialize(snapshot, JsonOpts);
+            // 先写临时文件再原子替换：进程中途被杀不会留下半截配置导致全部重置
+            var tmp = ConfigPath + ".tmp";
+            await File.WriteAllTextAsync(tmp, json).ConfigureAwait(false);
+            File.Move(tmp, ConfigPath, overwrite: true);
         }
         catch { /* 磁盘只读等场景静默 */ }
-        Changed?.Invoke();
+        finally { _saveGate.Release(); }
+        // SaveAsync 可能从任意线程调用（ConfigureAwait(false) 链），Changed 必须调度回 UI
+        UiDispatcher.Run(() => Changed?.Invoke());
     }
 
     public void Reset()
     {
         try { if (File.Exists(ConfigPath)) File.Delete(ConfigPath); } catch { }
         Current = new AppSettings();
-        Changed?.Invoke();
+        UiDispatcher.Run(() => Changed?.Invoke());
     }
 }

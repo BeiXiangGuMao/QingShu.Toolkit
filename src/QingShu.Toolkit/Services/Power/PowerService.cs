@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Interop;
 
 namespace QingShu.Toolkit.Services.Power;
@@ -96,7 +97,10 @@ public sealed class PowerService : IPowerService, IDisposable
                 PowerUiState.Eco => "低功耗（已应用 EcoQoS 节能）",
                 _ => "平衡"
             };
-            Changed?.Invoke(new PowerUpdate(next, onBattery, desc, modeText));
+            var update = new PowerUpdate(next, onBattery, desc, modeText);
+            // Timer 回调在线程池线程：事件必须在“源侧”调度回 UI 线程，
+            // 否则订阅方更新绑定属性时抛 COMException 0x8001010E
+            UiDispatcher.Run(() => Changed?.Invoke(update));
         }
     }
 

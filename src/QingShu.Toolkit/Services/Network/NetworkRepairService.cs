@@ -97,9 +97,13 @@ public sealed class NetworkRepairService : INetworkRepairService
                 new[] { "dns.servers" }));
 
         if (Has("portal.detect") || Has("portal.expiry"))
-            plan.Add(new RepairAction("open_portal", "打开城域网认证页面",
+        {
+            var openPortal = new RepairAction("open_portal", "打开城域网认证页面",
                 "调起默认浏览器打开检测到的认证门户，重新登录校园网账号即可恢复。",
-                false, false, new[] { "portal.detect", "portal.expiry" }));
+                false, false, new[] { "portal.detect", "portal.expiry" })
+            { PortalUrl = portalUrl }; // 优先携带诊断时实际检测到的门户地址
+            plan.Add(openPortal);
+        }
 
         // ===== 提速类修复（低速专项；均为单点命令、可逆，遵循安全边界：不导入注册表文件、不改系统服务） =====
         bool SharedTrue(string k) => ctx?.SharedBool(k) == true;
@@ -212,15 +216,12 @@ public sealed class NetworkRepairService : INetworkRepairService
             }
             case "open_portal":
             {
-                var ctx = NetworkProbeHelper.GetPrimaryAdapter();
-                var url = _settings.Current.PortalBaseUrl;
-                if (string.IsNullOrWhiteSpace(url))
-                {
-                    // 兜底：从上次诊断的共享状态无法取回时，用通用 204 探测得到的门户不可知，提示手动
-                    return (false, "未配置门户地址：请在 设置 → 网络诊断 中填写认证门户地址。");
-                }
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                return (true, $"已在默认浏览器打开 {url}");
+                // 优先使用诊断时实际检测到的门户地址（可能为 IP 门户），其次用户配置值
+                var url = action.PortalUrl ?? _settings.Current.PortalBaseUrl;
+                if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var portal))
+                    return (false, "未检测到认证门户且未配置：请手动在浏览器打开认证页，或在 设置 → 网络诊断 中填写门户地址。");
+                Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
+                return (true, $"已在默认浏览器打开 {portal}");
             }
             default:
                 return (false, $"动作 {action.Id} 不属于普通权限类别");

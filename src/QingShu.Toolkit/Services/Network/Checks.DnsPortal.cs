@@ -217,7 +217,10 @@ public static partial class NetworkChecks
             bool looksPortal = r.LooksLikeHtml && keywords.Any(k => snippet.Contains(k, StringComparison.OrdinalIgnoreCase));
 
             ctx.SetShared("portal.detected", true);
-            ctx.SetShared("portal.url", portalUrl);
+            // 仅在真实捕获到门户地址（非 NCSI 兑底）时写入共享上下文，
+            // 避免一键修复打开无意义的探测地址
+            if (portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal))
+                ctx.SetShared("portal.url", portalUrl);
             var detail = new List<string>
             {
                 $"探测 {NcsiUrl} → HTTP {r.StatusCode}{(r.IsRedirect ? $" 重定向到 {r.Location}" : "")}"
@@ -228,8 +231,11 @@ public static partial class NetworkChecks
             if (looksPortal && Regex.IsMatch(snippet, @"过期|失效|被挤|离线|超时|expire|offline|kick", RegexOptions.IgnoreCase))
                 return CheckOutcome.Fail("城域网认证已过期或被踢下线", "请打开认证门户重新登录；如反复被踢，可能账号在别处登录或欠费，联系信息中心核实。", canFix: true, detail.ToArray());
 
+            var portalHint = portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal)
+                ? $"已定位认证门户 {portalUrl}，"
+                : "";
             return CheckOutcome.Fail("检测到认证门户（当前未通过城域网认证）",
-                "一键修复可打开认证页面完成登录；也可在设置中配置门户地址获得更精确的过期判定。", canFix: true, detail.ToArray());
+                $"{portalHint}一键修复可直接打开认证页完成登录；也可在设置中配置门户地址获得更精确的过期判定。", canFix: true, detail.ToArray());
         }
     }
 

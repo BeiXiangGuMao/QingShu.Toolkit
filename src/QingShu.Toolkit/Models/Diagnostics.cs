@@ -165,6 +165,9 @@ public sealed partial class RepairAction : ObservableObject
     public bool Risky { get; }
     public string[] RelatedCheckIds { get; }
 
+    /// <summary>open_portal 专用：诊断时检测到的认证门户地址（优先于设置值）。</summary>
+    public string? PortalUrl { get; set; }
+
     [ObservableProperty] private bool _isSelected = true;
     [ObservableProperty] private RepairStatus _status = RepairStatus.Pending;
     [ObservableProperty] private string _output = "";
