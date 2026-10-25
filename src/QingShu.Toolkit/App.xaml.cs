@@ -55,7 +55,7 @@ public partial class App : Application
         Services = services.BuildServiceProvider();
 
         var log = Services.GetRequiredService<ILogService>();
-        log.App(LogLevel.Info, "app", $"青枢工具箱 v{AppVersion.Text} 启动",
+        log.App(LogLevel.Info, "app", $"青枢工具箱 v{AppVersion.DisplayText} 启动",
             new { os = Environment.OSVersion.VersionString, x64 = Environment.Is64BitProcess, admin = ElevationHelper.IsCurrentUserAdmin() });
         Services.GetRequiredService<ISettingsService>();
         log.PruneOldLogs();

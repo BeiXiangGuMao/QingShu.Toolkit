@@ -34,27 +34,27 @@ public partial class NetworkDiagViewModel : ObservableObject
     /// <summary>低速专项：嫌疑原因清单（按嫌疑度降序）。</summary>
     public ObservableCollection<SlowCause> SlowCauses { get; } = new();
 
-    [ObservableProperty] public partial bool IsRunning { get; set; }
-    [ObservableProperty] public partial int ModeIndex { get; set; } // 0=全面诊断 1=快速体检 2=网速与低速分析
-    [ObservableProperty] public partial double ProgressValue { get; set; }
-    [ObservableProperty] public partial string ProgressText { get; set; }
-    [ObservableProperty] public partial int PassCount { get; set; }
-    [ObservableProperty] public partial int WarnCount { get; set; }
-    [ObservableProperty] public partial int FailCount { get; set; }
-    [ObservableProperty] public partial int FixedCount { get; set; }
-    [ObservableProperty] public partial int SkipCount { get; set; }
-    [ObservableProperty] public partial bool HasRun { get; set; }
-    [ObservableProperty] public partial bool IsRepairing { get; set; }
-    [ObservableProperty] public partial string RepairHint { get; set; }
-    [ObservableProperty] public partial string LastReportPath { get; set; }
-    [ObservableProperty] public partial bool ReportReady { get; set; }
-    [ObservableProperty] public partial string SessionText { get; set; }
+    [ObservableProperty] private bool _isRunning;
+    [ObservableProperty] private int _modeIndex; // 0=全面诊断 1=快速体检 2=网速与低速分析
+    [ObservableProperty] private double _progressValue;
+    [ObservableProperty] private string _progressText = "";
+    [ObservableProperty] private int _passCount;
+    [ObservableProperty] private int _warnCount;
+    [ObservableProperty] private int _failCount;
+    [ObservableProperty] private int _fixedCount;
+    [ObservableProperty] private int _skipCount;
+    [ObservableProperty] private bool _hasRun;
+    [ObservableProperty] private bool _isRepairing;
+    [ObservableProperty] private string _repairHint = "";
+    [ObservableProperty] private string _lastReportPath = "";
+    [ObservableProperty] private bool _reportReady;
+    [ObservableProperty] private string _sessionText = "";
     // ---- 低速专项实时测速（约 400ms 一拍） ----
-    [ObservableProperty] public partial string SpeedPhaseText { get; set; }
-    [ObservableProperty] public partial string SpeedMbpsText { get; set; }
-    [ObservableProperty] public partial string SpeedSubText { get; set; }
-    [ObservableProperty] public partial bool HasSlowCauses { get; set; }
-    [ObservableProperty] public partial string SlowConclusionText { get; set; }
+    [ObservableProperty] private string _speedPhaseText = "尚未测速";
+    [ObservableProperty] private string _speedMbpsText = "—";
+    [ObservableProperty] private string _speedSubText = "选择「网速与低速分析」模式后点击开始";
+    [ObservableProperty] private bool _hasSlowCauses;
+    [ObservableProperty] private string _slowConclusionText = "";
 
     public string LogLocationText { get; }
 
@@ -90,10 +90,6 @@ public partial class NetworkDiagViewModel : ObservableObject
         _settings = settings;
         _probe = probe;
         _log = log;
-        // partial 属性无初始化器：原字段默认值移入构造器
-        ProgressText = ""; RepairHint = ""; LastReportPath = ""; SessionText = "";
-        SpeedPhaseText = "尚未测速"; SpeedMbpsText = "—";
-        SpeedSubText = "选择「网速与低速分析」模式后点击开始"; SlowConclusionText = "";
         LogLocationText = log.Root;
     }
 
@@ -225,7 +221,7 @@ public partial class NetworkDiagViewModel : ObservableObject
             : $"发现 {plan.Count} 个可执行修复动作。管理类操作将合并为一次 UAC 提升确认；危险项默认不勾选。";
     }
 
-    [ObservableProperty] public partial bool HasRepairPlanPublic { get; set; }
+    [ObservableProperty] private bool _hasRepairPlanPublic;
 
     partial void OnHasRepairPlanPublicChanged(bool value) => OnPropertyChanged(nameof(CanRepair));
 
@@ -276,7 +272,7 @@ public partial class NetworkDiagViewModel : ObservableObject
             GeneratedAt = DateTime.Now,
             StartedAt = _lastReport.StartedAt,
             FinishedAt = _lastReport.FinishedAt,
-            ToolVersion = AppVersion.Text,
+            ToolVersion = AppVersion.DisplayText,
             ModeText = _lastReport.ModeText,
             LinkSpeedText = speed is { Success: true, LinkMbps: > 0 }
                 ? $"{(_lastContext?.Primary?.IsWireless == true ? "无线" : "有线")} {speed.LinkText}"

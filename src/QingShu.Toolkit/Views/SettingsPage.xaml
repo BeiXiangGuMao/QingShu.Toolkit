@@ -152,7 +152,7 @@
                         <Button Command="{x:Bind Vm.ResetSettingsCommand}" Content="恢复默认设置" />
                     </StackPanel>
                     <TextBlock Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap">
-                        <Run Text="青枢工具箱 v" /><Run Text="{x:Bind Vm.VersionText, Mode=OneWay}" /><Run Text=" · 基于 .NET 8 + WinUI 3（Windows App SDK 1.6）+ QuestPDF · MIT License" />
+                        <Run Text="青枢工具箱 v" /><Run Text="{x:Bind Vm.VersionText, Mode=OneWay}" /><Run Text=" · 基于 .NET 8 + WinUI 3（Windows App SDK 1.6）+ QuestPDF · MIT License · 版权所有 © 2026 BeiXiangGuMao" />
                     </TextBlock>
                     <TextBlock Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap"
                                Text="隐私承诺：所有诊断、清理、报告数据仅在本机处理与留存，不上传任何数据；唯一联网行为是检查 GitHub 更新（可关闭）。" />

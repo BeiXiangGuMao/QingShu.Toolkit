@@ -48,7 +48,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleDragArea);
         try { AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { }
-        VersionText.Text = "v" + AppVersion.Text;
+        VersionText.Text = "v" + AppVersion.DisplayText;
 
         // 材质：Win11 → Mica；Win10 → DesktopAcrylic；不支持 → 不透明
         if (_settings.Current.UseAcrylicBackdrop && _backdrop.TryAttach(this))
@@ -302,7 +302,7 @@ public sealed partial class MainWindow : Window
         var dlg = new ContentDialog
         {
             Title = "发现新版本",
-            Content = $"青枢工具箱 v{rel.VersionText} 已发布（当前 v{AppVersion.Text}）。\n\n" +
+            Content = $"青枢工具箱 v{rel.VersionText} 已发布（当前 v{AppVersion.DisplayText}）。\n\n" +
                       (rel.AssetSize > 0 ? $"安装包大小约 {rel.AssetSize / 1024 / 1024} MB。\n" : "") +
                       "是否现在下载？下载完成后会再次询问是否安装。",
             PrimaryButtonText = "下载更新",

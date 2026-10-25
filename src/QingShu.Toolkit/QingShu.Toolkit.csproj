@@ -30,9 +30,22 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!--
+      MVVM Toolkit 风格提示关闭：[ObservableProperty] 保持经典字段式写法。
+      C# 13 分部属性写法（public partial T Xxx { get; set; }）在部分 VS/Roslyn 组合下
+      生成器不产出实现，导致 CS9248/CS0759 全量报错（8661fe8 已全量回退），
+      故固定字段式并屏蔽对应风格诊断，避免再次被误导迁移。
+    -->
+    <NoWarn>$(NoWarn);MVVMTK0045;MVVMTK0034</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <Version>1.2.0</Version>
+    <!--
+      版本策略（Beta 阶段）：展示版本带 -beta 后缀（经 InformationalVersion 自动进入 AppVersion.DisplayText），
+      程序集数字版本自动取前缀 1.2.0，更新比较 Version.Parse(AppVersion.Text) 不受影响。
+      转正时改为如 <Version>1.3.0</Version> 即可，展示后缀自动消失。
+    -->
+    <Version>1.2.0-beta</Version>
+    <Copyright>版权所有 © 2026 BeiXiangGuMao</Copyright>
     <AssemblyName>QingShu.Toolkit</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Authors>BeiXiangGuMao</Authors>

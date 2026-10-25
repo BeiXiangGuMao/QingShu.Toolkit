@@ -16,34 +16,34 @@ public partial class SettingsViewModel : ObservableObject
     private readonly IUpdateService _update;
     private readonly ILogService _log;
 
-    [ObservableProperty] public partial int ThemeIndex { get; set; } // 0=跟随系统 1=浅色 2=深色
-    [ObservableProperty] public partial bool UseAcrylic { get; set; }
-    [ObservableProperty] public partial string PortalBaseUrl { get; set; }
-    [ObservableProperty] public partial bool PortalAutoLogin { get; set; }
-    [ObservableProperty] public partial string PortalUsername { get; set; }
-    [ObservableProperty] public partial string PortalPassword { get; set; }
-    [ObservableProperty] public partial string AuthStatusUrl { get; set; }
-    [ObservableProperty] public partial string AuthOkKeywords { get; set; }
-    [ObservableProperty] public partial string IntranetProbeHost { get; set; }
-    [ObservableProperty] public partial string DnsPreferred { get; set; }
-    [ObservableProperty] public partial string DnsAlternate { get; set; }
-    [ObservableProperty] public partial string ImOldDaysText { get; set; }
-    [ObservableProperty] public partial string LargeMinMbText { get; set; }
-    [ObservableProperty] public partial bool DeleteToRecycleBin { get; set; }
-    [ObservableProperty] public partial int PowerModeIndex { get; set; } // 0=自动 1=平衡 2=高性能 3=低功耗
-    [ObservableProperty] public partial bool ApplyEcoQosToSelf { get; set; }
-    [ObservableProperty] public partial bool PopupEnabled { get; set; }
-    [ObservableProperty] public partial bool AutoCheckUpdate { get; set; }
-    [ObservableProperty] public partial string UpdateRepo { get; set; }
-    [ObservableProperty] public partial string UpdateStatusText { get; set; }
-    [ObservableProperty] public partial double UpdateProgress { get; set; }
-    [ObservableProperty] public partial bool IsUpdateBusy { get; set; }
-    [ObservableProperty] public partial bool UpdateAvailable { get; set; }
-    [ObservableProperty] public partial bool UpdateDownloaded { get; set; }
-    [ObservableProperty] public partial string LogRetentionText { get; set; }
-    [ObservableProperty] public partial string LogRootText { get; set; }
-    [ObservableProperty] public partial string SavedTip { get; set; }
-    [ObservableProperty] public partial string VersionText { get; set; }
+    [ObservableProperty] private int _themeIndex;          // 0=跟随系统 1=浅色 2=深色
+    [ObservableProperty] private bool _useAcrylic;
+    [ObservableProperty] private string _portalBaseUrl = "";
+    [ObservableProperty] private bool _portalAutoLogin;
+    [ObservableProperty] private string _portalUsername = "";
+    [ObservableProperty] private string _portalPassword = "";
+    [ObservableProperty] private string _authStatusUrl = "";
+    [ObservableProperty] private string _authOkKeywords = "";
+    [ObservableProperty] private string _intranetProbeHost = "";
+    [ObservableProperty] private string _dnsPreferred = "";
+    [ObservableProperty] private string _dnsAlternate = "";
+    [ObservableProperty] private string _imOldDaysText = "";
+    [ObservableProperty] private string _largeMinMbText = "";
+    [ObservableProperty] private bool _deleteToRecycleBin;
+    [ObservableProperty] private int _powerModeIndex;      // 0=自动 1=平衡 2=高性能 3=低功耗
+    [ObservableProperty] private bool _applyEcoQosToSelf;
+    [ObservableProperty] private bool _popupEnabled;
+    [ObservableProperty] private bool _autoCheckUpdate;
+    [ObservableProperty] private string _updateRepo = "";
+    [ObservableProperty] private string _updateStatusText = "";
+    [ObservableProperty] private double _updateProgress;
+    [ObservableProperty] private bool _isUpdateBusy;
+    [ObservableProperty] private bool _updateAvailable;
+    [ObservableProperty] private bool _updateDownloaded;
+    [ObservableProperty] private string _logRetentionText = "";
+    [ObservableProperty] private string _logRootText = "";
+    [ObservableProperty] private string _savedTip = "";
+    [ObservableProperty] private string _versionText = AppVersion.DisplayText;
 
     private bool _loading = true;
 
@@ -52,8 +52,6 @@ public partial class SettingsViewModel : ObservableObject
         _settings = settings;
         _update = update;
         _log = log;
-        // partial 属性无初始化器：未被 LoadFromSettings 覆盖的默认值在此补齐
-        UpdateStatusText = ""; SavedTip = ""; VersionText = AppVersion.Text;
         LoadFromSettings();
 
         _update.StatusChanged += OnUpdateStatus;
@@ -62,27 +60,27 @@ public partial class SettingsViewModel : ObservableObject
     private void LoadFromSettings()
     {
         var s = _settings.Current;
-        ThemeIndex = s.ThemeMode switch { "light" => 1, "dark" => 2, _ => 0 };
-        UseAcrylic = s.UseAcrylicBackdrop;
-        PortalBaseUrl = s.PortalBaseUrl;
-        PortalAutoLogin = s.PortalAutoLogin;
-        PortalUsername = s.PortalUsername;
-        PortalPassword = s.PortalPassword;
-        AuthStatusUrl = s.AuthStatusUrl;
-        AuthOkKeywords = s.AuthOkKeywords;
-        IntranetProbeHost = s.IntranetProbeHost;
-        DnsPreferred = s.DnsPreferred;
-        DnsAlternate = s.DnsAlternate;
-        ImOldDaysText = s.ImOldDays.ToString();
-        LargeMinMbText = s.LargeFileMinMb.ToString();
-        DeleteToRecycleBin = s.DeleteToRecycleBin;
-        PowerModeIndex = s.PowerMode switch { "balanced" => 1, "performance" => 2, "eco" => 3, _ => 0 };
-        ApplyEcoQosToSelf = s.ApplyEcoQosToSelf;
-        PopupEnabled = s.PopupBlockEnabled;
-        AutoCheckUpdate = s.AutoCheckUpdate;
-        UpdateRepo = s.UpdateRepo;
-        LogRetentionText = s.LogRetentionDays.ToString();
-        LogRootText = _log.Root;
+        _themeIndex = s.ThemeMode switch { "light" => 1, "dark" => 2, _ => 0 };
+        _useAcrylic = s.UseAcrylicBackdrop;
+        _portalBaseUrl = s.PortalBaseUrl;
+        _portalAutoLogin = s.PortalAutoLogin;
+        _portalUsername = s.PortalUsername;
+        _portalPassword = s.PortalPassword;
+        _authStatusUrl = s.AuthStatusUrl;
+        _authOkKeywords = s.AuthOkKeywords;
+        _intranetProbeHost = s.IntranetProbeHost;
+        _dnsPreferred = s.DnsPreferred;
+        _dnsAlternate = s.DnsAlternate;
+        _imOldDaysText = s.ImOldDays.ToString();
+        _largeMinMbText = s.LargeFileMinMb.ToString();
+        _deleteToRecycleBin = s.DeleteToRecycleBin;
+        _powerModeIndex = s.PowerMode switch { "balanced" => 1, "performance" => 2, "eco" => 3, _ => 0 };
+        _applyEcoQosToSelf = s.ApplyEcoQosToSelf;
+        _popupEnabled = s.PopupBlockEnabled;
+        _autoCheckUpdate = s.AutoCheckUpdate;
+        _updateRepo = s.UpdateRepo;
+        _logRetentionText = s.LogRetentionDays.ToString();
+        _logRootText = _log.Root;
         _loading = false;
     }
 
@@ -101,15 +99,15 @@ public partial class SettingsViewModel : ObservableObject
         s.IntranetProbeHost = IntranetProbeHost?.Trim() ?? "";
         s.DnsPreferred = DnsPreferred?.Trim() ?? "223.5.5.5";
         s.DnsAlternate = DnsAlternate?.Trim() ?? "119.29.29.29";
-        s.ImOldDays = ParseInt(ImOldDaysText, 180);
-        s.LargeFileMinMb = ParseInt(LargeMinMbText, 100);
+        s.ImOldDays = ParseInt(_imOldDaysText, 180);
+        s.LargeFileMinMb = ParseInt(_largeMinMbText, 100);
         s.DeleteToRecycleBin = DeleteToRecycleBin;
         s.PowerMode = PowerModeIndex switch { 1 => "balanced", 2 => "performance", 3 => "eco", _ => "auto" };
         s.ApplyEcoQosToSelf = ApplyEcoQosToSelf;
         s.PopupBlockEnabled = PopupEnabled;
         s.AutoCheckUpdate = AutoCheckUpdate;
         s.UpdateRepo = UpdateRepo?.Trim() ?? s.UpdateRepo;
-        s.LogRetentionDays = Math.Clamp(ParseInt(LogRetentionText, 90), 7, 3650);
+        s.LogRetentionDays = Math.Clamp(ParseInt(_logRetentionText, 90), 7, 3650);
         await _settings.SaveAsync().ConfigureAwait(true);
         SavedTip = $"{DateTime.Now:HH:mm:ss} 设置已保存并即时生效。";
     }

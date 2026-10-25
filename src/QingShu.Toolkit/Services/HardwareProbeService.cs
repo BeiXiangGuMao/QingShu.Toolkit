@@ -24,7 +24,7 @@ public sealed class HardwareProbeService : IHardwareProbeService
     public Task<DeviceFacts> EnsureLoadedAsync()
     {
         if (_loadTask != null) return _loadTask;
-        Facts.ToolVersion = AppVersion.Text;
+        Facts.ToolVersion = AppVersion.DisplayText;
         Facts.HostName = Environment.MachineName;
         var (memLoad, totalPhys, _) = NativeMethods.GetMemoryStatus();
         Facts.TotalRamBytes = totalPhys;
@@ -82,12 +82,31 @@ public sealed class HardwareProbeService : IHardwareProbeService
 /// <summary>版本号辅助。</summary>
 public static class AppVersion
 {
+    /// <summary>纯数字版本号（更新比较 / UA / 机器可读场景一律使用本值）。</summary>
     public static string Text
     {
         get
         {
             try { return System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0"; }
             catch { return "1.0.0"; }
+        }
+    }
+
+    /// <summary>展示用版本号：Beta 阶段带预发布后缀（取自 csproj 的 InformationalVersion，如 1.2.0-beta）。</summary>
+    public static string DisplayText
+    {
+        get
+        {
+            try
+            {
+                var asm = System.Reflection.Assembly.GetEntryAssembly();
+                var attr = asm is null
+                    ? null
+                    : System.Attribute.GetCustomAttribute(asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute))
+                        as System.Reflection.AssemblyInformationalVersionAttribute;
+                return string.IsNullOrWhiteSpace(attr?.InformationalVersion) ? Text : attr!.InformationalVersion;
+            }
+            catch { return Text; }
         }
     }
 }
