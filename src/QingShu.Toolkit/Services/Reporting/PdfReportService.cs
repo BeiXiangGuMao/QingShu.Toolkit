@@ -84,23 +84,29 @@ public sealed class PdfReportService : IPdfReportService
     // ================= 页眉 =================
     private static void ComposeHeader(IContainer c, NetworkReportData data)
     {
-        c.Row(row =>
+        // QuestPDF 单子容器约束：一个 IContainer 只能赋一个子元素。
+        // 品牌条与分隔线两个兄弟节点必须包进同一个 Column（col.Item() 每次开新槽位），
+        // 不得对 c 连续调用两次链式赋值（否则运行时抛 DocumentComposeException）。
+        c.Column(col =>
         {
-            row.AutoItem().Width(4, Unit.Point).Height(34, Unit.Point)
-                .Background("#007AFF");
-            row.RelativeItem().PaddingLeft(10).Column(col =>
+            col.Item().Row(row =>
             {
-                col.Item().Text("网络故障诊断报告").FontSize(17).SemiBold().FontColor("#1D1D1F");
-                col.Item().Text("青枢工具箱 QingShu.Toolkit · 校园网络专项诊断").FontSize(9).FontColor("#6E6E73");
+                row.AutoItem().Width(4, Unit.Point).Height(34, Unit.Point)
+                    .Background("#007AFF");
+                row.RelativeItem().PaddingLeft(10).Column(inner =>
+                {
+                    inner.Item().Text("网络故障诊断报告").FontSize(17).SemiBold().FontColor("#1D1D1F");
+                    inner.Item().Text("青枢工具箱 QingShu.Toolkit · 校园网络专项诊断").FontSize(9).FontColor("#6E6E73");
+                });
+                row.RelativeItem().AlignRight().Column(right =>
+                {
+                    right.Item().AlignRight().Text(data.Meta.ReportId).FontSize(10).SemiBold().FontColor("#007AFF");
+                    right.Item().AlignRight().Text($"生成时间 {data.Meta.GeneratedAt:yyyy-MM-dd HH:mm}").FontSize(8).FontColor("#8E8E93");
+                });
             });
-            row.RelativeItem().AlignRight().Column(col =>
-            {
-                col.Item().AlignRight().Text(data.Meta.ReportId).FontSize(10).SemiBold().FontColor("#007AFF");
-                col.Item().AlignRight().Text($"生成时间 {data.Meta.GeneratedAt:yyyy-MM-dd HH:mm}").FontSize(8).FontColor("#8E8E93");
-            });
+            // 分隔线（LineHorizontal 返回 void，用 1pt 高色带等效实现）
+            col.Item().PaddingTop(6).Height(1, Unit.Point).Background("#E5E5EA");
         });
-        // 分隔线（LineHorizontal 返回 void，用 1pt 高色带等效实现）
-        c.PaddingTop(6).Height(1, Unit.Point).Background("#E5E5EA");
     }
 
     // ================= 正文 =================
