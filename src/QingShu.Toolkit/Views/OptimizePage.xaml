@@ -1,0 +1,192 @@
+<Page
+    x:Class="QingShu.Toolkit.Views.OptimizePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:QingShu.Toolkit.ViewModels">
+
+    <ScrollViewer Padding="28,20,28,20">
+        <StackPanel MaxWidth="1080" HorizontalAlignment="Stretch" Spacing="14">
+            <StackPanel.Transitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="24" IsStaggeringEnabled="True" />
+                </TransitionCollection>
+            </StackPanel.Transitions>
+
+            <StackPanel>
+                <TextBlock Text="性能优化" Style="{StaticResource PageTitleTextBlock}" />
+                <TextBlock Text="只做安全且可逆的优化：工作集整理、进程级 EcoQoS 节能、被动弹窗拦截。绝不触碰服务/虚拟内存/注册表/Defender。"
+                           Style="{StaticResource PageSubtitleTextBlock}" />
+            </StackPanel>
+
+            <!-- 内存整理 -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="内存整理（不结束进程）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Command="{x:Bind Vm.RefreshMemoryCommand}" IsEnabled="{x:Bind Vm.MemoryReady, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="6"><SymbolIcon Symbol="Sync" /><TextBlock Text="刷新" /></StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource AccentButtonStyle}" Command="{x:Bind Vm.TrimMemoryCommand}"
+                                    IsEnabled="{x:Bind Vm.MemoryReady, Mode=OneWay}" Content="整理所选内存" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="EmptyWorkingSet 原理：把进程的物理内存页回收进待用列表，进程继续正常运行，等价于系统自带的内存压缩策略。"
+                               Style="{StaticResource CaptionTextBlock}" />
+                    <ListView ItemsSource="{x:Bind Vm.MemoryProcesses, Mode=OneWay}" SelectionMode="None" MaxHeight="300">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0,1" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ProcessRowVm">
+                                <Grid ColumnSpacing="10" Padding="4,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="0" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind PidText}" Style="{StaticResource MonoTextBlock}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="3" Text="{x:Bind WsText}" Style="{StaticResource BodyTextBlock}"
+                                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="14,0,0,0" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock Text="{x:Bind Vm.MemoryResult, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               Foreground="{ThemeResource InfoTextBrush}" />
+                </StackPanel>
+            </Border>
+
+            <!-- 进程 EcoQoS -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="进程节能（EcoQoS 功耗遏制）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Command="{x:Bind Vm.ApplyEcoCommand}" IsEnabled="{x:Bind Vm.EcoReady, Mode=OneWay}" Content="对所选启用节能" />
+                            <Button Command="{x:Bind Vm.RestoreEcoCommand}" IsEnabled="{x:Bind Vm.EcoReady, Mode=OneWay}" Content="恢复调度" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="EcoQoS 让闲置后台进程运行在能效核/低频档（Win10 1709+），适合在完成后台的更新、同步类任务上使用。"
+                               Style="{StaticResource CaptionTextBlock}" />
+                    <ListView ItemsSource="{x:Bind Vm.EcoProcesses, Mode=OneWay}" SelectionMode="None" MaxHeight="240">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0,1" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ProcessRowVm">
+                                <Grid ColumnSpacing="10" Padding="4,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="0" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" />
+                                    <Border Grid.Column="2" Background="{ThemeResource SuccessChipFillBrush}" CornerRadius="4" Padding="6,1"
+                                            Visibility="{x:Bind EcoVis, Mode=OneWay}">
+                                        <TextBlock Text="EcoQoS" Foreground="{ThemeResource SuccessTextBrush}" FontSize="10" />
+                                    </Border>
+                                    <TextBlock Grid.Column="3" Text="{x:Bind WsText}" Style="{StaticResource BodyTextBlock}"
+                                               VerticalAlignment="Center" Margin="14,0,0,0" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock Text="{x:Bind Vm.EcoResult, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               Foreground="{ThemeResource InfoTextBrush}" />
+                </StackPanel>
+            </Border>
+
+            <!-- 弹窗拦截 -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="被动弹窗拦截（全局白名单）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind Vm.PopupCountText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                                       Foreground="{ThemeResource InfoTextBrush}" VerticalAlignment="Center" />
+                            <ToggleSwitch IsOn="{x:Bind Vm.PopupEnabled, Mode=TwoWay}" Margin="-8,0" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="策略：只放行下方白名单进程的系统/办公/教学软件窗口，其余新出现的可见窗口一律被动关闭。启动时已存在的窗口、正在使用的前台窗口、系统外壳与工具窗口永不拦截。"
+                               Style="{StaticResource CaptionTextBlock}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox PlaceholderText="输入进程名，如 qqexternal（无需 .exe）" Width="280"
+                                 Text="{x:Bind Vm.NewWhitelistName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Command="{x:Bind Vm.AddWhitelistCommand}" Content="添加白名单" />
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{x:Bind Vm.Whitelist, Mode=OneWay}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsWrapGrid Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:WhitelistRowVm">
+                                <Border Background="{ThemeResource HoverFillBrush}" CornerRadius="99" Padding="10,3" Margin="0">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="{x:Bind Name}" FontSize="11.5"
+                                                   Foreground="{ThemeResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                                        <Button Content="✕" Padding="2,0" Background="Transparent" BorderThickness="0"
+                                                FontSize="10" Command="{x:Bind Vm.RemoveWhitelistCommand}"
+                                                CommandParameter="{x:Bind Name}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- 启动项（只读） -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="启动项（只读）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Command="{x:Bind Vm.RefreshStartupCommand}">
+                                <StackPanel Orientation="Horizontal" Spacing="6"><SymbolIcon Symbol="Sync" /><TextBlock Text="刷新" /></StackPanel>
+                            </Button>
+                            <Button Command="{x:Bind Vm.OpenTaskManagerCommand}" Content="打开任务管理器" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{x:Bind Vm.StartupHint, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
+                    <ListView ItemsSource="{x:Bind Vm.StartupItems, Mode=OneWay}" SelectionMode="None" MaxHeight="220">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0,1" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:StartupRowVm">
+                                <Grid ColumnSpacing="10" Padding="4,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Command}" Style="{StaticResource MonoTextBlock}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind Source}" Style="{StaticResource CaptionTextBlock}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <!-- 边界声明 -->
+            <InfoBar Severity="Informational" IsOpen="True" IsClosable="False" Title="青枢工具箱的设计边界"
+                     Message="本工具承诺：不改 services.msc 服务、不改虚拟内存、不导入注册表文件、不做 NTLite 式精简、不内置一键优化全家桶、不关闭 Defender。所有优化均可逆、可解释、可回溯（全部写入日志）。" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

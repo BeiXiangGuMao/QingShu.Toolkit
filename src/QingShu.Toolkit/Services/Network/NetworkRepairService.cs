@@ -1,0 +1,260 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Win32;
+using QingShu.Toolkit.Helpers;
+using QingShu.Toolkit.Interop;
+using QingShu.Toolkit.Models;
+using QingShu.Toolkit.Services.Logging;
+
+namespace QingShu.Toolkit.Services.Network;
+
+public interface INetworkRepairService
+{
+    /// <summary>根据诊断结果生成可执行的修复清单。</summary>
+    List<RepairAction> BuildPlan(IReadOnlyList<CheckItem> results, CheckContext? ctx);
+    /// <summary>执行选中的修复动作：普通动作本进程完成；管理类动作合并为一次 UAC 批处理。</summary>
+    Task RunAsync(IReadOnlyList<RepairAction> actions, IProgress<RepairAction>? progress, CancellationToken ct);
+}
+
+/// <summary>
+/// 一键修复服务（傻瓜模式）。
+/// 安全边界：不修改系统服务、不改虚拟内存、不导入注册表文件、不精简系统、不动 Defender；
+/// 涉及网络配置的操作仅限：DNS 缓存 / ARP / DHCP 续租 / 网卡启停 / Winsock 重置 / 时间同步 / 代理复位。
+/// </summary>
+public sealed class NetworkRepairService : INetworkRepairService
+{
+    private readonly ISettingsService _settings;
+    private readonly ILogService _log;
+
+    public NetworkRepairService(ISettingsService settings, ILogService log)
+    {
+        _settings = settings;
+        _log = log;
+    }
+
+    public List<RepairAction> BuildPlan(IReadOnlyList<CheckItem> results, CheckContext? ctx)
+    {
+        var plan = new List<RepairAction>();
+        var failed = results.Where(r => r.Status is CheckStatus.Fail or CheckStatus.Warning).ToList();
+        bool Has(string id) => failed.Any(f => f.Id == id);
+
+        var adapter = ctx?.Primary ?? NetworkProbeHelper.GetPrimaryAdapter();
+        var adapterName = adapter?.Name ?? "";
+        var portalUrl = ctx?.GetShared<string>("portal.url");
+        if (string.IsNullOrEmpty(portalUrl) && Uri.TryCreate(_settings.Current.PortalBaseUrl, UriKind.Absolute, out var pu))
+            portalUrl = _settings.Current.PortalBaseUrl;
+
+        if (Has("dns.resolve") || Has("dns.servers") || Has("dns.config"))
+            plan.Add(new RepairAction("flushdns", "刷新 DNS 缓存",
+                "清除本机 DNS 缓存，解决解析陈旧/污染造成的打不开网页。", false, false,
+                new[] { "dns.resolve", "dns.servers", "dns.config" }));
+
+        if (Has("gateway.arp"))
+            plan.Add(new RepairAction("arp_clear", "清除 ARP 缓存",
+                "删除错误的网关 ARP 表项并重新学习，解决 ARP 欺骗/冲突导致的断网。", true, false,
+                new[] { "gateway.arp" }));
+
+        if (Has("ip.config") || Has("ip.dhcp_lease") || Has("gateway.route"))
+            plan.Add(new RepairAction("renew_dhcp", $"重新获取 IP 地址（{(adapterName.Length > 0 ? adapterName : "所有网卡")}）",
+                "释放当前 IP 并向 DHCP 服务器重新申请，解决租约过期与 APIPA（169.254）问题。", true, false,
+                new[] { "ip.config", "ip.dhcp_lease", "gateway.route" }));
+
+        if (Has("physical.link"))
+            plan.Add(new RepairAction("enable_adapter", $"启用网络适配器（{adapterName}）",
+                "尝试重新启用被禁用或未连接的适配器。", true, false,
+                new[] { "physical.link" }));
+
+        if (Has("clock.skew"))
+            plan.Add(new RepairAction("resync_clock", "同步系统时间",
+                "向时间服务器强制同步系统时钟，修复证书错误与认证失败。", true, false,
+                new[] { "clock.skew" }));
+
+        if (Has("proxy.system"))
+            plan.Add(new RepairAction("proxy_user", "关闭用户级系统代理",
+                "关闭 Internet 选项中的错误代理设置并立即刷新生效（单点设置，不导入任何注册表文件）。", false, false,
+                new[] { "proxy.system" }));
+
+        if (Has("proxy.winhttp") || Has("proxy.system"))
+            plan.Add(new RepairAction("proxy_winhttp", "重置 WinHTTP 代理",
+                "netsh winhttp reset proxy：清除系统服务级代理，恢复直连。", true, false,
+                new[] { "proxy.winhttp" }));
+
+        if (Has("stack.winsock") || (Has("dns.resolve") && Has("internet.http")))
+            plan.Add(new RepairAction("winsock_reset", "重置 Winsock 目录（需重启生效）",
+                "清除第三方 LSP 与损坏的 Winsock 目录，解决“能 ping 通但上不了网”。执行后需重启计算机。", true, true,
+                new[] { "stack.winsock" }));
+
+        if (Has("dns.servers") && adapter != null && adapter.DnsServers.Count > 0)
+            plan.Add(new RepairAction("dns_set_public", $"将 DNS 修改为公共 DNS（{_settings.Current.DnsPreferred}）",
+                $"把“{adapterName}”的 DNS 设为 {_settings.Current.DnsPreferred} / {_settings.Current.DnsAlternate}。仅当校园网允许使用外部 DNS 时勾选。", true, true,
+                new[] { "dns.servers" }));
+
+        if (Has("portal.detect") || Has("portal.expiry"))
+            plan.Add(new RepairAction("open_portal", "打开城域网认证页面",
+                "调起默认浏览器打开检测到的认证门户，重新登录校园网账号即可恢复。",
+                false, false, new[] { "portal.detect", "portal.expiry" }));
+
+        return plan;
+    }
+
+    public async Task RunAsync(IReadOnlyList<RepairAction> actions, IProgress<RepairAction>? progress, CancellationToken ct)
+    {
+        var session = _log.BeginDiagSession();
+        session.Write(LogLevel.Info, "repair", $"开始一键修复，共 {actions.Count} 项", actions.Select(a => a.Id).ToArray());
+
+        var normal = actions.Where(a => !a.NeedsAdmin).ToList();
+        var admin = actions.Where(a => a.NeedsAdmin).ToList();
+
+        foreach (var action in normal)
+        {
+            ct.ThrowIfCancellationRequested();
+            action.Status = RepairStatus.Running;
+            progress?.Report(action);
+            try
+            {
+                var (ok, output) = await RunNormalAsync(action).ConfigureAwait(true);
+                action.Status = ok ? RepairStatus.Ok : RepairStatus.Fail;
+                action.Output = output;
+                session.Write(ok ? LogLevel.Info : LogLevel.Error, "repair", $"[{(ok ? "OK" : "FAIL")}] {action.Title}", output);
+            }
+            catch (Exception ex)
+            {
+                action.Status = RepairStatus.Fail;
+                action.Output = ex.Message;
+            }
+            progress?.Report(action);
+        }
+
+        if (admin.Count > 0)
+        {
+            // 合并为一次 UAC
+            foreach (var a in admin) { a.Status = RepairStatus.Running; progress?.Report(a); }
+            try
+            {
+                var (script, outLog) = BuildAdminScript(admin);
+                session.Write(LogLevel.Info, "repair", $"提权脚本：{script}");
+                var (exit, output) = await ElevationHelper.RunElevatedScriptAsync(script, outLog).ConfigureAwait(true);
+                var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var a in admin)
+                {
+                    var okLine = lines.FirstOrDefault(l => l.Contains($"##OK##{a.Id}"));
+                    var failLine = lines.FirstOrDefault(l => l.Contains($"##FAIL##{a.Id}"));
+                    a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
+                    a.Output = okLine != null ? "执行成功" : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                    session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
+                        $"[{a.Status}] {a.Title}", a.Output);
+                    progress?.Report(a);
+                }
+            }
+            catch (Exception ex)
+            {
+                foreach (var a in admin)
+                {
+                    a.Status = RepairStatus.Fail;
+                    a.Output = $"提权执行失败：{ex.Message}";
+                    progress?.Report(a);
+                }
+            }
+        }
+
+        session.Write(LogLevel.Info, "repair", "修复流程结束");
+    }
+
+    private async Task<(bool Ok, string Output)> RunNormalAsync(RepairAction action)
+    {
+        switch (action.Id)
+        {
+            case "flushdns":
+            {
+                var r = await ProcessRunner.RunAsync("ipconfig /flushdns").ConfigureAwait(true);
+                return (r.ExitCode == 0, r.FullText);
+            }
+            case "proxy_user":
+            {
+                try
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings", true);
+                    key?.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+                    NativeMethods.NotifyProxySettingsChanged();
+                    return (true, "已关闭用户级系统代理并刷新 WinINet 设置");
+                }
+                catch (Exception ex) { return (false, ex.Message); }
+            }
+            case "open_portal":
+            {
+                var ctx = NetworkProbeHelper.GetPrimaryAdapter();
+                var url = _settings.Current.PortalBaseUrl;
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    // 兜底：从上次诊断的共享状态无法取回时，用通用 204 探测得到的门户不可知，提示手动
+                    return (false, "未配置门户地址：请在 设置 → 网络诊断 中填写认证门户地址。");
+                }
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                return (true, $"已在默认浏览器打开 {url}");
+            }
+            default:
+                return (false, $"动作 {action.Id} 不属于普通权限类别");
+        }
+    }
+
+    private (string ScriptPath, string OutLog) BuildAdminScript(IReadOnlyList<RepairAction> actions)
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QingShu.Toolkit", "temp");
+        Directory.CreateDirectory(dir);
+        var ts = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var script = Path.Combine(dir, $"repair-{ts}.cmd");
+        var outLog = Path.Combine(dir, $"repair-{ts}.log");
+
+        var adapter = NetworkProbeHelper.GetPrimaryAdapter();
+        var adapterName = adapter?.Name ?? "";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("@echo off");
+        sb.AppendLine("chcp 65001 >nul");
+        sb.AppendLine("echo [QingShu] 青枢工具箱正在执行修复，请保持窗口开启…");
+
+        foreach (var a in actions)
+        {
+            switch (a.Id)
+            {
+                case "arp_clear":
+                    sb.AppendLine($"arp -d * >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "renew_dhcp":
+                    if (adapterName.Length > 0)
+                        sb.AppendLine($"ipconfig /release \"{adapterName}\" >nul 2>&1");
+                    sb.AppendLine($"ipconfig /renew >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "enable_adapter":
+                    sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "resync_clock":
+                    sb.AppendLine($"w32tm /resync /force >nul 2>&1 && echo ##OK##{a.Id} || (net time \\\\localhost /set /y >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id})");
+                    break;
+                case "proxy_winhttp":
+                    sb.AppendLine($"netsh winhttp reset proxy >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "winsock_reset":
+                    sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "dns_set_public":
+                    if (adapterName.Length > 0)
+                    {
+                        sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1");
+                        sb.AppendLine($"netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    break;
+                default:
+                    sb.AppendLine($"echo ##FAIL##{a.Id} 未支持");
+                    break;
+            }
+        }
+        sb.AppendLine("echo ##DONE##");
+        File.WriteAllText(script, sb.ToString(), System.Text.Encoding.UTF8);
+        return (script, outLog);
+    }
+}

@@ -1,0 +1,19 @@
+# Build results
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+
+# Logs & local data
+*.log
+
+# OS
+Thumbs.db
+.DS_Store

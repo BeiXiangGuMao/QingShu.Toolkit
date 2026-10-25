@@ -1,0 +1,165 @@
+<Page
+    x:Class="QingShu.Toolkit.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:QingShu.Toolkit.ViewModels">
+
+    <ScrollViewer Padding="28,20,28,20">
+        <StackPanel MaxWidth="1080" HorizontalAlignment="Stretch" Spacing="14">
+            <StackPanel.Transitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="24" IsStaggeringEnabled="True" />
+                </TransitionCollection>
+            </StackPanel.Transitions>
+
+            <!-- 页头 -->
+            <StackPanel>
+                <TextBlock Text="总览仪表盘" Style="{StaticResource PageTitleTextBlock}" />
+                <TextBlock Text="教室终端健康状态一目了然：设备 / 实时负载 / 功耗 / 最近诊断与清理。"
+                           Style="{StaticResource PageSubtitleTextBlock}" />
+            </StackPanel>
+
+            <Grid ColumnSpacing="14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- 设备信息 -->
+                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="设备信息" Style="{StaticResource SectionTitleTextBlock}" />
+                        <Grid ColumnSpacing="12" RowSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="主机名" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind Vm.HostName, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="操作系统" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind Vm.OsVersion, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="处理器" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind Vm.CpuName, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="序列号" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind Vm.SerialNumber, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="MachineGuid" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind Vm.MachineGuid, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="活动网卡" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind Vm.NicText, Mode=OneWay}" Style="{StaticResource ValueTextBlock}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 实时状态 -->
+                <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="实时状态" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Spacing="4">
+                            <Grid>
+                                <TextBlock Text="CPU" Style="{StaticResource CaptionTextBlock}" />
+                                <TextBlock Text="{x:Bind Vm.CpuText, Mode=OneWay}" HorizontalAlignment="Right"
+                                           Style="{StaticResource CaptionTextBlock}" />
+                            </Grid>
+                            <ProgressBar Value="{x:Bind Vm.CpuPercent, Mode=OneWay}" Maximum="100" CornerRadius="2" />
+                        </StackPanel>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind Vm.MemText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
+                            <ProgressBar Value="{x:Bind Vm.MemPercent, Mode=OneWay}" Maximum="100" CornerRadius="2" />
+                        </StackPanel>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind Vm.DiskText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
+                            <ProgressBar Value="{x:Bind Vm.DiskPercent, Mode=OneWay}" Maximum="100" CornerRadius="2" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- 功耗模式 -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="功耗模式" Style="{StaticResource SectionTitleTextBlock}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Ellipse Width="10" Height="10" Fill="{ThemeResource PowerBalancedBrush}" />
+                            <TextBlock Text="{x:Bind Vm.PowerStateText, Mode=OneWay}" Style="{StaticResource BodyTextBlock}"
+                                       VerticalAlignment="Center" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{x:Bind Vm.PowerDesc, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
+                    <RadioButtons x:Name="PowerModes" SelectedIndex="{x:Bind Vm.PowerModeIndex, Mode=TwoWay}"
+                                  SelectionChanged="PowerModes_SelectionChanged">
+                        <RadioButton Content="自动（接电源=高性能 / 电池=低功耗）" />
+                        <RadioButton Content="手动·平衡" />
+                        <RadioButton Content="手动·高性能" />
+                        <RadioButton Content="手动·低功耗（EcoQoS）" />
+                    </RadioButtons>
+                    <TextBlock Text="本程序在低功耗态自动应用 EcoQoS 降频节能；状态栏圆点实时指示当前模式。"
+                               Style="{StaticResource CaptionTextBlock}" />
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- 网络诊断 -->
+                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="网络诊断" Style="{StaticResource SectionTitleTextBlock}" />
+                        <TextBlock Text="覆盖物理链路 → 网关 → DNS → 城域网认证 → 外网全链路 28 项检查，支持一键修复与 PDF 报告导出。"
+                                   Style="{StaticResource CaptionTextBlock}" />
+                        <TextBlock Text="{x:Bind Vm.LastDiagText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                                   Foreground="{ThemeResource InfoTextBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="开始全面诊断" Style="{StaticResource AccentButtonStyle}"
+                                    Command="{x:Bind Vm.GoNetworkCommand}" Click="GoNetworkAutostart_Click" />
+                            <Button Content="查看详情" Command="{x:Bind Vm.GoNetworkCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 磁盘清理 -->
+                <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="磁盘清理" Style="{StaticResource SectionTitleTextBlock}" />
+                        <TextBlock Text="常规安全清理 + 微信/QQ 久远文件询问式清理 + 全盘大文件扫描，删除方式可选回收站。"
+                                   Style="{StaticResource CaptionTextBlock}" />
+                        <TextBlock Text="{x:Bind Vm.LastCleanupText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                                   Foreground="{ThemeResource InfoTextBrush}" />
+                        <Button Content="前往清理" Command="{x:Bind Vm.GoCleanupCommand}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- 今日动态 -->
+            <Border Style="{StaticResource CardStyle}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="28">
+                        <StackPanel>
+                            <TextBlock Text="今日诊断" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Text="{x:Bind Vm.DiagTodayText, Mode=OneWay}" Style="{StaticResource StatNumberTextBlock}" />
+                            <TextBlock Text="次" Style="{StaticResource CaptionTextBlock}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="本次拦截弹窗" Style="{StaticResource CaptionTextBlock}" />
+                            <TextBlock Text="{x:Bind Vm.PopupBlockedText, Mode=OneWay}" Style="{StaticResource StatNumberTextBlock}" />
+                            <TextBlock Text="次" Style="{StaticResource CaptionTextBlock}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="打开日志文件夹" VerticalAlignment="Center"
+                            Command="{x:Bind Vm.OpenLogsCommand}" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
