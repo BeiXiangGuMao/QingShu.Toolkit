@@ -53,7 +53,7 @@ public sealed partial class MainWindow : Window
         // 材质：Win11 → Mica；Win10 → DesktopAcrylic；不支持 → 不透明
         if (_settings.Current.UseAcrylicBackdrop && _backdrop.TryAttach(this))
         {
-            RootGrid.Background = (Brush)Application.Current.Resources["PageBackgroundAcrylicBrush"];
+            RootGrid.Background = ResolveRootBackground();
         }
         RootGrid.ActualThemeChanged += (_, _) =>
         {
@@ -82,13 +82,23 @@ public sealed partial class MainWindow : Window
         _navSyncing = false;
     }
 
-    private void RefreshRootBackground()
+    /// <summary>
+    /// 按当前元素实际主题解析根背景刷。
+    /// 不得直接 Application.Current.Resources[key]：那只按应用级（=系统）主题解析
+    /// ThemeDictionaries，系统深色 + 应用内浅色时会拿到深色变体铺底，
+    /// 左侧栏等透明区域随之发黑（历史 bug，经 ResolveThemeBrush 按主题字典显式取值）。
+    /// </summary>
+    private Brush ResolveRootBackground()
     {
-        if (_backdrop.Kind != WindowBackdropService.BackdropKind.None && _settings.Current.UseAcrylicBackdrop)
-            RootGrid.Background = (Brush)Application.Current.Resources["PageBackgroundAcrylicBrush"];
-        else
-            RootGrid.Background = (Brush)Application.Current.Resources["PageBackgroundBrush"];
+        var dark = RootGrid.ActualTheme == ElementTheme.Dark;
+        var withBackdrop = _backdrop.Kind != WindowBackdropService.BackdropKind.None
+                           && _settings.Current.UseAcrylicBackdrop;
+        var key = withBackdrop ? "PageBackgroundAcrylicBrush" : "PageBackgroundBrush";
+        return WindowBackdropService.ResolveThemeBrush(key, dark)
+               ?? (Brush)Application.Current.Resources[key];
     }
+
+    private void RefreshRootBackground() => RootGrid.Background = ResolveRootBackground();
 
     private void ApplyTheme()
     {
@@ -98,6 +108,10 @@ public sealed partial class MainWindow : Window
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
+        // 保险：不依赖 ActualThemeChanged 的事件时序（初始化时主题未变化则事件不触发），
+        // 强制同步背板参数与根背景刷，确保浅/深切换后背板与底色同轨。
+        _backdrop.UpdateTheme(RootGrid.ActualTheme);
+        RefreshRootBackground();
         ApplyCaptionTheme();
     }
 

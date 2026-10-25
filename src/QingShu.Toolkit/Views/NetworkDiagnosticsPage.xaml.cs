@@ -57,7 +57,11 @@ public sealed partial class NetworkDiagnosticsPage : Page
         {
             Text = "报告将自动写入设备序列号（SMBIOS）与 MachineGuid，并按当日次数编号，便于追溯。",
             FontSize = 12, TextWrapping = TextWrapping.Wrap,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextSecondaryBrush"]
+            // 主题刷必须按元素实际主题解析（Application.Resources 只按系统主题解析主题字典，
+            // 系统深色 + 应用内浅色时会取到深色变体，浅色底上几乎不可见）
+            Foreground = WindowBackdropService.ResolveThemeBrush(
+                             "TextSecondaryBrush", ActualTheme == ElementTheme.Dark)
+                         ?? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextSecondaryBrush"]
         };
         panel.Children.Add(hint);
 

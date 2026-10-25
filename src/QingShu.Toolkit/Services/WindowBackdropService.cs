@@ -101,13 +101,49 @@ public sealed class WindowBackdropService : IDisposable
     /// <summary>页面根背景应使用半透明笔刷让材质透出。</summary>
     public static Brush? TryGetPageBackground(AppSettings settings, BackdropKind kind, bool dark)
     {
+        if (!settings.UseAcrylicBackdrop || kind == BackdropKind.None) return null; // 回退不透明
+        return ResolveThemeBrush("PageBackgroundAcrylicBrush", dark);
+    }
+
+    /// <summary>
+    /// 按「元素实际主题」解析主题字典中的画刷。
+    /// 注意：Application.Resources[key] 只按应用级（=系统）主题解析 ThemeDictionaries，
+    /// 应用内经 RootGrid.RequestedTheme 切换浅/深后它仍返回系统主题变体 ——
+    /// 系统深色 + 应用内浅色时会拿到深色刷铺底，左侧栏等透明区域随之发黑。
+    /// 此处显式按 dark 参数取对应主题字典（Palette.xaml 经 MergedDictionaries 合入，
+    /// 其 ThemeDictionaries 位于合并字典内部，需逐层查找）。
+    /// </summary>
+    public static Brush? ResolveThemeBrush(string key, bool dark)
+    {
         try
         {
-            if (!settings.UseAcrylicBackdrop || kind == BackdropKind.None) return null; // 回退不透明
-            var key = dark ? "PageBackgroundAcrylicBrush" : "PageBackgroundAcrylicBrush";
-            return Application.Current.Resources[key] as Brush;
+            var themeKey = dark ? "Dark" : "Light";
+            var appRes = Application.Current.Resources;
+
+            if (TryFromThemeDictionary(appRes, themeKey, key, out var brush)) return brush;
+            foreach (var merged in appRes.MergedDictionaries)
+            {
+                if (TryFromThemeDictionary(merged, themeKey, key, out brush)) return brush;
+            }
+            // 兜底：定义在主题字典之外的普通资源
+            var map = (System.Collections.Generic.IDictionary<object, object>)appRes;
+            return map.TryGetValue(key, out var raw) && raw is Brush plain ? plain : null;
         }
         catch { return null; }
+    }
+
+    private static bool TryFromThemeDictionary(ResourceDictionary rd, string themeKey, string key, out Brush? brush)
+    {
+        brush = null;
+        if (rd.ThemeDictionaries.TryGetValue(themeKey, out var themeObj) &&
+            themeObj is ResourceDictionary themeDict &&
+            ((System.Collections.Generic.IDictionary<object, object>)themeDict).TryGetValue(key, out var val) &&
+            val is Brush b)
+        {
+            brush = b;
+            return true;
+        }
+        return false;
     }
 
     public void Dispose()
