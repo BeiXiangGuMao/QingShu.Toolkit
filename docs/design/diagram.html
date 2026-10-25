@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root { font-size: 16px; }
+  body { margin: 0; padding: 0; background: #ffffff; font-family: "Noto Sans SC", sans-serif; }
+  .canvas { width: 1000px; padding: 26px 30px; box-sizing: border-box; background: #ffffff; }
+  .layer {
+    display: flex; gap: 14px; justify-content: center;
+    margin: 0; padding: 12px 0;
+  }
+  .node {
+    border: 1.6px solid #2d7ab3; border-radius: 8px;
+    background: #eef3fa; color: #142840;
+    padding: 10px 14px; text-align: center; flex: 1 1 0; min-width: 0;
+    overflow-wrap: break-word;
+  }
+  .node b { display: block; font-size: 24px; font-weight: 700; margin-bottom: 3px; }
+  .node span { font-size: 18px; color: #5a7a96; display: block; line-height: 1.35; }
+  .node.fill { background: #dce9f5; }
+  .band {
+    border: none; border-radius: 10px; background: #1a4a7a;
+    color: #ffffff; text-align: center; padding: 12px 0;
+    font-size: 24px; font-weight: 700; letter-spacing: 2px;
+  }
+  .arrows { display: flex; justify-content: center; gap: 180px; padding: 2px 0; }
+  .arrow { width: 0; height: 0; }
+  .arrow.down {
+    border-left: 9px solid transparent; border-right: 9px solid transparent;
+    border-top: 13px solid #8fb0cc;
+  }
+  .arrow.up {
+    border-left: 9px solid transparent; border-right: 9px solid transparent;
+    border-bottom: 13px solid #c0d0e2;
+  }
+  .dual { display: flex; justify-content: center; gap: 60px; align-items: center; }
+  .lbl { font-size: 18px; color: #5a7a96; }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="band">壳层 MainWindow · NavigationView · 6 个功能页面（Fluent / 双主题 / Acrylic）</div>
+  <div class="arrows"><div class="arrow down"></div><div class="arrow down"></div></div>
+  <div class="layer">
+    <div class="node fill" style="max-width:640px;">
+      <b>视图模型层 ViewModels</b>
+      <span>CommunityToolkit.Mvvm 8.4 · [ObservableProperty] / [RelayCommand]</span>
+    </div>
+  </div>
+  <div class="arrows"><div class="arrow down"></div><div class="arrow up"></div></div>
+  <div class="layer">
+    <div class="node"><b>网络诊断</b><span>28 项分层检查 · 编排器 · 一键修复</span></div>
+    <div class="node"><b>清理引擎</b><span>常规目标 · 微信/QQ · 大文件</span></div>
+    <div class="node"><b>优化与拦截</b><span>内存整理 · EcoQoS · 白名单弹窗拦截</span></div>
+    <div class="node"><b>功耗管理</b><span>自动高低功耗 · EcoQoS 自适应</span></div>
+    <div class="node"><b>更新与报告</b><span>GitHub Releases · QuestPDF</span></div>
+  </div>
+  <div class="arrows"><div class="arrow down"></div><div class="arrow up"></div></div>
+  <div class="layer">
+    <div class="node fill" style="max-width:640px;">
+      <b>基础服务</b>
+      <span>SettingsService · LogService（分日期/次数/多文件）· HardwareProbe · DI 容器</span>
+    </div>
+  </div>
+  <div class="arrows"><div class="arrow down"></div><div class="arrow up"></div></div>
+  <div class="layer">
+    <div class="node"><b>Win32 互操作</b><span>PowerThrottling · EnumWindows · SHFileOperation</span></div>
+    <div class="node"><b>系统查询</b><span>WMI / 注册表只读 / netsh / sc</span></div>
+    <div class="node"><b>按需 UAC</b><span>合并提权脚本 · 一次确认</span></div>
+  </div>
+  <div class="arrows"><div class="arrow down"></div></div>
+  <div class="band" style="background:#3d6a94;">Windows 10 1809+ （Win11 自动升级 Mica 材质）</div>
+</div>
+</body>
+</html>
