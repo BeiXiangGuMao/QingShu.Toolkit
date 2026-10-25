@@ -194,6 +194,34 @@ public partial class CleanupViewModel : ObservableObject
         _ = _settings.SaveAsync();
     }
 
+    // 历史 bug：清理页的阈值改动从未落盘，与设置页的同名设置各存各的（用户感知“两个设置”互不同步）。
+    // 现与设置页共用同一份存储：仅在输入合法且与现值不同时写入，避免半输入态污染设置。
+    partial void OnImOldDaysTextChanged(string value)
+    {
+        if (int.TryParse(value?.Trim(), out var v) && v > 0)
+        {
+            var clamped = Math.Clamp(v, 1, 3650);
+            if (_settings.Current.ImOldDays != clamped)
+            {
+                _settings.Current.ImOldDays = clamped;
+                _ = _settings.SaveAsync();
+            }
+        }
+    }
+
+    partial void OnLargeMinMbTextChanged(string value)
+    {
+        if (int.TryParse(value?.Trim(), out var v) && v > 0)
+        {
+            var clamped = Math.Clamp(v, 1, 1024 * 1024);
+            if (_settings.Current.LargeFileMinMb != clamped)
+            {
+                _settings.Current.LargeFileMinMb = clamped;
+                _ = _settings.SaveAsync();
+            }
+        }
+    }
+
     // ================= 常规清理 =================
 
     [RelayCommand]
@@ -245,14 +273,16 @@ public partial class CleanupViewModel : ObservableObject
         IsRegularBusy = true;
         RegularResult = "";
         var succeeded = false;
+        string? completion = null;
         try
         {
             // 必须携带扫描结果：回收站目标依赖 SizeBytes 判断空/非空，传零值会被误判“已是空的”直接跳过（历史 bug）
             var scan = selected.Select(vm => vm.LastScan ?? new CleanScanTarget(vm.Def, 0, 0)).ToList();
             var log = new Progress<string>(line => RegularResult = line);
             var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, CancellationToken.None).ConfigureAwait(true);
-            RegularStatus = $"清理完成：{report.ToSummary()}" +
-                            (DeleteToRecycleBin && report.FreedBytes > 0 ? "（已移入回收站，清空回收站后才真正释放磁盘空间）" : "");
+            completion = $"清理完成：{report.ToSummary()}" +
+                         (DeleteToRecycleBin && report.FreedBytes > 0 ? "（已移入回收站，清空回收站后才真正释放磁盘空间）" : "");
+            RegularStatus = completion;
             LastResult = $"{DateTime.Now:HH:mm} 清理释放 {FormatHelper.Bytes(report.FreedBytes)}";
             succeeded = true;
         }
@@ -263,7 +293,14 @@ public partial class CleanupViewModel : ObservableObject
         finally { IsRegularBusy = false; }
         // 重扫必须等 busy 复位后执行：ScanRegularAsync 有 busy 保护，内联 await 会被静默跳过
         // （历史 bug：清理后列表不刷新，仍显示清理前大小，观感“没清理”）
-        if (succeeded) await ScanRegularAsync().ConfigureAwait(true);
+        if (succeeded)
+        {
+            await ScanRegularAsync().ConfigureAwait(true);
+            // 重扫会改写 RegularStatus：若重扫顺利结束（“扫描完成…”），回写清理结果，
+            // 避免“清理完成”提示被覆盖（历史观感：删了也看不到结果）；重扫失败/取消则保留其提示。
+            if (completion != null && RegularStatus.StartsWith("扫描完成", StringComparison.Ordinal))
+                RegularStatus = completion;
+        }
     }
 
     private void UpdateRegularSelected()
@@ -399,10 +436,17 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
-            WeChatStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
+            var mode = DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）";
+            var status = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{mode}";
+            if (failed > 0 && ok == 0)
+                status += "。本次没有任何文件被删除（全部被占用或已不存在）";
+            else if (failed > 0 && AnyImRunning())
+                status += "；微信/QQ 正在运行，失败项多为其正在使用的文件，完全退出后重试可继续清理";
             QqStatus = "";
+            // 先重扫刷新列表（内部会写扫描状态），再回写删除结果，避免“删除完成”提示被覆盖
             await ScanWeChatAsync().ConfigureAwait(true);
             _ = ScanQqAsync();
+            WeChatStatus = status;
         }
         catch (Exception ex)
         {
@@ -454,7 +498,8 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
-            LargeStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
+            LargeStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}"
+                          + (failed > 0 && ok == 0 ? "。本次没有任何文件被删除（文件被占用或已不存在）" : "");
             _ = ScanLargeAsync();
         }
         catch (Exception ex)
@@ -476,6 +521,18 @@ public partial class CleanupViewModel : ObservableObject
     private static int ParseDays(string s) => Math.Clamp(ParseInt(s, 180), 1, 3650);
     private static int ParseInt(string s, int fallback)
         => int.TryParse(s?.Trim(), out var v) && v > 0 ? v : fallback;
+
+    /// <summary>检测微信 / QQ 是否正在运行（新版微信进程名为 Weixin，新版 QQ 为 QQNT）。</summary>
+    private static bool AnyImRunning()
+    {
+        try
+        {
+            foreach (var name in new[] { "WeChat", "Weixin", "QQ", "QQNT" })
+                if (System.Diagnostics.Process.GetProcessesByName(name).Length > 0) return true;
+        }
+        catch { }
+        return false;
+    }
 
     [RelayCommand]
     private void RefreshSelection()

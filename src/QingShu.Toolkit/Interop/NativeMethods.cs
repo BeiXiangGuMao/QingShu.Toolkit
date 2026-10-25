@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -267,12 +268,32 @@ internal static partial class NativeMethods
     private const uint SHERB_NOPROGRESSUI = 0x2;
     private const uint SHERB_NOSOUND = 0x4;
 
+    /// <summary>
+    /// 查询回收站占用（所有固定分区求和）。
+    /// 历史 bug： pszRootPath 传 null 不被文档支持，部分系统返回失败 → 被误判“回收站是空的”，
+    /// 回收站目标扫描恒为 0、清理时永远跳过（用户实测“勾了回收站也删不掉”）。
+    /// 逐分区查询是文档明确支持的行为，结果稳定可靠。
+    /// </summary>
     public static (long Bytes, long Items) QueryRecycleBin()
     {
+        long bytes = 0, items = 0;
         var info = new SHQUERYRBINFO { cbSize = (uint)Marshal.SizeOf<SHQUERYRBINFO>() };
-        int hr = SHQueryRecycleBin(null, ref info);
-        if (hr != 0) return (0, 0);
-        return (info.i64Size, info.i64NumItems);
+        try
+        {
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                if (d.DriveType != DriveType.Fixed || !d.IsReady) continue;
+                if (SHQueryRecycleBin(d.Name, ref info) == 0)
+                {
+                    bytes += info.i64Size;
+                    items += info.i64NumItems;
+                }
+            }
+            return (bytes, items);
+        }
+        catch { }
+        // 兜底：盘符枚举异常时退回整体查询（旧行为）
+        return SHQueryRecycleBin(null, ref info) == 0 ? (info.i64Size, info.i64NumItems) : (0, 0);
     }
 
     /// <summary>清空回收站（不确认、无界面、无声音）。返回 HRESULT。</summary>
@@ -305,14 +326,14 @@ internal static partial class NativeMethods
     private const short FOF_SILENT = 0x4;
     private const short FOF_NOERRORUI = 0x400;
 
-    /// <summary>将文件/目录移入回收站（安静模式）。0 = 成功。</summary>
-    public static int DeleteToRecycleBin(string path)
+    /// <summary>SHFileOperation FO_DELETE 公共实现。pFrom 为以 \0 分隔、\0\0 结尾的多路径列表。</summary>
+    private static int ShDeleteToRecycleBin(string multiPathList)
     {
         var op = new SHFILEOPSTRUCTW
         {
             hwnd = IntPtr.Zero,
             wFunc = FO_DELETE,
-            pFrom = path + "\0\0",
+            pFrom = multiPathList,
             pTo = "",
             fFlags = (short)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI),
             fAnyOperationsAborted = 0,
@@ -320,6 +341,21 @@ internal static partial class NativeMethods
             lpszProgressTitle = ""
         };
         return SHFileOperation(ref op);
+    }
+
+    /// <summary>将单个文件/目录移入回收站（安静模式）。0 = 成功。</summary>
+    public static int DeleteToRecycleBin(string path)
+        => ShDeleteToRecycleBin(path + "\0");
+
+    /// <summary>
+    /// 批量将多个文件/目录移入回收站：pFrom 支持多路径，单次调用完成整批删除，
+    /// 比逐文件调用快一个数量级（数千临时文件场景的历史卡顿点）。
+    /// 返回 0 = 调用成功（不代表每一项都删净）；非 0 = 存在失败，调用方应逐项复核。
+    /// </summary>
+    public static int DeleteToRecycleBinBatch(IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0) return 0;
+        return ShDeleteToRecycleBin(string.Join("\0", paths) + "\0");
     }
 
     #endregion

@@ -296,31 +296,7 @@ public sealed class CleanupService : ICleanupService
             var (deleted, freed, failed) = await Task.Run(() =>
             {
                 if (toRecycleBin)
-                {
-                    int ok = 0, fail = 0;
-                    long bytes = 0;
-                    foreach (var f in Directory.EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly).ToList())
-                    {
-                        try
-                        {
-                            var len = new FileInfo(f).Length;
-                            if (NativeMethods.DeleteToRecycleBin(f) == 0) { ok++; bytes += len; }
-                            else fail++;
-                        }
-                        catch { fail++; }
-                    }
-                    foreach (var d in Directory.EnumerateDirectories(path).ToList())
-                    {
-                        try
-                        {
-                            var (b, _) = FileOpsHelper.GetDirectorySize(d);
-                            if (NativeMethods.DeleteToRecycleBin(d) == 0) { ok++; bytes += b; }
-                            else fail++;
-                        }
-                        catch { fail++; }
-                    }
-                    return (ok, bytes, fail);
-                }
+                    return CleanToRecycleBinBatched(path);
                 return FileOpsHelper.CleanDirectoryContents(path);
             }).ConfigureAwait(true);
 
@@ -332,6 +308,61 @@ public sealed class CleanupService : ICleanupService
             if (failed > 0 && freed == 0)
                 log?.Report("  · 内容均被占用：相关程序（浏览器/资源管理器等）正在运行，关闭后重扫重清效果更佳。");
         }
+    }
+
+    /// <summary>回收站批量清理：先整批 SHFileOperation（比逐文件快一个数量级），
+    /// 再逐项复核存在性拿准确计数，批内残留项单独重试一次。返回 (成功数, 释放字节, 失败数)。</summary>
+    private static (int Ok, long Bytes, int Failed) CleanToRecycleBinBatched(string path)
+    {
+        var entries = new List<(string Path, long Bytes)>();
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly).ToList())
+            {
+                try { entries.Add((f, new FileInfo(f).Length)); } catch { }
+            }
+            foreach (var d in Directory.EnumerateDirectories(path).ToList())
+            {
+                try { entries.Add((d, FileOpsHelper.GetDirectorySize(d).Bytes)); } catch { }
+            }
+        }
+        catch { }
+
+        int ok = 0, failed = 0;
+        long bytes = 0;
+        foreach (var chunk in Chunk(entries, 400))
+        {
+            NativeMethods.DeleteToRecycleBinBatch(chunk.Select(e => e.Path).ToList());
+            foreach (var (p, len) in chunk)
+            {
+                if (!PathStillExists(p)) { ok++; bytes += len; continue; }
+                // 批内个别残留（被占用）：单独重试一次拿准确结果
+                try
+                {
+                    if (NativeMethods.DeleteToRecycleBin(p) == 0 && !PathStillExists(p)) { ok++; bytes += len; }
+                    else failed++;
+                }
+                catch { failed++; }
+            }
+        }
+        return (ok, bytes, failed);
+    }
+
+    private static bool PathStillExists(string p) => Directory.Exists(p) || File.Exists(p);
+
+    private static IEnumerable<List<T>> Chunk<T>(IEnumerable<T> source, int size)
+    {
+        var buffer = new List<T>(size);
+        foreach (var item in source)
+        {
+            buffer.Add(item);
+            if (buffer.Count >= size)
+            {
+                yield return buffer;
+                buffer = new List<T>(size);
+            }
+        }
+        if (buffer.Count > 0) yield return buffer;
     }
 
     private static (string Script, string OutLog) BuildAdminCleanScript(IReadOnlyList<CleanScanTarget> targets, bool toRecycleBin)
@@ -368,7 +399,8 @@ public sealed class CleanupService : ICleanupService
             }
         }
         sb.AppendLine("echo ##DONE##");
-        System.IO.File.WriteAllText(script, sb.ToString(), System.Text.Encoding.UTF8);
+        // 无 BOM 的 UTF-8：cmd 对带 BOM 的批处理首行会解析出乱码字符（'\ufeff@echo' 不是内部或外部命令）
+        System.IO.File.WriteAllText(script, sb.ToString(), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return (script, outLog);
     }
 }

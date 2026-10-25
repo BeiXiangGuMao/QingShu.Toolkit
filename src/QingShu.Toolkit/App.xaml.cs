@@ -33,6 +33,11 @@ public partial class App : Application
     {
         InitializeComponent();
         QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+        // QuestPDF 2026.9 起默认禁用系统字体（只认应用目录内注册的字体文件，本仓库仅内置 Lato），
+        // 报告模板指定微软雅黑（Windows 全 SKU 系统自带）→ 不开启系统字体解析时导出 PDF 必抛
+        // DocumentDrawingException: "uses font families that are not available: 'Microsoft YaHei'"。
+        // 本工具仅运行于 Windows，恢复系统字体解析即安全（历史 bug：2026-10 用户实测导出崩溃）。
+        QuestPDF.Settings.UseSystemFonts = true;
         UnhandledException += OnUnhandledException;
     }
 
