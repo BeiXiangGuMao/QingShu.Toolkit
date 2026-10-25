@@ -408,7 +408,7 @@ public static partial class NetworkChecks
             if (level.Length == 0)
                 return CheckOutcome.Warn("无法识别接收窗口自调谐级别", "系统输出格式可能不同，请查看详细信息人工确认。", text.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).Take(14).ToArray());
 
-            var details = new List<string> { $"接收窗口自动调节级别：{level}", $"接收端缩放（RSS）：{string.IsNullOrEmpty(rss) ? "未知" : rss}" };
+            var details = new List<string> { $"接收窗口自动调节级别：{level}", $"接收端缩放（RSS）：{(string.IsNullOrEmpty(rss) ? "未知" : rss)}" };
             bool rssBad = rss.Equals("disabled", StringComparison.OrdinalIgnoreCase) || rss == "禁用";
             bool abnormal = !level.Equals("normal", StringComparison.OrdinalIgnoreCase) && level != "正常";
 

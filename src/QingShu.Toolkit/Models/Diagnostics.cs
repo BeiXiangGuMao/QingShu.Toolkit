@@ -113,6 +113,10 @@ public sealed class CheckOutcome
     public static CheckOutcome Warn(string summary, string suggestion, params object[] parts)
         => new() { Status = CheckStatus.Warning, Summary = summary, Suggestion = suggestion, Details = Flatten(parts) };
 
+    /// <summary>显式重载：带 canAutoFix 标记（支持 canFix: true 命名参数写法，与 Fail 对齐）。</summary>
+    public static CheckOutcome Warn(string summary, string suggestion, bool canFix, params string[] details)
+        => new() { Status = CheckStatus.Warning, Summary = summary, Suggestion = suggestion, CanAutoFix = canFix, Details = new List<string>(details) };
+
     /// <summary>智能重载：可传字符串/集合，bool 参数置于集合前。</summary>
     public static CheckOutcome Fail(string summary, string suggestion, params object[] parts)
         => new() { Status = CheckStatus.Fail, Summary = summary, Suggestion = suggestion, Details = Flatten(parts) };
