@@ -8,13 +8,13 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!--
-      全局字体栈：优先使用设备上的现代系统无衬线字体（SF Pro 系列），
-      依次回退到 Windows 11 变量字体 / Segoe UI，中文回退微软雅黑；
+      全局字体栈：优先使用 Windows 11 现代系统无衬线变量字体（正文/展示两档），
+      回退 Segoe UI，中文回退微软雅黑；等宽用 Cascadia Mono 回退 Consolas；
       ContentControlThemeFontFamily 为框架级资源键，此处覆写即全局生效。
     -->
-    <FontFamily x:Key="ContentControlThemeFontFamily">SF Pro Text, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
-    <FontFamily x:Key="AppDisplayFontFamily">SF Pro Display, Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI</FontFamily>
-    <FontFamily x:Key="AppMonoFontFamily">SF Mono, Cascadia Mono, Consolas</FontFamily>
+    <FontFamily x:Key="ContentControlThemeFontFamily">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
+    <FontFamily x:Key="AppDisplayFontFamily">Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI</FontFamily>
+    <FontFamily x:Key="AppMonoFontFamily">Cascadia Mono, Consolas</FontFamily>
 
     <!-- 连续大圆角：常规控件 8px，浮层/对话框 12px（框架级资源键覆写） -->
     <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
