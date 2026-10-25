@@ -57,19 +57,20 @@ public sealed partial class CheckItem : ObservableObject
     public CheckItem(string id, string name, CheckCategory category)
     {
         Id = id; Name = name; Category = category;
+        Summary = ""; Suggestion = ""; Details = new(); // partial 属性无初始化器，默认值移入构造器
     }
 
     public string Id { get; }
     public string Name { get; }
     public CheckCategory Category { get; }
 
-    [ObservableProperty] private CheckStatus _status = CheckStatus.Pending;
-    [ObservableProperty] private string _summary = "";
-    [ObservableProperty] private string _suggestion = "";
-    [ObservableProperty] private bool _canAutoFix;
-    [ObservableProperty] private long _durationMs;
-    [ObservableProperty] private List<string> _details = new();
-    [ObservableProperty] private bool _isExpanded;
+    [ObservableProperty] public partial CheckStatus Status { get; set; }
+    [ObservableProperty] public partial string Summary { get; set; }
+    [ObservableProperty] public partial string Suggestion { get; set; }
+    [ObservableProperty] public partial bool CanAutoFix { get; set; }
+    [ObservableProperty] public partial long DurationMs { get; set; }
+    [ObservableProperty] public partial List<string> Details { get; set; }
+    [ObservableProperty] public partial bool IsExpanded { get; set; }
 
     public string StatusText => Status switch
     {
@@ -158,6 +159,7 @@ public sealed partial class RepairAction : ObservableObject
     public RepairAction(string id, string title, string detail, bool needsAdmin, bool risky, string[] relatedCheckIds)
     {
         Id = id; Title = title; Detail = detail; NeedsAdmin = needsAdmin; Risky = risky; RelatedCheckIds = relatedCheckIds;
+        IsSelected = true; Output = ""; // partial 属性无初始化器，默认值移入构造器
     }
 
     public string Id { get; }
@@ -170,9 +172,9 @@ public sealed partial class RepairAction : ObservableObject
     /// <summary>open_portal 专用：诊断时检测到的认证门户地址（优先于设置值）。</summary>
     public string? PortalUrl { get; set; }
 
-    [ObservableProperty] private bool _isSelected = true;
-    [ObservableProperty] private RepairStatus _status = RepairStatus.Pending;
-    [ObservableProperty] private string _output = "";
+    [ObservableProperty] public partial bool IsSelected { get; set; }
+    [ObservableProperty] public partial RepairStatus Status { get; set; }
+    [ObservableProperty] public partial string Output { get; set; }
 
     public string AdminText => NeedsAdmin ? "需要管理员" : "普通权限";
     public string StatusText => Status switch

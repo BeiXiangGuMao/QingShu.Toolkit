@@ -22,7 +22,8 @@ public partial class CleanTargetVm : ObservableObject
     public CleanTargetVm(CleanTargetDef def)
     {
         Def = def;
-        _isSelected = def.DefaultSelected;
+        IsSelected = def.DefaultSelected;
+        SizeText = "待扫描"; FileText = ""; // partial 属性默认值移入构造器
     }
 
     public CleanTargetDef Def { get; }
@@ -32,11 +33,11 @@ public partial class CleanTargetVm : ObservableObject
     public string AdminText => Def.NeedsAdmin ? "需管理员" : "";
     public bool AdminVis => Def.NeedsAdmin;
 
-    [ObservableProperty] private bool _isSelected;
-    [ObservableProperty] private bool _isScanned;
-    [ObservableProperty] private string _sizeText = "待扫描";
-    [ObservableProperty] private string _fileText = "";
-    [ObservableProperty] private bool _isScanning;
+    [ObservableProperty] public partial bool IsSelected { get; set; }
+    [ObservableProperty] public partial bool IsScanned { get; set; }
+    [ObservableProperty] public partial string SizeText { get; set; }
+    [ObservableProperty] public partial string FileText { get; set; }
+    [ObservableProperty] public partial bool IsScanning { get; set; }
 }
 
 // ================= IM / 大文件行 =================
@@ -45,7 +46,7 @@ public partial class ImFileVm : ObservableObject
     public ImFileVm(ImFileItem item)
     {
         Item = item;
-        _isSelected = true;
+        IsSelected = true;
     }
 
     /// <summary>账号分组头行（不可勾选，仅展示该账号汇总）。</summary>
@@ -54,7 +55,7 @@ public partial class ImFileVm : ObservableObject
         Item = new ImFileItem();
         IsHeader = true;
         HeaderText = headerText;
-        _isSelected = false;
+        IsSelected = false;
     }
 
     public ImFileItem Item { get; }
@@ -70,7 +71,7 @@ public partial class ImFileVm : ObservableObject
     public string SizeText => FormatHelper.Bytes(Item.SizeBytes);
     public string TimeText => $"{Item.LastWrite:yyyy-MM-dd}（{Item.AgeDays} 天前）";
 
-    [ObservableProperty] private bool _isSelected;
+    [ObservableProperty] public partial bool IsSelected { get; set; }
 }
 
 public partial class LargeFileVm : ObservableObject
@@ -78,7 +79,7 @@ public partial class LargeFileVm : ObservableObject
     public LargeFileVm(LargeFileInfo item)
     {
         Item = item;
-        _isSelected = false;
+        IsSelected = false;
     }
 
     public LargeFileInfo Item { get; }
@@ -88,7 +89,7 @@ public partial class LargeFileVm : ObservableObject
     public string SizeText => FormatHelper.Bytes(Item.SizeBytes);
     public string TimeText => Item.LastWrite.ToString("yyyy-MM-dd HH:mm");
 
-    [ObservableProperty] private bool _isSelected;
+    [ObservableProperty] public partial bool IsSelected { get; set; }
 }
 
 /// <summary>磁盘清理页 VM：常规清理 / 微信 / QQ / 大文件 四个标签页。</summary>
@@ -108,31 +109,31 @@ public partial class CleanupViewModel : ObservableObject
     public ObservableCollection<char> Drives { get; } = new();
 
     // ---- 常规 ----
-    [ObservableProperty] private bool _isRegularBusy;
-    [ObservableProperty] private double _regularProgress;
-    [ObservableProperty] private string _regularStatus = "点击“开始扫描”统计可清理空间";
-    [ObservableProperty] private string _regularSelectedText = "已选 0 项";
-    [ObservableProperty] private string _regularResult = "";
+    [ObservableProperty] public partial bool IsRegularBusy { get; set; }
+    [ObservableProperty] public partial double RegularProgress { get; set; }
+    [ObservableProperty] public partial string RegularStatus { get; set; }
+    [ObservableProperty] public partial string RegularSelectedText { get; set; }
+    [ObservableProperty] public partial string RegularResult { get; set; }
 
     // ---- IM ----
-    [ObservableProperty] private bool _isWeChatBusy;
-    [ObservableProperty] private bool _isQqBusy;
-    [ObservableProperty] private string _weChatStatus = "";
-    [ObservableProperty] private string _qqStatus = "";
-    [ObservableProperty] private string _imOldDaysText;
-    [ObservableProperty] private string _imSelectedText = "";
+    [ObservableProperty] public partial bool IsWeChatBusy { get; set; }
+    [ObservableProperty] public partial bool IsQqBusy { get; set; }
+    [ObservableProperty] public partial string WeChatStatus { get; set; }
+    [ObservableProperty] public partial string QqStatus { get; set; }
+    [ObservableProperty] public partial string ImOldDaysText { get; set; }
+    [ObservableProperty] public partial string ImSelectedText { get; set; }
 
     // ---- 大文件 ----
-    [ObservableProperty] private bool _isLargeBusy;
-    [ObservableProperty] private string _largeStatus = "";
-    [ObservableProperty] private string _largeMinMbText;
-    [ObservableProperty] private int _driveIndex;
-    [ObservableProperty] private string _largeSelectedText = "";
-    [ObservableProperty] private bool _hasDrives;
+    [ObservableProperty] public partial bool IsLargeBusy { get; set; }
+    [ObservableProperty] public partial string LargeStatus { get; set; }
+    [ObservableProperty] public partial string LargeMinMbText { get; set; }
+    [ObservableProperty] public partial int DriveIndex { get; set; }
+    [ObservableProperty] public partial string LargeSelectedText { get; set; }
+    [ObservableProperty] public partial bool HasDrives { get; set; }
 
     // ---- 通用 ----
-    [ObservableProperty] private string _lastResult = "";
-    [ObservableProperty] private bool _deleteToRecycleBin;
+    [ObservableProperty] public partial string LastResult { get; set; }
+    [ObservableProperty] public partial bool DeleteToRecycleBin { get; set; }
 
     public CleanupViewModel(ICleanupService cleanup, IImScanService im, ILargeFileScanService large,
         ISettingsService settings, ILogService log)
@@ -142,6 +143,11 @@ public partial class CleanupViewModel : ObservableObject
         _large = large;
         _settings = settings;
         _log = log;
+        // partial 属性无初始化器：原字段默认值移入构造器
+        RegularStatus = "点击“开始扫描”统计可清理空间";
+        RegularSelectedText = "已选 0 项";
+        RegularResult = ""; WeChatStatus = ""; QqStatus = "";
+        ImSelectedText = ""; LargeStatus = ""; LargeSelectedText = ""; LastResult = "";
         foreach (var t in cleanup.Targets)
         {
             var row = new CleanTargetVm(t);
@@ -152,8 +158,8 @@ public partial class CleanupViewModel : ObservableObject
             };
             RegularTargets.Add(row);
         }
-        _imOldDaysText = settings.Current.ImOldDays.ToString();
-        _largeMinMbText = settings.Current.LargeFileMinMb.ToString();
+        ImOldDaysText = settings.Current.ImOldDays.ToString();
+        LargeMinMbText = settings.Current.LargeFileMinMb.ToString();
         DeleteToRecycleBin = settings.Current.DeleteToRecycleBin;
         _ = LoadDrivesAsync();
     }
@@ -270,11 +276,11 @@ public partial class CleanupViewModel : ObservableObject
         WeChatStatus = "正在扫描微信目录…";
         try
         {
-            var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
+            var files = await _im.ScanWeChatAsync(ParseDays(ImOldDaysText), CancellationToken.None).ConfigureAwait(true);
             FillGrouped(WeChatFiles, files, "微信");
             UpdateImSelected();
             WeChatStatus = files.Count == 0
-                ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
+                ? $"未发现超过 {ParseDays(ImOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
                 : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
         }
         catch (Exception ex) { WeChatStatus = $"扫描失败：{ex.Message}"; }
@@ -290,11 +296,11 @@ public partial class CleanupViewModel : ObservableObject
         QqStatus = "正在扫描 QQ 目录…";
         try
         {
-            var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
+            var files = await _im.ScanQQAsync(ParseDays(ImOldDaysText), CancellationToken.None).ConfigureAwait(true);
             FillGrouped(QqFiles, files, "QQ");
             UpdateImSelected();
             QqStatus = files.Count == 0
-                ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
+                ? $"未发现超过 {ParseDays(ImOldDaysText)} 天的 QQ 文件。"
                 : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
         }
         catch (Exception ex) { QqStatus = $"扫描失败：{ex.Message}"; }
@@ -372,10 +378,10 @@ public partial class CleanupViewModel : ObservableObject
         {
             var drive = Drives.ElementAtOrDefault(DriveIndex);
             if (drive == default) return;
-            var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), CancellationToken.None).ConfigureAwait(true);
+            var files = await _large.ScanAsync(drive, ParseInt(LargeMinMbText, 100), CancellationToken.None).ConfigureAwait(true);
             foreach (var f in files.Take(200)) LargeFiles.Add(new LargeFileVm(f));
             UpdateLargeSelected();
-            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
+            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(LargeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
         }
         catch (Exception ex) { LargeStatus = $"扫描失败：{ex.Message}"; }
         finally { IsLargeBusy = false; }

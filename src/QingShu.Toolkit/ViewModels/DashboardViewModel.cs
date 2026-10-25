@@ -32,29 +32,29 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
     private PerformanceCounter? _cpuCounter;
     private bool _cpuPrimed; // CPU 计数器首采基线标记
 
-    [ObservableProperty] private string _hostName = Environment.MachineName;
-    [ObservableProperty] private string _osVersion = "…";
-    [ObservableProperty] private string _cpuName = "…";
-    [ObservableProperty] private string _serialNumber = "…";
-    [ObservableProperty] private string _machineGuid = "…";
-    [ObservableProperty] private string _nicText = "…";
+    [ObservableProperty] public partial string HostName { get; set; }
+    [ObservableProperty] public partial string OsVersion { get; set; }
+    [ObservableProperty] public partial string CpuName { get; set; }
+    [ObservableProperty] public partial string SerialNumber { get; set; }
+    [ObservableProperty] public partial string MachineGuid { get; set; }
+    [ObservableProperty] public partial string NicText { get; set; }
 
-    [ObservableProperty] private double _cpuPercent;
-    [ObservableProperty] private string _cpuText = "0%";
-    [ObservableProperty] private double _memPercent;
-    [ObservableProperty] private string _memText = "";
-    [ObservableProperty] private double _diskPercent;
-    [ObservableProperty] private string _diskText = "";
+    [ObservableProperty] public partial double CpuPercent { get; set; }
+    [ObservableProperty] public partial string CpuText { get; set; }
+    [ObservableProperty] public partial double MemPercent { get; set; }
+    [ObservableProperty] public partial string MemText { get; set; }
+    [ObservableProperty] public partial double DiskPercent { get; set; }
+    [ObservableProperty] public partial string DiskText { get; set; }
 
-    [ObservableProperty] private string _powerStateText = "平衡";
-    [ObservableProperty] private string _powerModeText = "自动切换";
-    [ObservableProperty] private string _powerDesc = "";
-    [ObservableProperty] private int _powerModeIndex; // 0=自动 1=平衡 2=高性能 3=低功耗
+    [ObservableProperty] public partial string PowerStateText { get; set; }
+    [ObservableProperty] public partial string PowerModeText { get; set; }
+    [ObservableProperty] public partial string PowerDesc { get; set; }
+    [ObservableProperty] public partial int PowerModeIndex { get; set; } // 0=自动 1=平衡 2=高性能 3=低功耗
 
-    [ObservableProperty] private string _diagTodayText = "0";
-    [ObservableProperty] private string _popupBlockedText = "0";
-    [ObservableProperty] private string _lastCleanupText = "尚未执行过清理";
-    [ObservableProperty] private string _lastDiagText = "尚未执行过诊断";
+    [ObservableProperty] public partial string DiagTodayText { get; set; }
+    [ObservableProperty] public partial string PopupBlockedText { get; set; }
+    [ObservableProperty] public partial string LastCleanupText { get; set; }
+    [ObservableProperty] public partial string LastDiagText { get; set; }
 
     public DashboardViewModel(IHardwareProbeService probe, IPowerService power, IPopupBlockerService popup, ILogService log, ISettingsService settings)
     {
@@ -63,6 +63,12 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         _power = power;
         _popup = popup;
         _log = log;
+        // partial 属性无初始化器：原字段默认值移入构造器
+        HostName = Environment.MachineName;
+        OsVersion = "…"; CpuName = "…"; SerialNumber = "…"; MachineGuid = "…"; NicText = "…";
+        CpuText = "0%"; MemText = ""; DiskText = "";
+        DiagTodayText = "0"; PopupBlockedText = "0";
+        LastCleanupText = "尚未执行过清理"; LastDiagText = "尚未执行过诊断";
 
         _power.Changed += OnPowerChanged;
         _popup.Blocked += OnPopupBlocked;

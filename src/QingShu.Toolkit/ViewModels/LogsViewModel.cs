@@ -44,17 +44,18 @@ public partial class LogsViewModel : ObservableObject
     public ObservableCollection<LogDateVm> Dates { get; } = new();
     public ObservableCollection<LogFileVm> Files { get; } = new();
 
-    [ObservableProperty] private LogDateVm? _selectedDate;
-    [ObservableProperty] private LogFileVm? _selectedFile;
-    [ObservableProperty] private string _previewText = "选择左侧日期与日志文件进行预览。";
-    [ObservableProperty] private string _retentionText = "";
-    [ObservableProperty] private string _rootText;
+    [ObservableProperty] public partial LogDateVm? SelectedDate { get; set; }
+    [ObservableProperty] public partial LogFileVm? SelectedFile { get; set; }
+    [ObservableProperty] public partial string PreviewText { get; set; }
+    [ObservableProperty] public partial string RetentionText { get; set; }
+    [ObservableProperty] public partial string RootText { get; set; }
 
     public LogsViewModel(ILogService log, ISettingsService settings)
     {
         _log = log;
-        _rootText = log.Root;
-        _retentionText = $"日志保留策略：最近 {settings.Current.LogRetentionDays} 天（可在设置中调整）";
+        PreviewText = "选择左侧日期与日志文件进行预览。"; // partial 属性默认值移入构造器
+        RootText = log.Root;
+        RetentionText = $"日志保留策略：最近 {settings.Current.LogRetentionDays} 天（可在设置中调整）";
         _ = RefreshDatesAsync();
     }
 

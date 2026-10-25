@@ -35,7 +35,7 @@ public partial class ProcessRowVm : ObservableObject
     /// <summary>系统关键组件标记（整理/降频需谨慎）。</summary>
     public bool IsSystem { get; }
 
-    [ObservableProperty] private bool _isSelected;
+    [ObservableProperty] public partial bool IsSelected { get; set; }
 }
 
 public partial class WhitelistRowVm : ObservableObject
@@ -71,15 +71,15 @@ public partial class OptimizeViewModel : ObservableObject
     public ObservableCollection<WhitelistRowVm> Whitelist { get; } = new();
     public ObservableCollection<StartupRowVm> StartupItems { get; } = new();
 
-    [ObservableProperty] private bool _isMemoryBusy;
-    [ObservableProperty] private string _memoryResult = "";
-    [ObservableProperty] private bool _isEcoBusy;
-    [ObservableProperty] private string _ecoResult = "";
-    [ObservableProperty] private bool _popupEnabled;
-    [ObservableProperty] private string _popupCountText = "0";
-    [ObservableProperty] private string _newWhitelistName = "";
-    [ObservableProperty] private bool _isStartupBusy;
-    [ObservableProperty] private string _startupHint = "启动项为只读展示：如需调整请使用任务管理器 → 启动应用（本工具不代改系统配置）。";
+    [ObservableProperty] public partial bool IsMemoryBusy { get; set; }
+    [ObservableProperty] public partial string MemoryResult { get; set; }
+    [ObservableProperty] public partial bool IsEcoBusy { get; set; }
+    [ObservableProperty] public partial string EcoResult { get; set; }
+    [ObservableProperty] public partial bool PopupEnabled { get; set; }
+    [ObservableProperty] public partial string PopupCountText { get; set; }
+    [ObservableProperty] public partial string NewWhitelistName { get; set; }
+    [ObservableProperty] public partial bool IsStartupBusy { get; set; }
+    [ObservableProperty] public partial string StartupHint { get; set; }
 
     public OptimizeViewModel(IMemoryOptimizeService memory, IStartupListService startup,
         IPopupBlockerService popup, ISettingsService settings)
@@ -88,7 +88,10 @@ public partial class OptimizeViewModel : ObservableObject
         _startup = startup;
         _popup = popup;
         _settings = settings;
-        _popupEnabled = settings.Current.PopupBlockEnabled;
+        // partial 属性无初始化器：原字段默认值移入构造器
+        MemoryResult = ""; EcoResult = ""; NewWhitelistName = "";
+        StartupHint = "启动项为只读展示：如需调整请使用任务管理器 → 启动应用（本工具不代改系统配置）。";
+        PopupEnabled = settings.Current.PopupBlockEnabled;
         _popup.Blocked += c => PopupCountText = c.ToString();
         PopupCountText = popup.BlockedCount.ToString();
         ReloadWhitelist();
@@ -173,7 +176,11 @@ public partial class OptimizeViewModel : ObservableObject
 
     // ================= 弹窗拦截 =================
 
-    partial void OnPopupEnabledChanged(bool value) => _popup.SetEnabled(value);
+    partial void OnPopupEnabledChanged(bool value)
+    {
+        if (value == _popup.Enabled) return; // 初次载入/无变化不触发保存（构造器经属性赋初值）
+        _popup.SetEnabled(value);
+    }
 
     private void ReloadWhitelist()
     {
@@ -184,11 +191,11 @@ public partial class OptimizeViewModel : ObservableObject
     [RelayCommand]
     private void AddWhitelist()
     {
-        var name = _newWhitelistName?.Trim().ToLowerInvariant().Replace(".exe", "");
+        var name = NewWhitelistName?.Trim().ToLowerInvariant().Replace(".exe", "");
         if (string.IsNullOrEmpty(name)) return;
         if (_settings.Current.PopupWhitelist.Contains(name)) return;
         _settings.Current.PopupWhitelist.Add(name);
-        _newWhitelistName = "";
+        NewWhitelistName = "";
         _ = _settings.SaveAsync(); // 保存后的 Changed 事件会自动 ReloadWhitelist
     }
 
