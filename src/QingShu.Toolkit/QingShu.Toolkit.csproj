@@ -11,11 +11,14 @@
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <!--
-      Windows SDK 投影版本覆盖：TFM 默认解析出 10.0.19041.54（WinRT.Runtime 2.1.x），
-      而 CommunityToolkit.Mvvm 8.4.2 要求 >= 10.0.19041.56、WebView2（WASDK 传递依赖）
-      要求 WinRT.Runtime 2.2.x —— 统一提升到 26100 投影解决双方冲突。
+      Windows SDK 投影版本覆盖（CsWinRT 2.3.1 官方尾号规则：.86 = .NET 8，.87 = .NET 9/10）：
+      - TFM 默认解析出 10.0.19041.54（WinRT.Runtime 2.1.x），
+      - CommunityToolkit.Mvvm 8.4.2 要求 >= 10.0.19041.56（NU1605/CS 报错），
+      - WindowsAppSDK 1.6 要求 >= 10.0.22621.38（官方 release notes），
+      - .87 尾号投影内嵌 WinRT.Runtime 2.3.1.0 针对 .NET 9（System.Runtime 9.0.0.0），
+        在 net8.0 下报 CS1705 —— 必须用 .86 尾号（同一投影的 .NET 8 目标版本）。
     -->
-    <WindowsSdkPackageVersion>10.0.26100.87</WindowsSdkPackageVersion>
+    <WindowsSdkPackageVersion>10.0.26100.86</WindowsSdkPackageVersion>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <!--
@@ -40,8 +43,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
-    <!-- 双保险：显式覆盖 SDK 投影 FrameworkReference 版本（与上方 WindowsSdkPackageVersion 同值） -->
-    <FrameworkReference Update="Microsoft.Windows.SDK.NET.Ref" RuntimeVersion="10.0.26100.87" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="QuestPDF" Version="2026.9.1" />
