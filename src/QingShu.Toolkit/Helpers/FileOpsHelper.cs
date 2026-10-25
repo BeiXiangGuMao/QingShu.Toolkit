@@ -14,7 +14,7 @@ namespace QingShu.Toolkit.Helpers;
 /// </summary>
 public static class FileOpsHelper
 {
-    /// <summary>统计目录内容总大小（目录不存在或无权限返回 0）。</summary>
+    /// <summary>统计目录内容总大小（目录不存在或无权限返回 0）。显式栈遍历：单目录无权限只跳过该分支，不中断整体统计。</summary>
     public static (long Bytes, int Files) GetDirectorySize(string path)
     {
         long total = 0;
@@ -22,10 +22,15 @@ public static class FileOpsHelper
         try
         {
             if (!Directory.Exists(path)) return (0, 0);
-            var di = new DirectoryInfo(path);
-            foreach (var f in di.EnumerateFiles("*", SearchOption.AllDirectories))
+            var stack = new Stack<DirectoryInfo>();
+            stack.Push(new DirectoryInfo(path));
+            while (stack.Count > 0)
             {
-                try { total += f.Length; files++; } catch { }
+                var dir = stack.Pop();
+                try { foreach (var f in dir.EnumerateFiles()) { try { total += f.Length; files++; } catch { } } }
+                catch { }
+                try { foreach (var d in dir.EnumerateDirectories()) stack.Push(d); }
+                catch { }
             }
         }
         catch { }
@@ -52,31 +57,51 @@ public static class FileOpsHelper
         return (total, files);
     }
 
-    /// <summary>清空目录内容（保留目录本身）。返回 (删除文件数, 释放字节, 失败数)。</summary>
+    /// <summary>
+    /// 清空目录内容（保留目录本身）。返回 (删除文件数, 释放字节, 失败数)。
+    /// 递归逐文件删除 + 自底向上删空目录：深层子目录不再因整体删除失败而整团跳过
+    /// （历史 bug：浏览器 Cache/Cache_Data 等深层缓存一个被锁文件导致整目录删不掉）。
+    /// </summary>
     public static (int DeletedFiles, long FreedBytes, int Failed) CleanDirectoryContents(string path)
     {
         int deleted = 0, failed = 0;
         long freed = 0;
         if (!Directory.Exists(path)) return (0, 0, 0);
-        foreach (var f in SafeFiles(path))
+        var root = Path.GetFullPath(path);
+        var files = new List<string>();
+        var dirs = new List<string>(); // 先序（父在前），删除时反向自底向上
+        try
+        {
+            var stack = new Stack<DirectoryInfo>();
+            stack.Push(new DirectoryInfo(root));
+            while (stack.Count > 0)
+            {
+                var dir = stack.Pop();
+                dirs.Add(dir.FullName);
+                try { foreach (var f in dir.EnumerateFiles()) files.Add(f.FullName); }
+                catch { }
+                try { foreach (var d in dir.EnumerateDirectories()) stack.Push(d); }
+                catch { }
+            }
+        }
+        catch { }
+        foreach (var f in files)
         {
             try
             {
-                long len = f.Length;
-                File.SetAttributes(f.FullName, FileAttributes.Normal);
-                f.Delete();
+                var fi = new FileInfo(f);
+                long len = fi.Length;
+                File.SetAttributes(f, FileAttributes.Normal);
+                fi.Delete();
                 deleted++;
                 freed += len;
             }
             catch { failed++; }
         }
-        foreach (var d in SafeDirs(path))
+        for (var i = dirs.Count - 1; i >= 0; i--)
         {
-            try
-            {
-                foreach (var f in SafeFiles(d.FullName)) { try { File.SetAttributes(f.FullName, FileAttributes.Normal); f.Delete(); } catch { failed++; } }
-                d.Delete(true);
-            }
+            if (string.Equals(dirs[i], root, StringComparison.OrdinalIgnoreCase)) continue; // 保留目录本身
+            try { new DirectoryInfo(dirs[i]).Delete(false); } // 仅删空目录；仍有残留（被锁）则计入失败
             catch { failed++; }
         }
         return (deleted, freed, failed);
@@ -113,17 +138,5 @@ public static class FileOpsHelper
             catch { /* 无权限目录跳过 */ }
         }
         return result;
-    }
-
-    private static IEnumerable<FileInfo> SafeFiles(string dir)
-    {
-        try { return new DirectoryInfo(dir).EnumerateFiles().ToList(); }
-        catch { return Enumerable.Empty<FileInfo>(); }
-    }
-
-    private static IEnumerable<DirectoryInfo> SafeDirs(string dir)
-    {
-        try { return new DirectoryInfo(dir).EnumerateDirectories().ToList(); }
-        catch { return Enumerable.Empty<DirectoryInfo>(); }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -26,6 +27,8 @@ public partial class CleanTargetVm : ObservableObject
     }
 
     public CleanTargetDef Def { get; }
+    /// <summary>最近一次扫描结果（供清理引擎携带真实大小/数量；传零值会导致回收站等目标被误判为空而跳过）。</summary>
+    public CleanScanTarget? LastScan { get; set; }
     public string Name => Def.Name;
     public string Description => Def.Description;
     public string RiskText => CleanRiskText.Of(Def.Risk);
@@ -111,9 +114,18 @@ public partial class CleanupViewModel : ObservableObject
     private CancellationTokenSource? _cts;
 
     public ObservableCollection<CleanTargetVm> RegularTargets { get; } = new();
-    public ObservableCollection<ImFileVm> WeChatFiles { get; } = new();
-    public ObservableCollection<ImFileVm> QqFiles { get; } = new();
-    public ObservableCollection<LargeFileVm> LargeFiles { get; } = new();
+
+    // 微信 / QQ / 大文件列表整体替换而非逐条 Add：几千条逐项 CollectionChanged 会造成 UI 布局风暴（历史卡顿主因），
+    // 页面绑定均为 Mode=OneWay，替换实例可正常刷新
+    private ObservableCollection<ImFileVm> _weChatFiles = new();
+    public ObservableCollection<ImFileVm> WeChatFiles { get => _weChatFiles; private set => SetProperty(ref _weChatFiles, value); }
+
+    private ObservableCollection<ImFileVm> _qqFiles = new();
+    public ObservableCollection<ImFileVm> QqFiles { get => _qqFiles; private set => SetProperty(ref _qqFiles, value); }
+
+    private ObservableCollection<LargeFileVm> _largeFiles = new();
+    public ObservableCollection<LargeFileVm> LargeFiles { get => _largeFiles; private set => SetProperty(ref _largeFiles, value); }
+
     public ObservableCollection<char> Drives { get; } = new();
 
     // ---- 常规 ----
@@ -201,24 +213,22 @@ public partial class CleanupViewModel : ObservableObject
                 var vm = RegularTargets.FirstOrDefault(x => x.Def.Id == t.Def.Id);
                 if (vm != null)
                 {
+                    vm.LastScan = t;
                     vm.IsScanned = true;
                     vm.SizeText = FormatHelper.Bytes(t.SizeBytes);
                     vm.FileText = $"{t.FileCount} 项";
-                    RegularProgress++;
+                    RegularProgress = 100.0 * RegularTargets.Count(x => x.IsScanned) / RegularTargets.Count;
                 }
             });
             RegularProgress = 0;
             await _cleanup.ScanAsync(targets, progress, _cts.Token).ConfigureAwait(true);
             UpdateRegularSelected();
-            RegularStatus = $"扫描完成：共可清理 {FormatHelper.Bytes(RegularTargets.Sum(x => x.Def.IsRecycleBin ? ParseSize(x.SizeText) : 0))}（含回收站）";
             RegularStatus = "扫描完成，请确认要清理的项目后点击“开始清理”。";
         }
         catch (OperationCanceledException) { RegularStatus = "扫描已取消。"; }
         catch (Exception ex) { RegularStatus = $"扫描失败：{ex.Message}"; }
         finally { IsRegularBusy = false; }
     }
-
-    private static long ParseSize(string _) => 0; // 汇总改由选中项实时计算展示
 
     [RelayCommand]
     private void SelectAllRegular() { foreach (var t in RegularTargets) if (t.IsScanned) t.IsSelected = true; UpdateRegularSelected(); }
@@ -234,20 +244,26 @@ public partial class CleanupViewModel : ObservableObject
         if (selected.Count == 0) return;
         IsRegularBusy = true;
         RegularResult = "";
+        var succeeded = false;
         try
         {
-            var scan = selected.Select(vm => new CleanScanTarget(vm.Def, 0, 0)).ToList();
+            // 必须携带扫描结果：回收站目标依赖 SizeBytes 判断空/非空，传零值会被误判“已是空的”直接跳过（历史 bug）
+            var scan = selected.Select(vm => vm.LastScan ?? new CleanScanTarget(vm.Def, 0, 0)).ToList();
             var log = new Progress<string>(line => RegularResult = line);
             var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, CancellationToken.None).ConfigureAwait(true);
-            RegularStatus = $"清理完成：{report.ToSummary()}";
+            RegularStatus = $"清理完成：{report.ToSummary()}" +
+                            (DeleteToRecycleBin && report.FreedBytes > 0 ? "（已移入回收站，清空回收站后才真正释放磁盘空间）" : "");
             LastResult = $"{DateTime.Now:HH:mm} 清理释放 {FormatHelper.Bytes(report.FreedBytes)}";
-            await ScanRegularAsync().ConfigureAwait(true); // 重新扫描显示新状态
+            succeeded = true;
         }
         catch (Exception ex)
         {
             RegularStatus = $"清理失败：{ex.Message}";
         }
         finally { IsRegularBusy = false; }
+        // 重扫必须等 busy 复位后执行：ScanRegularAsync 有 busy 保护，内联 await 会被静默跳过
+        // （历史 bug：清理后列表不刷新，仍显示清理前大小，观感“没清理”）
+        if (succeeded) await ScanRegularAsync().ConfigureAwait(true);
     }
 
     private void UpdateRegularSelected()
@@ -280,7 +296,7 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
-            FillGrouped(WeChatFiles, files, "微信");
+            WeChatFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "微信", OnImRowSelectionChanged));
             UpdateImSelected();
             WeChatStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
@@ -300,7 +316,7 @@ public partial class CleanupViewModel : ObservableObject
         try
         {
             var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
-            FillGrouped(QqFiles, files, "QQ");
+            QqFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "QQ", OnImRowSelectionChanged));
             UpdateImSelected();
             QqStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
@@ -313,36 +329,53 @@ public partial class CleanupViewModel : ObservableObject
     [RelayCommand]
     private void SelectAllIm()
     {
-        foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = true;
-        foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = true;
+        // 批量选择时挂起逐行事件：否则每行 PropertyChanged 都触发一次 O(n) 全表重算，全选即 O(n²) 卡顿
+        _suppressImSelectionEvents = true;
+        try
+        {
+            foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = true;
+            foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = true;
+        }
+        finally { _suppressImSelectionEvents = false; }
         UpdateImSelected();
     }
 
     [RelayCommand]
     private void SelectNoneIm()
     {
-        foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = false;
-        foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = false;
+        _suppressImSelectionEvents = true;
+        try
+        {
+            foreach (var f in WeChatFiles) if (!f.IsHeader) f.IsSelected = false;
+            foreach (var f in QqFiles) if (!f.IsHeader) f.IsSelected = false;
+        }
+        finally { _suppressImSelectionEvents = false; }
         UpdateImSelected();
     }
 
-    /// <summary>按账号文件夹分组展示：组头行（账号 · 文件数 · 总量）+ 组内按大小降序。</summary>
-    private void FillGrouped(ObservableCollection<ImFileVm> target, List<ImFileItem> files, string label)
+    private bool _suppressImSelectionEvents;
+
+    private void OnImRowSelectionChanged(object? sender, PropertyChangedEventArgs e)
     {
-        target.Clear();
+        if (_suppressImSelectionEvents) return;
+        if (e.PropertyName == nameof(ImFileVm.IsSelected)) UpdateImSelected();
+    }
+
+    /// <summary>按账号分组构建行列表；调用方整体替换集合，避免逐条 Add 触发数千次 CollectionChanged 卡死 UI。</summary>
+    private static List<ImFileVm> BuildGroupedRows(List<ImFileItem> files, string label, PropertyChangedEventHandler onSelectionChanged)
+    {
+        var rows = new List<ImFileVm>();
         foreach (var g in files.GroupBy(f => f.Account).OrderByDescending(g => g.Sum(f => f.SizeBytes)))
         {
-            target.Add(new ImFileVm($"{label}账号：{g.Key}  ·  {g.Count()} 个文件  ·  共 {FormatHelper.Bytes(g.Sum(f => f.SizeBytes))}"));
+            rows.Add(new ImFileVm($"{label}账号：{g.Key}  ·  {g.Count()} 个文件  ·  共 {FormatHelper.Bytes(g.Sum(f => f.SizeBytes))}"));
             foreach (var f in g.OrderByDescending(f => f.SizeBytes))
             {
                 var row = new ImFileVm(f);
-                row.PropertyChanged += (_, e) =>
-                {
-                    if (e.PropertyName == nameof(ImFileVm.IsSelected)) UpdateImSelected();
-                };
-                target.Add(row);
+                row.PropertyChanged += onSelectionChanged;
+                rows.Add(row);
             }
         }
+        return rows;
     }
 
     private void UpdateImSelected()
@@ -353,19 +386,29 @@ public partial class CleanupViewModel : ObservableObject
         ImSelectedText = $"已选 {count} 项 · {FormatHelper.Bytes(bytes)}";
     }
 
+    private bool _imDeleteBusy;
+
     [RelayCommand]
     private async Task DeleteImAsync()
     {
+        if (_imDeleteBusy) return;
         var paths = WeChatFiles.Where(x => x.IsSelected && !x.IsHeader).Select(x => x.Item.Path)
             .Concat(QqFiles.Where(x => x.IsSelected && !x.IsHeader).Select(x => x.Item.Path)).ToList();
         if (paths.Count == 0) return;
-        var bytes = WeChatFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes)
-                  + QqFiles.Where(x => x.IsSelected && !x.IsHeader).Sum(x => x.Item.SizeBytes);
-        var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
-        WeChatStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
-        QqStatus = "";
-        await ScanWeChatAsync().ConfigureAwait(true);
-        _ = ScanQqAsync();
+        _imDeleteBusy = true;
+        try
+        {
+            var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
+            WeChatStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
+            QqStatus = "";
+            await ScanWeChatAsync().ConfigureAwait(true);
+            _ = ScanQqAsync();
+        }
+        catch (Exception ex)
+        {
+            WeChatStatus = $"删除失败：{ex.Message}";
+        }
+        finally { _imDeleteBusy = false; }
     }
 
     // ================= 大文件 =================
@@ -382,7 +425,7 @@ public partial class CleanupViewModel : ObservableObject
             var drive = Drives.ElementAtOrDefault(DriveIndex);
             if (drive == default) return;
             var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), CancellationToken.None).ConfigureAwait(true);
-            foreach (var f in files.Take(200)) LargeFiles.Add(new LargeFileVm(f));
+            LargeFiles = new ObservableCollection<LargeFileVm>(files.Take(200).Select(f => new LargeFileVm(f)));
             UpdateLargeSelected();
             LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
         }
@@ -399,14 +442,26 @@ public partial class CleanupViewModel : ObservableObject
         }
     }
 
+    private bool _largeDeleteBusy;
+
     [RelayCommand]
     private async Task DeleteLargeAsync()
     {
+        if (_largeDeleteBusy) return;
         var paths = LargeFiles.Where(x => x.IsSelected).Select(x => x.Item.Path).ToList();
         if (paths.Count == 0) return;
-        var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
-        LargeStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
-        _ = ScanLargeAsync();
+        _largeDeleteBusy = true;
+        try
+        {
+            var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
+            LargeStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}";
+            _ = ScanLargeAsync();
+        }
+        catch (Exception ex)
+        {
+            LargeStatus = $"删除失败：{ex.Message}";
+        }
+        finally { _largeDeleteBusy = false; }
     }
 
     private void UpdateLargeSelected()

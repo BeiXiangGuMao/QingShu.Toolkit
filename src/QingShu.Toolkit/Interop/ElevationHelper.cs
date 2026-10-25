@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
@@ -32,23 +33,35 @@ public static class ElevationHelper
     {
         return Task.Run(() =>
         {
-            var psi = new ProcessStartInfo
+            try
             {
-                FileName = "cmd.exe",
-                Arguments = $"/d /c \"\"{scriptPath}\" > \"{outLog}\" 2>&1\"",
-                Verb = "runas",
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                CreateNoWindow = true
-            };
-            using var p = Process.Start(psi)!;
-            if (!p.WaitForExit(timeoutMs))
-            {
-                try { p.Kill(); } catch { }
-                return (-1, "##FAIL## 提权脚本执行超时");
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/d /c \"\"{scriptPath}\" > \"{outLog}\" 2>&1\"",
+                    Verb = "runas",
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true
+                };
+                using var p = Process.Start(psi)!;
+                if (!p.WaitForExit(timeoutMs))
+                {
+                    try { p.Kill(); } catch { }
+                    return (-1, "##FAIL## 提权脚本执行超时");
+                }
+                var output = File.Exists(outLog) ? File.ReadAllText(outLog) : "";
+                return (p.ExitCode, output ?? "");
             }
-            var output = File.Exists(outLog) ? File.ReadAllText(outLog) : "";
-            return (p.ExitCode, output ?? "");
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                // UAC 弹窗被用户取消：历史 bug 此处抛异常直接中断整轮清理（普通目标已清完但后续流程全部中断）
+                return (-1, "##UAC_CANCELLED##");
+            }
+            catch (Exception ex)
+            {
+                return (-1, $"##FAIL## 无法启动提权脚本：{ex.Message}");
+            }
         });
     }
 

@@ -229,6 +229,7 @@ public sealed class CleanupService : ICleanupService
                 var (script, outLog) = BuildAdminCleanScript(admin, toRecycleBin);
                 log?.Report($"需要管理员权限的目标（{admin.Count} 项）将合并为一次 UAC 执行…");
                 var (exit, output) = await ElevationHelper.RunElevatedScriptAsync(script, outLog).ConfigureAwait(true);
+                int okCount = 0, failCount = 0;
                 foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                 {
                     if (line.StartsWith("##OK##", StringComparison.Ordinal))
@@ -236,11 +237,25 @@ public sealed class CleanupService : ICleanupService
                         var id = line["##OK##".Length..].Trim();
                         var def = Targets.FirstOrDefault(x => x.Id == id);
                         report.Details.Add($"[提权] {def?.Name ?? id} 清理完成");
-                        log?.Report($"[提权] {def?.Name ?? id} 清理完成");
+                        log?.Report($"✓ [提权] {def?.Name ?? id} 清理完成");
+                        okCount++;
+                    }
+                    else if (line.StartsWith("##FAIL##", StringComparison.Ordinal))
+                    {
+                        // 历史 bug：失败标记被静默丢弃，用户看到“清理完成”实际没删
+                        var id = line["##FAIL##".Length..].Trim();
+                        var def = Targets.FirstOrDefault(x => x.Id == id);
+                        var scanT = admin.FirstOrDefault(x => x.Def.Id == id);
+                        report.FailedFiles += Math.Max(1, scanT?.FileCount ?? 1);
+                        report.Details.Add($"[提权] {def?.Name ?? id} 清理失败（目录被占用或权限不足）");
+                        log?.Report($"✗ [提权] {def?.Name ?? id} 清理失败（可能被系统占用，稍后重试）");
+                        failCount++;
                     }
                 }
-                if (output.Contains("##UAC_CANCELLED##"))
-                    log?.Report("已取消 UAC，管理员目标未清理。");
+                if (output.Contains("##UAC_CANCELLED##") || (okCount == 0 && failCount == 0 && admin.Count > 0))
+                    log?.Report("已取消 UAC 或脚本未执行，管理员目标本次未清理（其余目标不受影响）。");
+                else if (failCount > 0)
+                    log?.Report($"[提权] 完成但 {failCount} 项失败，详见上方提示。");
             }
         }
 
@@ -254,18 +269,21 @@ public sealed class CleanupService : ICleanupService
     {
         if (t.Def.IsRecycleBin)
         {
-            if (t.SizeBytes <= 0) { log?.Report("回收站已是空的。"); return; }
+            // 实时复查而非信任扫描时快照：勾选到执行之间回收站可能已变化，
+            // 且历史 bug（清理传零值）曾导致永远走“已是空的”分支
+            var (liveBytes, liveItems) = await Task.Run(() => NativeMethods.QueryRecycleBin()).ConfigureAwait(true);
+            if (liveBytes <= 0 && liveItems <= 0) { log?.Report("回收站已是空的。"); return; }
             var hr = await Task.Run(() => NativeMethods.EmptyRecycleBin()).ConfigureAwait(true);
             if (hr == 0)
             {
-                report.FreedBytes += t.SizeBytes;
-                report.DeletedFiles += t.FileCount;
-                report.Details.Add($"{t.Def.Name}: 清空 {t.FileCount} 项");
-                log?.Report($"✓ {t.Def.Name}: 清空 {t.FileCount} 项");
+                report.FreedBytes += liveBytes;
+                report.DeletedFiles += (int)Math.Min(liveItems, int.MaxValue);
+                report.Details.Add($"{t.Def.Name}: 清空 {liveItems} 项，释放 {FormatHelper.Bytes(liveBytes)}");
+                log?.Report($"✓ {t.Def.Name}: 清空 {liveItems} 项，释放 {FormatHelper.Bytes(liveBytes)}");
             }
             else
             {
-                report.FailedFiles += t.FileCount;
+                report.FailedFiles += (int)Math.Max(1, liveItems);
                 log?.Report($"✗ {t.Def.Name}: 清空失败 (HRESULT 0x{hr:X8})");
             }
             return;
@@ -311,6 +329,8 @@ public sealed class CleanupService : ICleanupService
             report.FailedFiles += failed;
             report.Details.Add($"{t.Def.Name}: 删除 {deleted} 项，释放 {FormatHelper.Bytes(freed)}{(failed > 0 ? $"，跳过 {failed} 项（被占用）" : "")}");
             log?.Report($"  → 删除 {deleted} 项，释放 {FormatHelper.Bytes(freed)}{(failed > 0 ? $"，跳过 {failed} 项（被占用）" : "")}");
+            if (failed > 0 && freed == 0)
+                log?.Report("  · 内容均被占用：相关程序（浏览器/资源管理器等）正在运行，关闭后重扫重清效果更佳。");
         }
     }
 
@@ -332,18 +352,18 @@ public sealed class CleanupService : ICleanupService
                 if (!Directory.Exists(path)) continue;
                 if (t.Def.Id == "windows.old")
                 {
-                    // Windows.old 含只读系统属性，先清除属性再删
+                    // Windows.old 含只读系统属性，先清除属性再删（整目录删除，不重建）
                     sb.AppendLine($"takeown /f \"{path}\" /r /d y >nul 2>&1");
                     sb.AppendLine($"icacls \"{path}\" /grant administrators:F /t >nul 2>&1");
-                }
-                if (toRecycleBin)
-                {
-                    // cmd 无法直接进回收站：对提权目标退化为永久删除（已在 UI 明确告知）
                     sb.AppendLine($"rd /s /q \"{path}\" >nul 2>&1 && echo ##OK##{t.Def.Id} || echo ##FAIL##{t.Def.Id}");
                 }
                 else
                 {
+                    // 历史 bug：裸 rd /s /q 连目录本身一起删除（SoftwareDistribution\Download、DeliveryOptimization\Cache
+                    // 等系统目录被移除后依赖系统自愈）。改为删除后立即重建空目录，保持目录存在。
+                    // cmd 无法直接进回收站：提权目标退化为永久删除（UI 已明确告知）
                     sb.AppendLine($"rd /s /q \"{path}\" >nul 2>&1 && echo ##OK##{t.Def.Id} || echo ##FAIL##{t.Def.Id}");
+                    sb.AppendLine($"md \"{path}\" >nul 2>&1");
                 }
             }
         }
