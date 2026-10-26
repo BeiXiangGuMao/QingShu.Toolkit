@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using QingShu.Toolkit.Helpers;
+using QingShu.Toolkit.Interop;
 
 namespace QingShu.Toolkit.Services.Optimize;
 
