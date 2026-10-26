@@ -88,6 +88,9 @@
                 <NavigationViewItem Tag="optimize" Content="性能优化">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Repair" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Tag="popupguard" Content="弹窗拦截">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Tag="logs" Content="日志查看">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Clock" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

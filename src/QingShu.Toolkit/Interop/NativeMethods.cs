@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace QingShu.Toolkit.Interop;
 
@@ -76,22 +77,39 @@ internal static partial class NativeMethods
 
     /// <summary>对指定进程启用/关闭 EcoQoS（Win10 1709+）。返回是否成功。</summary>
     public static bool SetProcessEcoQos(int pid, bool enable)
+        => TrySetProcessEcoQos(pid, enable, out _);
+
+    /// <summary>
+    /// 带失败原因的 EcoQoS 设置。原因分类：
+    ///  · "os"    ：系统早于 Win10 1709，不支持 ProcessPowerThrottling
+    ///  · "open"  ：OpenProcess 失败（目标受保护/权限不足，如管理员进程、反作弊保护）
+    ///  · "set"   ：SetProcessInformation 失败（系统拒绝，含前台自动豁免策略）
+    /// </summary>
+    public static bool TrySetProcessEcoQos(int pid, bool enable, out string error)
     {
-        IntPtr h = IntPtr.Zero;
+        error = "";
         try
         {
-            h = OpenProcess(PROCESS_SET_INFORMATION, false, pid);
-            if (h == IntPtr.Zero) return false;
-            var st = new PROCESS_POWER_THROTTLING_STATE
+            // Win10 1709 = build 16299 起才提供 ProcessPowerThrottling 信息类
+            if (Environment.OSVersion.Version.Build < 16299) { error = "os"; return false; }
+            IntPtr h = OpenProcess(PROCESS_SET_INFORMATION, false, pid);
+            if (h == IntPtr.Zero) { error = "open"; return false; }
+            try
             {
-                Version = 1,
-                ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-                StateMask = enable ? PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0
-            };
-            return SetProcessInformation(h, ProcessPowerThrottling, ref st, Marshal.SizeOf<PROCESS_POWER_THROTTLING_STATE>());
+                var st = new PROCESS_POWER_THROTTLING_STATE
+                {
+                    Version = 1,
+                    ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                    StateMask = enable ? PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0
+                };
+                if (SetProcessInformation(h, ProcessPowerThrottling, ref st,
+                        Marshal.SizeOf<PROCESS_POWER_THROTTLING_STATE>())) return true;
+                error = "set";
+                return false;
+            }
+            finally { CloseHandle(h); }
         }
-        catch { return false; }
-        finally { if (h != IntPtr.Zero) CloseHandle(h); }
+        catch { error = "open"; return false; }
     }
 
     #endregion
@@ -326,21 +344,39 @@ internal static partial class NativeMethods
     private const short FOF_SILENT = 0x4;
     private const short FOF_NOERRORUI = 0x400;
 
-    /// <summary>SHFileOperation FO_DELETE 公共实现。pFrom 为以 \0 分隔、\0\0 结尾的多路径列表。</summary>
+    /// <summary>
+    /// SHFileOperation FO_DELETE 公共实现。pFrom 为以 \0 分隔、\0\0 结尾的多路径列表。
+    /// 历史 bug（用户实测「移入回收站不可行」）：线程池是 MTA，SHFileOperation 属 shell API，
+    /// 回收站（ALLOWUNDO）操作在 MTA 线程下 shell 上下文初始化不完整，可能静默失败或退化为
+    /// 永久删除 —— 必须切 STA 线程执行。FOF_SILENT|FOF_NOERRORUI 下无 UI 阻塞点，同步等待安全。
+    /// </summary>
     private static int ShDeleteToRecycleBin(string multiPathList)
     {
-        var op = new SHFILEOPSTRUCTW
+        int result = 0;
+        var t = new Thread(() =>
         {
-            hwnd = IntPtr.Zero,
-            wFunc = FO_DELETE,
-            pFrom = multiPathList,
-            pTo = "",
-            fFlags = (short)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI),
-            fAnyOperationsAborted = 0,
-            hNameMappings = IntPtr.Zero,
-            lpszProgressTitle = ""
-        };
-        return SHFileOperation(ref op);
+            try
+            {
+                var op = new SHFILEOPSTRUCTW
+                {
+                    hwnd = IntPtr.Zero,
+                    wFunc = FO_DELETE,
+                    pFrom = multiPathList,
+                    pTo = "",
+                    fFlags = (short)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI),
+                    fAnyOperationsAborted = 0,
+                    hNameMappings = IntPtr.Zero,
+                    lpszProgressTitle = ""
+                };
+                result = SHFileOperation(ref op);
+            }
+            catch { result = unchecked((int)0x8000FFFF); }
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Start();
+        t.Join();
+        return result;
     }
 
     /// <summary>将单个文件/目录移入回收站（安静模式）。0 = 成功。</summary>
@@ -350,12 +386,35 @@ internal static partial class NativeMethods
     /// <summary>
     /// 批量将多个文件/目录移入回收站：pFrom 支持多路径，单次调用完成整批删除，
     /// 比逐文件调用快一个数量级（数千临时文件场景的历史卡顿点）。
-    /// 返回 0 = 调用成功（不代表每一项都删净）；非 0 = 存在失败，调用方应逐项复核。
+    /// 历史 bug：SHFileOperation 的 pFrom 列表存在约 32K 字符的隐性上限，
+    /// 临时文件路径平均 80-150 字符，按 400 条/批拼串轻易超限 → 整批静默失败。
+    /// 此处按累计字符预算（16000 字符/批）切批，远低于上限且仍保持批量优势。
+    /// 返回 0 = 所有批次调用成功（不代表每一项都删净）；非 0 = 存在失败，调用方应逐项复核。
     /// </summary>
     public static int DeleteToRecycleBinBatch(IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) return 0;
-        return ShDeleteToRecycleBin(string.Join("\0", paths) + "\0");
+        int result = 0;
+        var buffer = new List<string>(64);
+        int chars = 0;
+        foreach (var p in paths)
+        {
+            if (chars + p.Length + 1 > 16000 && buffer.Count > 0)
+            {
+                var r = ShDeleteToRecycleBin(string.Join("\0", buffer) + "\0");
+                if (r != 0) result = r;
+                buffer.Clear();
+                chars = 0;
+            }
+            buffer.Add(p);
+            chars += p.Length + 1;
+        }
+        if (buffer.Count > 0)
+        {
+            var r = ShDeleteToRecycleBin(string.Join("\0", buffer) + "\0");
+            if (r != 0) result = r;
+        }
+        return result;
     }
 
     #endregion

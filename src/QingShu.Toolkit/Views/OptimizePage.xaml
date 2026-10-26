@@ -133,61 +133,15 @@
             <!-- ============ 系统级优化 ============ -->
             <StackPanel Spacing="2">
                 <TextBlock Text="系统级优化 —— 影响整机行为，逐项确认" Style="{StaticResource SectionTitleTextBlock}" />
-                <TextBlock Text="弹窗拦截作用于全系统新出现的窗口；启动项影响开机加载。均不修改系统服务/注册表/Defender。" Style="{StaticResource CaptionTextBlock}" />
+                <TextBlock Text="启动项影响开机加载，支持应用内禁用/启用（可逆）。弹窗拦截已拆分为独立页面（左侧导航「弹窗拦截」）。均不修改系统服务/Defender。"
+                           Style="{StaticResource CaptionTextBlock}" />
             </StackPanel>
 
-            <!-- 弹窗拦截 -->
+            <!-- 启动项管理 -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel Spacing="10">
                     <Grid>
-                        <TextBlock Text="被动弹窗拦截（全局白名单）" Style="{StaticResource SectionTitleTextBlock}" />
-                        <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <TextBlock Text="{x:Bind Vm.PopupCountText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
-                                       Foreground="{ThemeResource InfoTextBrush}" VerticalAlignment="Center" />
-                            <ToggleSwitch IsOn="{x:Bind Vm.PopupEnabled, Mode=TwoWay}" Margin="-8,0" />
-                        </StackPanel>
-                    </Grid>
-                    <TextBlock Text="策略：只放行下方白名单进程的系统/办公/教学软件窗口，其余新出现的可见窗口一律被动关闭。启动时已存在的窗口、正在使用的前台窗口、系统外壳与工具窗口永不拦截。"
-                               Style="{StaticResource CaptionTextBlock}" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBox PlaceholderText="输入进程名，如 qqexternal（无需 .exe）" Width="280"
-                                 Text="{x:Bind Vm.NewWhitelistName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Command="{x:Bind Vm.AddWhitelistCommand}" Content="添加白名单" />
-                    </StackPanel>
-                    <ItemsControl ItemsSource="{x:Bind Vm.Whitelist, Mode=OneWay}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <ItemsWrapGrid Orientation="Horizontal" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:WhitelistRowVm">
-                                <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="99" Padding="11,4" Margin="0,2,8,2">
-                                    <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE72E;" FontSize="10"
-                                                  Foreground="{ThemeResource InfoTextBrush}" VerticalAlignment="Center" />
-                                        <TextBlock Text="{x:Bind Name}" FontSize="11.5"
-                                                   Foreground="{ThemeResource TextPrimaryBrush}" VerticalAlignment="Center" />
-                                        <Button Padding="3,0" MinWidth="0" MinHeight="0" Background="Transparent" BorderThickness="0"
-                                                CornerRadius="99" VerticalAlignment="Center"
-                                                Command="{x:Bind Owner.RemoveWhitelistCommand}"
-                                                CommandParameter="{x:Bind Name}">
-                                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE711;" FontSize="9"
-                                                      Foreground="{ThemeResource TextSecondaryBrush}" />
-                                        </Button>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- 启动项（只读） -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Spacing="10">
-                    <Grid>
-                        <TextBlock Text="启动项（只读）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <TextBlock Text="启动项管理" Style="{StaticResource SectionTitleTextBlock}" />
                         <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                             <Button Command="{x:Bind Vm.RefreshStartupCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="6"><SymbolIcon Symbol="Sync" /><TextBlock Text="刷新" /></StackPanel>
@@ -195,25 +149,53 @@
                             <Button Command="{x:Bind Vm.OpenTaskManagerCommand}" Content="打开任务管理器" />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Text="{x:Bind Vm.StartupHint, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" />
-                    <ListView ItemsSource="{x:Bind Vm.StartupItems, Mode=OneWay}" SelectionMode="None" MaxHeight="220">
+                    <TextBlock Text="{x:Bind Vm.StartupHint, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind Vm.StartupResult, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               Foreground="{ThemeResource InfoTextBrush}"
+                               Visibility="{x:Bind Vm.HasStartupResult, Mode=OneWay}" />
+                    <ListView ItemsSource="{x:Bind Vm.StartupItems, Mode=OneWay}" SelectionMode="None" MaxHeight="260">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="Padding" Value="0,1" />
+                                <Setter Property="Padding" Value="0,2" />
                                 <Setter Property="MinHeight" Value="0" />
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="vm:StartupRowVm">
-                                <Grid ColumnSpacing="10" Padding="4,2">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{x:Bind Command}" Style="{StaticResource MonoTextBlock}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="2" Text="{x:Bind Source}" Style="{StaticResource CaptionTextBlock}" />
-                                </Grid>
+                                <Border Background="{ThemeResource CardBackgroundBrush}"
+                                        BorderBrush="{ThemeResource DividerStrokeBrush}" BorderThickness="1"
+                                        CornerRadius="8" Padding="12,7">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center" Spacing="1">
+                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}"
+                                                       TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                                            <TextBlock Text="{x:Bind Source}" Style="{StaticResource CaptionTextBlock}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Command}" Style="{StaticResource MonoTextBlock}"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0.75" />
+                                        <Border Grid.Column="2" Background="{ThemeResource SuccessChipFillBrush}" CornerRadius="4" Padding="7,1"
+                                                Visibility="{x:Bind EnabledVis}" VerticalAlignment="Center">
+                                            <TextBlock Text="已启用" Foreground="{ThemeResource SuccessTextBrush}" FontSize="10" />
+                                        </Border>
+                                        <Border Grid.Column="2" Background="{ThemeResource InfoChipFillBrush}" CornerRadius="4" Padding="7,1"
+                                                Visibility="{x:Bind DisabledVis}" VerticalAlignment="Center">
+                                            <TextBlock Text="已禁用" Foreground="{ThemeResource InfoTextBrush}" FontSize="10" />
+                                        </Border>
+                                        <Button Grid.Column="3" Command="{x:Bind Owner.ToggleStartupCommand}"
+                                                CommandParameter="{x:Bind}"
+                                                Content="{x:Bind ToggleText}"
+                                                Padding="12,3" MinHeight="0" VerticalAlignment="Center"
+                                                ToolTipService.ToolTip="禁用前自动备份，可随时恢复" />
+                                    </Grid>
+                                </Border>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>

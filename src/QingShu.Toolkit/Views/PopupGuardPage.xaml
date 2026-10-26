@@ -1,0 +1,186 @@
+<Page
+    x:Class="QingShu.Toolkit.Views.PopupGuardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:QingShu.Toolkit.ViewModels">
+
+    <ScrollViewer Padding="28,20,28,20">
+        <StackPanel MaxWidth="1080" HorizontalAlignment="Stretch" Spacing="14">
+            <StackPanel.Transitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="12" IsStaggeringEnabled="True" />
+                </TransitionCollection>
+            </StackPanel.Transitions>
+
+            <StackPanel>
+                <TextBlock Text="弹窗拦截" Style="{StaticResource PageTitleTextBlock}" />
+                <TextBlock Text="被动拦截全网课/办公软件之外的新弹窗：白名单进程永不拦截，前台与系统窗口永不打扰。"
+                           Style="{StaticResource PageSubtitleTextBlock}" />
+            </StackPanel>
+
+            <!-- ============ 开关与状态 ============ -->
+            <Border Style="{StaticResource CardStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Width="46" Height="46" CornerRadius="12"
+                            Background="{ThemeResource InfoChipFillBrush}">
+                        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE720;"
+                                  FontSize="20" Foreground="{ThemeResource InfoTextBrush}" />
+                    </Border>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="被动弹窗拦截" Style="{StaticResource SectionTitleTextBlock}" />
+                            <Border Background="{ThemeResource SuccessChipFillBrush}" CornerRadius="4" Padding="6,1"
+                                    Visibility="{x:Bind Vm.IsRunning, Mode=OneWay}">
+                                <TextBlock Text="运行中" Foreground="{ThemeResource SuccessTextBrush}" FontSize="10" />
+                            </Border>
+                            <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="4" Padding="6,1"
+                                    Visibility="{x:Bind Vm.IsPaused, Mode=OneWay}">
+                                <TextBlock Text="已暂停" Foreground="{ThemeResource InfoTextBrush}" FontSize="10" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Text="开启后每 3 秒扫描一次新出现的可见窗口：白名单内的进程放行，其余被动关闭（不注入、不挂钩，仅发送关闭消息）。启动时已存在的窗口、前台窗口、托盘/输入法等系统外壳永不拦截。"
+                                   Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="0">
+                            <TextBlock Text="{x:Bind Vm.PopupCountText, Mode=OneWay}"
+                                       Style="{StaticResource PageTitleTextBlock}" FontSize="26"
+                                       Foreground="{ThemeResource InfoTextBrush}" HorizontalAlignment="Right" />
+                            <TextBlock Text="本次开机累计拦截" Style="{StaticResource CaptionTextBlock}" />
+                        </StackPanel>
+                        <ToggleSwitch IsOn="{x:Bind Vm.PopupEnabled, Mode=TwoWay}" Margin="-8,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ============ 白名单 ============ -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="白名单进程" Style="{StaticResource SectionTitleTextBlock}" />
+                        <TextBlock Text="{x:Bind Vm.WhitelistSummary, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                                   Foreground="{ThemeResource InfoTextBrush}" HorizontalAlignment="Right"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="520" />
+                    </Grid>
+                    <TextBlock Text="填写要放行的进程名（无需 .exe，支持前缀通配如 wps*）。建议添加网课直播、考试客户端、办公与投影软件，避免上课软件窗口被误关。"
+                               Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox PlaceholderText="输入进程名，如 qqexternal（无需 .exe）"
+                                 Text="{x:Bind Vm.NewWhitelistName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="1" Style="{StaticResource AccentButtonStyle}"
+                                Command="{x:Bind Vm.AddWhitelistCommand}" Content="添加到白名单" />
+                    </Grid>
+                    <ListView ItemsSource="{x:Bind Vm.Whitelist, Mode=OneWay}" SelectionMode="None" MaxHeight="264">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0,2" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsStackPanel />
+                            </ItemsPanelTemplate>
+                        </ListView.ItemsPanel>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:WhitelistRowVm">
+                                <Border Background="{ThemeResource CardBackgroundBrush}"
+                                        BorderBrush="{ThemeResource DividerStrokeBrush}" BorderThickness="1"
+                                        CornerRadius="8" Padding="12,8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="28" Height="28" CornerRadius="7"
+                                                Background="{ThemeResource InfoChipFillBrush}">
+                                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE72E;"
+                                                      FontSize="12" Foreground="{ThemeResource InfoTextBrush}" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="0">
+                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextBlock}"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock Text="命中后窗口放行，不再被拦截"
+                                                       Style="{StaticResource CaptionTextBlock}" />
+                                        </StackPanel>
+                                        <Button Grid.Column="2" Padding="6,4" MinWidth="0" MinHeight="0"
+                                                Background="Transparent" BorderThickness="0" CornerRadius="6"
+                                                VerticalAlignment="Center"
+                                                Command="{x:Bind Owner.RemoveWhitelistCommand}"
+                                                CommandParameter="{x:Bind Name}"
+                                                ToolTipService.ToolTip="从白名单移除">
+                                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE711;"
+                                                      FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <!-- ============ 最近拦截 ============ -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="最近拦截（本次开机）" Style="{StaticResource SectionTitleTextBlock}" />
+                        <Button Command="{x:Bind Vm.ClearRecentCommand}" Content="清空列表" HorizontalAlignment="Right" />
+                    </Grid>
+                    <TextBlock Text="若教学软件窗口被误拦截，请将其进程名加入上方白名单后重新打开该软件。"
+                               Style="{StaticResource CaptionTextBlock}" TextWrapping="Wrap" />
+                    <TextBlock Text="本会话还没有拦截记录。"
+                               Style="{StaticResource CaptionTextBlock}" HorizontalAlignment="Center" Margin="0,10"
+                               Visibility="{x:Bind Vm.HasNoRecent, Mode=OneWay}" />
+                    <ListView ItemsSource="{x:Bind Vm.Recent, Mode=OneWay}" SelectionMode="None" MaxHeight="240"
+                              Visibility="{x:Bind Vm.HasRecent, Mode=OneWay}">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0,1" />
+                                <Setter Property="MinHeight" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:BlockedRecordVm">
+                                <Grid ColumnSpacing="10" Padding="4,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind TimeText}" Style="{StaticResource MonoTextBlock}"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="{ThemeResource WarningChipFillBrush}"
+                                            CornerRadius="4" Padding="6,1" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind ProcessText}" FontSize="10.5"
+                                                   Foreground="{ThemeResource WarningTextBrush}" />
+                                    </Border>
+                                    <TextBlock Grid.Column="2" Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlock}"
+                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <InfoBar Severity="Informational" IsOpen="True" IsClosable="False" Title="拦截策略说明"
+                     Message="被动原则：不做注入、不挂钩 DLL，仅扫描可见顶层窗口并发送关闭消息。拦截动作与白名单变更全部写入日志，可在「日志查看」页回溯。" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

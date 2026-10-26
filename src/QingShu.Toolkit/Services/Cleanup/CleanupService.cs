@@ -293,11 +293,12 @@ public sealed class CleanupService : ICleanupService
         {
             if (!Directory.Exists(path)) continue;
             log?.Report($"清理 {t.Def.Name}：{path}");
-            var (deleted, freed, failed) = await Task.Run(() =>
+            var (deleted, freed, failed, batchNote) = await Task.Run(() =>
             {
                 if (toRecycleBin)
                     return CleanToRecycleBinBatched(path);
-                return FileOpsHelper.CleanDirectoryContents(path);
+                var (d, f, fl) = FileOpsHelper.CleanDirectoryContents(path);
+                return (d, f, fl, (string?)null);
             }).ConfigureAwait(true);
 
             report.DeletedFiles += deleted;
@@ -305,14 +306,17 @@ public sealed class CleanupService : ICleanupService
             report.FailedFiles += failed;
             report.Details.Add($"{t.Def.Name}: 删除 {deleted} 项，释放 {FormatHelper.Bytes(freed)}{(failed > 0 ? $"，跳过 {failed} 项（被占用）" : "")}");
             log?.Report($"  → 删除 {deleted} 项，释放 {FormatHelper.Bytes(freed)}{(failed > 0 ? $"，跳过 {failed} 项（被占用）" : "")}");
+            if (batchNote is { Length: > 0 })
+                log?.Report($"  · {batchNote}");
             if (failed > 0 && freed == 0)
                 log?.Report("  · 内容均被占用：相关程序（浏览器/资源管理器等）正在运行，关闭后重扫重清效果更佳。");
         }
     }
 
-    /// <summary>回收站批量清理：先整批 SHFileOperation（比逐文件快一个数量级），
-    /// 再逐项复核存在性拿准确计数，批内残留项单独重试一次。返回 (成功数, 释放字节, 失败数)。</summary>
-    private static (int Ok, long Bytes, int Failed) CleanToRecycleBinBatched(string path)
+    /// <summary>回收站批量清理：整批 SHFileOperation（STA 线程 + 按字符预算分批，见 NativeMethods），
+    /// 再逐项复核存在性拿准确计数，批内残留项单独重试一次。
+    /// 返回 (成功数, 释放字节, 失败数, 批量调用错误提示)。</summary>
+    private static (int Ok, long Bytes, int Failed, string? BatchNote) CleanToRecycleBinBatched(string path)
     {
         var entries = new List<(string Path, long Bytes)>();
         try
@@ -330,9 +334,11 @@ public sealed class CleanupService : ICleanupService
 
         int ok = 0, failed = 0;
         long bytes = 0;
+        int? batchHr = null;
         foreach (var chunk in Chunk(entries, 400))
         {
-            NativeMethods.DeleteToRecycleBinBatch(chunk.Select(e => e.Path).ToList());
+            var hr = NativeMethods.DeleteToRecycleBinBatch(chunk.Select(e => e.Path).ToList());
+            if (hr != 0) batchHr = hr;
             foreach (var (p, len) in chunk)
             {
                 if (!PathStillExists(p)) { ok++; bytes += len; continue; }
@@ -345,7 +351,12 @@ public sealed class CleanupService : ICleanupService
                 catch { failed++; }
             }
         }
-        return (ok, bytes, failed);
+        // 批量调用返回非 0 但逐项复核全部删净：文件系统已生效，不再提示；
+        // 反之带出 HRESULT 帮助远程定位（如 0x78 权限、0x71 路径无效）。
+        string? note = batchHr is int code && failed > 0
+            ? $"回收站批量删除返回错误 0x{code:X8}，其中 {failed} 项重试后仍残留（可能被占用或超长路径）"
+            : null;
+        return (ok, bytes, failed, note);
     }
 
     private static bool PathStillExists(string p) => Directory.Exists(p) || File.Exists(p);

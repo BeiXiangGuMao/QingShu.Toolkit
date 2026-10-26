@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -25,9 +26,49 @@ public interface IPdfReportService
 /// </summary>
 public sealed class PdfReportService : IPdfReportService
 {
+    private static int _cjkFontInit;
+
+    /// <summary>
+    /// 显式注册中文字体（QuestPDF 2026.9 字体管理变更，历史 bug 二连）。
+    /// 第一轮修复（UseSystemFonts = true）后用户实测仍抛 DocumentDrawingException：
+    /// "uses font families that are not available: 'Microsoft YaHei'"，且异常信息里
+    /// System fonts 已是 enabled —— 说明系统字体枚举在本机未覆盖微软雅黑。
+    /// 最大嫌疑：Windows 8.1 起雅黑是 msyh.ttc（TrueType Collection），
+    /// QuestPDF/Skia 的字体扫描对 .ttc 支持不完整，导致雅黑始终不可见。
+    /// 官方推荐路径 2：FontManager.RegisterFontFromFile 显式注册后按族名引用。
+    /// 注册成功后 TextStyle 里的 "Microsoft YaHei" 即可直接匹配（族名匹配忽略大小写）。
+    /// </summary>
+    private static void EnsureCjkFontsRegistered()
+    {
+        if (Interlocked.Exchange(ref _cjkFontInit, 1) == 1) return;
+        try
+        {
+            var fontsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts");
+            // 顺序即优先级：雅黑（常规/粗体）→ 宋体 → 黑体，任一存在即满足中文渲染；
+            // 单个注册失败（被占用/损坏）不影响其余候选。
+            string[] candidates = { "msyh.ttc", "msyh.ttf", "msyhbd.ttc", "simsun.ttc", "simhei.ttf" };
+            int registered = 0;
+            foreach (var name in candidates)
+            {
+                var path = Path.Combine(fontsDir, name);
+                if (!File.Exists(path)) continue;
+                try { FontManager.RegisterFontFromFile(path); registered++; } catch { }
+            }
+            if (registered == 0)
+            {
+                // 兜底已由 App.xaml.cs 的 Settings.UseSystemFonts = true 承担，
+                // 此处不再抛出：字体缺失不应阻断报告其余部分（若系统字体也失效，
+                // GeneratePdf 会抛出带明确缺字族名的异常，调用方已有错误提示）。
+            }
+        }
+        catch { }
+    }
+
     public Task<string> GenerateAsync(NetworkReportData data)
         => Task.Run(() =>
         {
+            EnsureCjkFontsRegistered();
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 "QingShu.Toolkit", "Reports", DateTime.Now.ToString("yyyy-MM-dd"));

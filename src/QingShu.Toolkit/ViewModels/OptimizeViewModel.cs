@@ -9,7 +9,6 @@ using QingShu.Toolkit.Helpers;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Optimize;
-using QingShu.Toolkit.Services.Popup;
 
 namespace QingShu.Toolkit.ViewModels;
 
@@ -38,62 +37,56 @@ public partial class ProcessRowVm : ObservableObject
     [ObservableProperty] private bool _isSelected;
 }
 
-public partial class WhitelistRowVm : ObservableObject
+public partial class StartupRowVm : ObservableObject
 {
     private readonly OptimizeViewModel _owner;
 
-    public WhitelistRowVm(string name, OptimizeViewModel owner) { Name = name; _owner = owner; }
+    public StartupRowVm(StartupEntry e, OptimizeViewModel owner)
+    {
+        Name = e.Name; Command = e.Command; Source = e.Source; Origin = e.Origin; Enabled = e.Enabled;
+        _owner = owner;
+    }
 
-    public string Name { get; }
-
-    /// <summary>行模板内经 x:Bind Owner.Xxx 触达页面级命令（x:DataType 模板内无法直接引用页面）。</summary>
-    public OptimizeViewModel Owner => _owner;
-}
-
-public partial class StartupRowVm
-{
-    public StartupRowVm(StartupEntry e) => (Name, Command, Source) = (e.Name, e.Command, e.Source);
     public string Name { get; }
     public string Command { get; }
     public string Source { get; }
+    public string Origin { get; }
+    public bool Enabled { get; }
+
+    /// <summary>行模板内经 x:Bind Owner.Xxx 触达页面级命令（x:DataType 模板内无法直接引用页面）。</summary>
+    public OptimizeViewModel Owner => _owner;
+
+    public bool EnabledVis => Enabled;
+    public bool DisabledVis => !Enabled;
+    public string ToggleText => Enabled ? "禁用" : "启用";
 }
 
-/// <summary>性能优化页 VM：内存整理 / 进程 EcoQoS / 弹窗拦截白名单 / 启动项只读。</summary>
+/// <summary>性能优化页 VM：内存整理 / 进程 EcoQoS / 启动项管理（禁用·启用·恢复）。</summary>
 public partial class OptimizeViewModel : ObservableObject
 {
     private readonly IMemoryOptimizeService _memory;
     private readonly IStartupListService _startup;
-    private readonly IPopupBlockerService _popup;
-    private readonly ISettingsService _settings;
 
     public ObservableCollection<ProcessRowVm> MemoryProcesses { get; } = new();
     public ObservableCollection<ProcessRowVm> EcoProcesses { get; } = new();
-    public ObservableCollection<WhitelistRowVm> Whitelist { get; } = new();
     public ObservableCollection<StartupRowVm> StartupItems { get; } = new();
 
     [ObservableProperty] private bool _isMemoryBusy;
     [ObservableProperty] private string _memoryResult = "";
     [ObservableProperty] private bool _isEcoBusy;
     [ObservableProperty] private string _ecoResult = "";
-    [ObservableProperty] private bool _popupEnabled;
-    [ObservableProperty] private string _popupCountText = "0";
-    [ObservableProperty] private string _newWhitelistName = "";
     [ObservableProperty] private bool _isStartupBusy;
-    [ObservableProperty] private string _startupHint = "启动项为只读展示：如需调整请使用任务管理器 → 启动应用（本工具不代改系统配置）。";
+    [ObservableProperty] private string _startupHint = "支持在应用内直接禁用/启用开机自启动项：禁用前自动备份，可随时恢复原样；不触碰计划任务与系统服务。";
+    [ObservableProperty] private string _startupResult = "";
 
-    public OptimizeViewModel(IMemoryOptimizeService memory, IStartupListService startup,
-        IPopupBlockerService popup, ISettingsService settings)
+    public bool HasStartupResult => StartupResult.Length > 0;
+
+    partial void OnStartupResultChanged(string value) => OnPropertyChanged(nameof(HasStartupResult));
+
+    public OptimizeViewModel(IMemoryOptimizeService memory, IStartupListService startup)
     {
         _memory = memory;
         _startup = startup;
-        _popup = popup;
-        _settings = settings;
-        _popupEnabled = settings.Current.PopupBlockEnabled;
-        _popup.Blocked += c => PopupCountText = c.ToString();
-        PopupCountText = popup.BlockedCount.ToString();
-        ReloadWhitelist();
-        // 白名单可能从右侧状态栏对话框同步修改：设置变更时自动刷新，避免两处 UI 不一致
-        _settings.Changed += ReloadWhitelist;
         _ = RefreshMemoryAsync();
         _ = RefreshStartupAsync();
     }
@@ -101,7 +94,8 @@ public partial class OptimizeViewModel : ObservableObject
     // ================= 内存整理 =================
 
     public bool MemoryReady => !IsMemoryBusy && MemoryProcesses.Count > 0;
-    public bool EcoReady => !IsEcoBusy && EcoProcesses.Count > 0;
+    public bool EcoReady => !IsEcoBusy && EcoProcesses.Count > 0 && _memory.IsEcoSupported();
+    public bool EcoSupported => _memory.IsEcoSupported();
 
     partial void OnIsMemoryBusyChanged(bool value) => OnPropertyChanged(nameof(MemoryReady));
     partial void OnIsEcoBusyChanged(bool value) => OnPropertyChanged(nameof(EcoReady));
@@ -143,6 +137,7 @@ public partial class OptimizeViewModel : ObservableObject
     private async Task ApplyEcoAsync()
     {
         if (IsEcoBusy) return;
+        if (!_memory.IsEcoSupported()) { EcoResult = "本系统不支持 EcoQoS（需要 Windows 10 1709 及以上），入口已停用。"; return; }
         var pids = EcoProcesses.Where(x => x.IsSelected).Select(x => x.Pid).ToList();
         if (pids.Count == 0) { EcoResult = "请先勾选要节能的进程。"; return; }
         IsEcoBusy = true;
@@ -150,7 +145,9 @@ public partial class OptimizeViewModel : ObservableObject
         {
             var r = await _memory.SetEcoAsync(pids, true).ConfigureAwait(true);
             foreach (var row in EcoProcesses.Where(x => x.IsSelected)) row.EcoApplied = true;
-            EcoResult = $"已对 {r.Applied} 个进程启用 EcoQoS 节能（跳过 {r.Skipped} 个无权限进程）。后台闲置进程将自动降频省电。";
+            EcoResult = $"已对 {r.Applied} 个进程启用 EcoQoS 节能。" +
+                        (r.Detail.Length > 0 ? $"跳过：{r.Detail}。" : "") +
+                        "前台正在使用的进程会被系统自动豁免，降频省电主要体现在转入后台之后。";
         }
         finally { IsEcoBusy = false; }
     }
@@ -166,44 +163,12 @@ public partial class OptimizeViewModel : ObservableObject
         {
             var r = await _memory.SetEcoAsync(pids, false).ConfigureAwait(true);
             foreach (var row in EcoProcesses.Where(x => x.IsSelected)) row.EcoApplied = false;
-            EcoResult = $"已恢复 {r.Applied} 个进程的正常调度。";
+            EcoResult = $"已恢复 {r.Applied} 个进程的正常调度。" + (r.Detail.Length > 0 ? $"跳过：{r.Detail}。" : "");
         }
         finally { IsEcoBusy = false; }
     }
 
-    // ================= 弹窗拦截 =================
-
-    partial void OnPopupEnabledChanged(bool value) => _popup.SetEnabled(value);
-
-    private void ReloadWhitelist()
-    {
-        Whitelist.Clear();
-        foreach (var name in _settings.Current.PopupWhitelist.OrderBy(x => x)) Whitelist.Add(new WhitelistRowVm(name, this));
-    }
-
-    [RelayCommand]
-    private void AddWhitelist()
-    {
-        var name = _newWhitelistName?.Trim().ToLowerInvariant().Replace(".exe", "");
-        if (string.IsNullOrEmpty(name)) return;
-        if (_settings.Current.PopupWhitelist.Contains(name)) return;
-        _settings.Current.PopupWhitelist.Add(name);
-        _newWhitelistName = "";
-        _ = _settings.SaveAsync(); // 保存后的 Changed 事件会自动 ReloadWhitelist
-    }
-
-    [RelayCommand]
-    private void RemoveWhitelist(object? param)
-    {
-        if (param is not string name) return;
-        _settings.Current.PopupWhitelist.Remove(name);
-        _ = _settings.SaveAsync(); // 保存后的 Changed 事件会自动 ReloadWhitelist
-    }
-
-    [RelayCommand]
-    private void PausePopup() => PopupEnabled = false;
-
-    // ================= 启动项 =================
+    // ================= 启动项管理 =================
 
     [RelayCommand]
     private async Task RefreshStartupAsync()
@@ -213,8 +178,27 @@ public partial class OptimizeViewModel : ObservableObject
         {
             var items = await _startup.GetAsync().ConfigureAwait(true);
             StartupItems.Clear();
-            foreach (var i in items) StartupItems.Add(new StartupRowVm(i));
-            if (StartupItems.Count == 0) StartupHint = "未发现注册表/启动文件夹中的自启动项。";
+            foreach (var i in items) StartupItems.Add(new StartupRowVm(i, this));
+            if (StartupItems.Count == 0) StartupHint = "未发现注册表 Run 键 / 启动文件夹中的自启动项。";
+        }
+        finally { IsStartupBusy = false; }
+    }
+
+    /// <summary>禁用/启用单个启动项（按钮文本随状态切换），成功后自动刷新列表。</summary>
+    [RelayCommand]
+    private async Task ToggleStartupAsync(object? param)
+    {
+        if (IsStartupBusy || param is not StartupRowVm row) return;
+        IsStartupBusy = true;
+        try
+        {
+            var entry = new StartupEntry(row.Name, row.Command, row.Source, row.Origin, row.Enabled);
+            var (ok, err) = row.Enabled
+                ? await _startup.DisableAsync(entry).ConfigureAwait(true)
+                : await _startup.EnableAsync(entry).ConfigureAwait(true);
+            StartupResult = ok ? $"已{(row.Enabled ? "禁用" : "启用")}「{row.Name}」。"
+                               : err;
+            if (ok) await RefreshStartupAsync().ConfigureAwait(true);
         }
         finally { IsStartupBusy = false; }
     }

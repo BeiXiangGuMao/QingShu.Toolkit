@@ -10,7 +10,8 @@ namespace QingShu.Toolkit.Services.Optimize;
 
 public sealed record ProcessEntry(string Name, int Pid, long WorkingSetBytes, long CpuTimeMs, bool IsEcoCapable);
 public sealed record TrimResult(int Trimmed, int Skipped, long FreedBytes);
-public sealed record EcoResult(int Applied, int Skipped);
+/// <summary>Detail：按失败原因分组的补充提示（空串 = 全部成功）。</summary>
+public sealed record EcoResult(int Applied, int Skipped, string Detail);
 
 /// <summary>
 /// 内存整理服务 —— 明确的安全边界：
@@ -23,6 +24,8 @@ public interface IMemoryOptimizeService
     Task<List<ProcessEntry>> ListProcessesAsync(int top = 25);
     Task<TrimResult> TrimAsync(IEnumerable<int> pids);
     Task<EcoResult> SetEcoAsync(IEnumerable<int> pids, bool enable);
+    /// <summary>本机是否支持 EcoQoS（版本 ≥ Win10 1709 且对自身进程设置成功）。结果进程内缓存。</summary>
+    bool IsEcoSupported();
 }
 
 public sealed class MemoryOptimizeService : IMemoryOptimizeService
@@ -85,11 +88,39 @@ public sealed class MemoryOptimizeService : IMemoryOptimizeService
         => Task.Run(() =>
         {
             int applied = 0, skipped = 0;
+            int openFail = 0, setFail = 0, osFail = 0;
             foreach (var pid in pids)
             {
-                if (NativeMethods.SetProcessEcoQos(pid, enable)) applied++;
-                else skipped++;
+                if (NativeMethods.TrySetProcessEcoQos(pid, enable, out var reason)) applied++;
+                else
+                {
+                    skipped++;
+                    switch (reason)
+                    {
+                        case "os": osFail++; break;
+                        case "set": setFail++; break;
+                        default: openFail++; break;
+                    }
+                }
             }
-            return new EcoResult(applied, skipped);
+            // 失败原因细分，给用户可解释的提示（历史反馈「进程节能不可用」无任何原因可看）
+            var parts = new List<string>();
+            if (openFail > 0) parts.Add($"{openFail} 个进程无法打开（受保护或权限更高）");
+            if (setFail > 0) parts.Add($"{setFail} 个被系统拒绝（前台活跃进程会被自动豁免）");
+            if (osFail > 0) parts.Add($"{osFail} 个因系统过旧不支持");
+            return new EcoResult(applied, skipped, string.Join("；", parts));
         });
+
+    private static int? _ecoSupported;
+
+    /// <summary>EcoQoS 支持性预检：系统版本 ≥ Win10 1709 且能对自身进程应用/还原一次。
+    /// 首次调用后有缓存，UI 在不支持时直接禁用入口而不是让用户徒劳勾选。</summary>
+    public bool IsEcoSupported()
+    {
+        if (_ecoSupported is int cached) return cached == 1;
+        bool ok = NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, true, out _)
+               && NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, false, out _);
+        _ecoSupported = ok ? 1 : 0;
+        return ok;
+    }
 }

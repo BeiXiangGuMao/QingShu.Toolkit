@@ -32,6 +32,7 @@ public sealed partial class MainWindow : Window
         ["network"] = typeof(NetworkDiagnosticsPage),
         ["cleanup"] = typeof(DiskCleanupPage),
         ["optimize"] = typeof(OptimizePage),
+        ["popupguard"] = typeof(PopupGuardPage),
         ["logs"] = typeof(LogsPage),
         ["settings"] = typeof(SettingsPage)
     };
@@ -200,92 +201,10 @@ public sealed partial class MainWindow : Window
             Convert.ToByte(s.Substring(4, 2), 16));
     }
 
-    // ================= 弹窗白名单（右侧状态栏入口） =================
+    // ================= 弹窗白名单（右侧状态栏入口 → 独立管理页） =================
 
-    private void BtnWhitelist_Click(object sender, RoutedEventArgs e) => ShowWhitelistDialog();
-
-    /// <summary>
-    /// 白名单管理对话框：运行时构建 UI（与「性能优化」页共享同一份设置，
-    /// 保存后 SettingsService.Changed 会联动刷新两处）。
-    /// </summary>
-    private void ShowWhitelistDialog()
-    {
-        var whitelist = _settings.Current.PopupWhitelist;
-        var listPanel = new StackPanel { Spacing = 3 };
-
-        void Rebuild()
-        {
-            listPanel.Children.Clear();
-            foreach (var name in whitelist.OrderBy(x => x))
-            {
-                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-                row.Children.Add(new TextBlock
-                {
-                    Text = name,
-                    FontSize = 12,
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                var n = name;
-                var remove = new Button { Content = "移除", Padding = new Thickness(10, 2, 10, 2), MinWidth = 0, MinHeight = 0 };
-                remove.Click += (_, _) =>
-                {
-                    whitelist.Remove(n);
-                    _ = _settings.SaveAsync();
-                    Rebuild();
-                };
-                row.Children.Add(remove);
-                listPanel.Children.Add(row);
-            }
-            if (whitelist.Count == 0)
-                listPanel.Children.Add(new TextBlock { Text = "白名单为空：所有新出现的窗口都会被拦截（不推荐）。", FontSize = 11 });
-        }
-        Rebuild();
-
-        var addBox = new TextBox { PlaceholderText = "输入进程名，如 qqexternal（无需 .exe）" };
-        var addBtn = new Button { Content = "添加到白名单" };
-        addBtn.Click += (_, _) =>
-        {
-            var name = addBox.Text?.Trim().ToLowerInvariant().Replace(".exe", "");
-            if (string.IsNullOrEmpty(name)) return;
-            if (!whitelist.Contains(name)) whitelist.Add(name);
-            addBox.Text = "";
-            _ = _settings.SaveAsync();
-            Rebuild();
-        };
-        var addRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        addRow.Children.Add(addBox);
-        addRow.Children.Add(addBtn);
-
-        var root = new StackPanel { Spacing = 8, MinWidth = 420 };
-        root.Children.Add(new TextBlock { Text = $"白名单进程（命中不拦截，共 {whitelist.Count} 项）", FontSize = 12 });
-        root.Children.Add(new ScrollViewer { Content = listPanel, MaxHeight = 230, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        root.Children.Add(addRow);
-
-        var recent = new StackPanel { Spacing = 2 };
-        var hits = _popup.Recent.Take(8).ToList();
-        if (hits.Count == 0)
-            recent.Children.Add(new TextBlock { Text = "本会话还没有拦截记录。", FontSize = 11 });
-        else
-            foreach (var (time, title, proc) in hits)
-                recent.Children.Add(new TextBlock
-                {
-                    Text = $"{time:HH:mm:ss}  {proc}.exe — {title}",
-                    FontSize = 11,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                });
-        root.Children.Add(new TextBlock { Text = "最近拦截（本会话）", FontSize = 12 });
-        root.Children.Add(recent);
-
-        var dlg = new ContentDialog
-        {
-            Title = "弹窗拦截管理",
-            Content = root,
-            CloseButtonText = "关闭",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = ContentFrame.XamlRoot
-        };
-        _ = dlg.ShowAsync();
-    }
+    private void BtnWhitelist_Click(object sender, RoutedEventArgs e)
+        => NavigateToPage(typeof(PopupGuardPage));
 
     // ================= 手动更新按钮 =================
 
