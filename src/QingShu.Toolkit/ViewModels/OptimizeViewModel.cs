@@ -112,6 +112,9 @@ public partial class OptimizeViewModel : ObservableObject
             var selected = EcoProcesses.Where(x => x.IsSelected).Select(x => x.Pid).ToHashSet();
             EcoProcesses.Clear();
             foreach (var p in list) EcoProcesses.Add(new ProcessRowVm(p.Name, p.Pid, p.WorkingSetBytes, selected.Contains(p.Pid)));
+            // EcoReady 依赖 EcoProcesses.Count，但 ObservableCollection 填充不会自动通知 x:Bind；
+            // 不在此处补发通知的话，按钮 IsEnabled 停留在页首初始化的 false 永久禁用（进程节能「不能用」根因）
+            OnPropertyChanged(nameof(EcoReady));
             if (MemoryResult.Length == 0) MemoryResult = "共展示内存占用最高的 25 个进程。勾选后点击“整理所选内存”。";
         }
         finally { IsMemoryBusy = false; }

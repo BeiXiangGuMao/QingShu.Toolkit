@@ -127,7 +127,7 @@ public static partial class NetworkChecks
         }
     }
 
-    // ---------------- 网络相关服务状态（只读，不做任何修改） ----------------
+    // ---------------- 网络相关服务状态（可修复：仅启动，不改动启动类型） ----------------
     public sealed class ServicesCheck : CheckBase
     {
         private static readonly (string Name, string Display)[] Watch =
@@ -137,7 +137,7 @@ public static partial class NetworkChecks
         };
 
         public override string Id => "stack.services";
-        public override string Name => "网络相关服务状态（只读）";
+        public override string Name => "网络相关服务状态";
         public override CheckCategory Category => CheckCategory.SystemStack;
 
         public override Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
@@ -166,9 +166,12 @@ public static partial class NetworkChecks
             }
 
             if (stopped.Count > 0)
-                // 遵循设计边界：绝不代改服务，仅给出处理建议
+                // 应用户需求（2026-10）：由纯只读改为可修复 —— 仅「启动」未运行的网络基础服务，
+                // 不改启动类型、不停用任何运行中服务；启动仍需管理员授权（并入提权批处理）
                 return Task.FromResult(CheckOutcome.Fail($"网络相关服务未运行：{string.Join("、", stopped)}",
-                    "本工具遵循安全边界不修改系统服务：请以管理员打开 services.msc，将上述服务设为“自动”并“启动”，或联系信息中心。", details.ToArray()));
+                    "网络基础服务未运行会直接影响联网与网络识别：可一键修复尝试启动它们（需管理员授权，仅启动、不改动启动类型）；"
+                    + "也可手动以管理员打开 services.msc 将上述服务启动；若服务被禁用或启动失败，请联系信息中心。",
+                    canFix: true, details.ToArray()));
             return Task.FromResult(CheckOutcome.Pass("网络相关服务全部运行中", details.ToArray()));
         }
     }

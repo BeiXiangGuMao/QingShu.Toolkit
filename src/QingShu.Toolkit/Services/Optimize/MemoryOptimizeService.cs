@@ -114,13 +114,15 @@ public sealed class MemoryOptimizeService : IMemoryOptimizeService
     private static int? _ecoSupported;
 
     /// <summary>EcoQoS 支持性预检：系统版本 ≥ Win10 1709 且能对自身进程应用/还原一次。
-    /// 首次调用后有缓存，UI 在不支持时直接禁用入口而不是让用户徒劳勾选。</summary>
+    /// 仅「系统过旧」判定为永久不支持并缓存；其余意外失败（权限/瞬时）不缓存，
+    /// 下次进入页面重试 —— 避免一次瞬态失败把入口永久锁死。</summary>
     public bool IsEcoSupported()
     {
         if (_ecoSupported is int cached) return cached == 1;
-        bool ok = NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, true, out _)
-               && NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, false, out _);
-        _ecoSupported = ok ? 1 : 0;
+        bool okSet = NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, true, out var err);
+        bool ok = okSet && NativeMethods.TrySetProcessEcoQos(Environment.ProcessId, false, out _);
+        if (ok) _ecoSupported = 1;
+        else if (err == "os") _ecoSupported = 0;
         return ok;
     }
 }

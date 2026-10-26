@@ -23,7 +23,8 @@ public interface INetworkRepairService
 
 /// <summary>
 /// 一键修复服务（傻瓜模式）。
-/// 安全边界：不修改系统服务、不改虚拟内存、不导入注册表文件、不精简系统、不动 Defender；
+/// 安全边界：不改系统服务启动类型、不改虚拟内存、不导入注册表文件、不精简系统、不动 Defender；
+/// 对服务仅允许「启动未运行的网络基础服务」（应 2026-10 用户需求由只读放开，仅启动、不改启动类型）；
 /// 涉及网络配置的操作仅限：DNS 缓存 / ARP / DHCP 续租 / 网卡启停 / Winsock 重置 / 时间同步 / 代理复位，
 /// 以及低速专项的单点可逆命令：TCP 自调谐（netsh）/ 传递优化单值（reg add 单值，可删除还原）/
 /// 网卡节能托管（PowerShell 单项）/ 网卡重协商（netsh）。全部动作逐条说明、逐项可回滚。
@@ -90,6 +91,12 @@ public sealed class NetworkRepairService : INetworkRepairService
             plan.Add(new RepairAction("winsock_reset", "重置 Winsock 目录（需重启生效）",
                 "清除第三方 LSP 与损坏的 Winsock 目录，解决“能 ping 通但上不了网”。执行后需重启计算机。", true, true,
                 new[] { "stack.winsock" }));
+
+        if (Has("stack.services"))
+            plan.Add(new RepairAction("start_net_services", "启动未运行的网络基础服务",
+                "启动诊断中未运行的网络基础服务（DHCP/DNS 缓存/网络位置感知等）：仅启动，不改动任何服务的启动类型，"
+                + "被禁用的服务会跳过并提示。需要管理员授权。", true, false,
+                new[] { "stack.services" }));
 
         if (Has("dns.servers") && adapter != null && adapter.DnsServers.Count > 0)
             plan.Add(new RepairAction("dns_set_public", $"将 DNS 修改为公共 DNS（{_settings.Current.DnsPreferred}）",
@@ -281,6 +288,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     break;
                 case "winsock_reset":
                     sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                case "start_net_services":
+                    // 仅启动未运行的网络基础服务；被禁用（StartType=Disabled）的跳过计为失败，不改启动类型。
+                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL
+                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; foreach($s in $ids){ $svc=Get-Service -Name $s -ErrorAction SilentlyContinue; if($svc -and $svc.Status -ne 'Running'){ if($svc.StartType -eq 'Disabled'){ $bad++ } else { try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500 }catch{ $bad++ } } } }; exit $bad\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "dns_set_public":
                     if (adapterName.Length > 0)
