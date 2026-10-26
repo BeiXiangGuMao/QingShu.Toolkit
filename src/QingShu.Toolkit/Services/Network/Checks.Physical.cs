@@ -302,7 +302,13 @@ public static partial class NetworkChecks
                 return CheckOutcome.Fail($"网关 {gw} 的 ARP 表项无效（{gwMac}）", "将自动清除 ARP 缓存重试；反复出现请检查是否有人使用 ARP 欺断工具。", canFix: true);
 
             // 同一 MAC 出现在多个 IP → IP/MAC 冲突或欺骗
-            var dup = macMap.GroupBy(kv => kv.Value).Where(g => g.Count() > 1 && !g.Key.StartsWith("FF")).ToList();
+            // 排除组播/广播地址防误报：组播 MAC 仅由 IP 低 23 位构成，224.1.1.1 与 225.1.1.1
+            // 这类「不同 IP」天然映射到同一 01-00-5E-01-01-01，并非欺骗。
+            var dup = macMap
+                .Where(kv => !NetworkProbeHelper.IsMulticastOrBroadcastIp(kv.Key))
+                .GroupBy(kv => kv.Value)
+                .Where(g => g.Count() > 1 && !g.Key.StartsWith("FF"))
+                .ToList();
             if (dup.Count > 0)
             {
                 var lines = dup.Select(g => $"MAC {g.Key} 同时对应: {string.Join(", ", g.Select(x => x.Key))}");

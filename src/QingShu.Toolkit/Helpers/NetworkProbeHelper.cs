@@ -239,6 +239,18 @@ public static class NetworkProbeHelper
             || (bytes[0] == 169 && bytes[1] == 254);
     }
 
+    /// <summary>
+    /// 是否为 IPv4 组播/广播/保留地址（首字节 ≥ 224，含 255.255.255.255）。
+    /// 组播 IP → MAC 映射仅取低 23 位、天然多对一（如 224.1.1.1 与 225.1.1.1 必然同 MAC），
+    /// 参与 ARP「多 IP 绑定同一 MAC」冲突判定会产生假性欺骗告警，需排除。
+    /// </summary>
+    public static bool IsMulticastOrBroadcastIp(string ip)
+    {
+        if (!System.Net.IPAddress.TryParse(ip, out var a)) return false;
+        var bytes = a.GetAddressBytes();
+        return bytes.Length == 4 && bytes[0] >= 224;
+    }
+
     public static bool IsLoopbackOrInvalid(string ip)
     {
         if (!System.Net.IPAddress.TryParse(ip, out var a)) return true;

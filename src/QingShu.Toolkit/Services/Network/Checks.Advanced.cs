@@ -143,6 +143,11 @@ public static partial class NetworkChecks
             var gateways = new List<string>();
             foreach (var line in (r.StdOut ?? "").Split('\n'))
             {
+                // 只统计「活动路由」表：持久路由段属于历史残留配置，不代表系统当前生效路由；
+                // 若仅持久路由残留（活动表无默认路由），仍应判为「未找到默认路由」而非误报唯一。
+                if (line.Contains("永久路由", StringComparison.Ordinal)
+                    || line.Contains("Persistent Routes", StringComparison.OrdinalIgnoreCase))
+                    break;
                 var m = Regex.Match(line, @"^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\S+)");
                 if (m.Success) gateways.Add(m.Groups[1].Value);
             }
