@@ -113,7 +113,7 @@
                 <Border Grid.Column="0" Style="{StaticResource CardStyle}">
                     <StackPanel Spacing="10">
                         <TextBlock Text="网络诊断" Style="{StaticResource SectionTitleTextBlock}" />
-                        <TextBlock Text="覆盖物理链路 → 网关 → DNS → 城域网认证 → 外网全链路 28 项检查，支持一键修复与 PDF 报告导出。"
+                        <TextBlock Text="按校园真实链路逐段定位：物理链路 → 接入段（班级中转/楼宇软路由）→ 核心段（科技楼服务器）→ DNS/城域网认证 → 出口段，28 项检查，支持一键修复与 PDF 报告导出。"
                                    Style="{StaticResource CaptionTextBlock}" />
                         <TextBlock Text="{x:Bind Vm.LastDiagText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
                                    Foreground="{ThemeResource InfoTextBrush}" />

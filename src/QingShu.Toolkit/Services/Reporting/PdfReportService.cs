@@ -214,6 +214,28 @@ public sealed class PdfReportService : IPdfReportService
                 t.Span($"链路速率：{m.LinkSpeedText}    ").FontColor("#6E6E73");
             t.Span($"起止：{m.StartedAt:HH:mm:ss} — {m.FinishedAt:HH:mm:ss}").FontColor("#6E6E73");
         });
+        ComposeTopologyNote(col);
+    }
+
+    // ---------- 校园网络拓扑与压力点说明 ----------
+    // 学校真实链路（用户提供）：班级/老师电脑 →（部分班级经中转设备，疑似光猫）→ 楼宇软路由
+    // → 科技楼服务器 → 裸光纤 → 城域网；少量电脑直连科技楼服务器。
+    // 软路由与服务器为整栋楼/全校共享压力点，诊断分段与建议均按此拓扑解读。
+    private static void ComposeTopologyNote(ColumnDescriptor col)
+    {
+        // 顺序约定：PaddingTop(10) 是与上文的外间距（不带底色）→ Background 覆盖卡片
+        // → Padding 再做内边距（底色延伸到内边距，文字与色块边缘有留白）
+        col.Item().PaddingTop(10).Background("#F5F5F7")
+            .PaddingVertical(8).PaddingHorizontal(10).Column(top =>
+        {
+            top.Item().Text("校园网络拓扑与压力点说明").FontSize(9.5f).SemiBold().FontColor("#1D1D1F");
+            top.Item().PaddingTop(4).Text("本校链路：班级/教师电脑 →（部分班级经中转设备，常见为光猫或交换机）→ 楼宇软路由 → 科技楼服务器 → 裸光纤 → 城域网；另有少量电脑直连科技楼服务器。楼宇软路由与科技楼服务器为整栋楼/全校共享压力点，同一时段并发越多，接入段与核心段越容易成为瓶颈。")
+                .FontSize(8.5f).FontColor("#48484A").LineHeight(1.5f);
+            top.Item().PaddingTop(4).Text("分段对应关系：「分段延迟画像」按此拓扑逐跳定位——接入段（本机 → 直连网关，即班级中转设备或楼宇软路由）、核心段（楼宇软路由 → 科技楼服务器）、出口段（服务器 → 裸光纤 → 城域网）；处置建议与责任归属亦按此三段划分。")
+                .FontSize(8.5f).FontColor("#48484A").LineHeight(1.5f);
+            top.Item().PaddingTop(4).Text("测速说明：诊断中的下载测速为短时抽样（限时长与并发），会短暂占用少量出口带宽；建议避开上课高峰运行，避免叠加楼宇软路由与科技楼服务器的共享压力。")
+                .FontSize(8).FontColor("#6E6E73").LineHeight(1.5f);
+        });
     }
 
     private static string Empty(string? s, string fallback) => string.IsNullOrWhiteSpace(s) ? fallback : s;

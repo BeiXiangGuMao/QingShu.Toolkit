@@ -216,7 +216,14 @@ public static partial class NetworkChecks
         }
     }
 
-    // ---------------- 4. 分段延迟画像 ----------------
+    // ---------------- 4. 分段延迟画像（校园拓扑感知） ----------------
+    /// <summary>
+    /// 学校真实链路：班级/教师电脑 →（部分班级经中转设备，常见为光猫/交换机）→ 楼宇软路由
+    /// → 科技楼服务器 → 裸光纤 → 城域网；另有少量电脑直连科技楼服务器。
+    /// 楼宇软路由与科技楼服务器是整栋楼/全校共享压力点，因此除「本机→网关」外，
+    /// 还用 tracert 找出内网各跳并逐跳统计，把瓶颈定位到三段之一：
+    /// 接入段（本机→直连网关）/ 核心段（软路由→科技楼服务器）/ 出口段（服务器→裸光纤→城域网）。
+    /// </summary>
     public sealed class PathProfileCheck : CheckBase
     {
         public override string Id => "speed.path_profile";
@@ -228,31 +235,68 @@ public static partial class NetworkChecks
             var gw = ctx.Primary?.Gateway;
             if (string.IsNullOrEmpty(gw)) return CheckOutcome.Skip("无网关，跳过分段延迟画像。");
 
+            // 第 1 跳：本机 → 直连网关（班级中转设备或楼宇软路由，视教室接法而定）
             var stGw = await NetworkProbeHelper.PingAsync(gw!, 10, ctx.TimeoutMs).ConfigureAwait(false);
             var stDns = await NetworkProbeHelper.PingAsync(NetworkProbeHelper.PublicDnsServers[0], 10, ctx.TimeoutMs).ConfigureAwait(false);
             var stFar = await NetworkProbeHelper.PingAsync("www.baidu.com", 10, ctx.TimeoutMs).ConfigureAwait(false);
 
             var details = new List<string>
             {
-                $"本机 → 网关：平均 {stGw.AvgMs:0.#} ms · 抖动 {stGw.JitterMs:0.#} ms · 丢包 {stGw.LossPct:0.#}%",
-                $"网关 → 公网（223.5.5.5）：平均 {stDns.AvgMs:0.#} ms · 抖动 {stDns.JitterMs:0.#} ms · 丢包 {stDns.LossPct:0.#}%"
+                $"第1跳 接入段（班级中转设备或楼宇软路由）{gw}：平均 {stGw.AvgMs:0.#} ms · 抖动 {stGw.JitterMs:0.#} ms · 丢包 {stGw.LossPct:0.#}%"
             };
-            if (!stFar.AllLost)
-                details.Add($"出口 → 互联网目标（baidu）：平均 {stFar.AvgMs:0.#} ms · 丢包 {stFar.LossPct:0.#}%");
-            else
-                details.Add("出口 → 互联网目标：目标禁 ICMP，跳过该段对比");
 
+            // tracert 摸出内网中间跳（-d 免反解；-h 8 覆盖「中转→软路由→服务器→出口」典型 3-5 跳）
+            var innerHops = await TraceInnerHopsAsync(ct, gw).ConfigureAwait(false);
+            var innerStats = new List<(string Ip, PingStats Ping, string Role)>();
+            foreach (var (ip, role) in innerHops)
+            {
+                if (ip == gw || innerStats.Any(x => x.Ip == ip)) continue;
+                ct.ThrowIfCancellationRequested();
+                // 内网跳探测限时收口：单跳 6 发 × ≤1500ms，避免整体诊断被拖长
+                var st = await NetworkProbeHelper.PingAsync(ip, 6, Math.Min(ctx.TimeoutMs, 1500)).ConfigureAwait(false);
+                innerStats.Add((ip, st, role));
+                details.Add($"{role} {ip}：平均 {st.AvgMs:0.#} ms · 抖动 {st.JitterMs:0.#} ms · 丢包 {st.LossPct:0.#}%");
+            }
+            if (innerStats.Count == 0)
+                details.Add("内网中间跳：tracert 未探测到（可能直连核心或中间设备禁 ICMP），按两段模式解读");
+
+            details.Add($"公网段（223.5.5.5）：平均 {stDns.AvgMs:0.#} ms · 抖动 {stDns.JitterMs:0.#} ms · 丢包 {stDns.LossPct:0.#}%");
+            if (!stFar.AllLost)
+                details.Add($"互联网目标（baidu）：平均 {stFar.AvgMs:0.#} ms · 丢包 {stFar.LossPct:0.#}%");
+            else
+                details.Add("互联网目标（baidu）：目标禁 ICMP，跳过该段对比");
+
+            // 判定 1：接入段 —— 班级中转设备/楼宇软路由的接入侧过载或劣化
             if (stGw.LossPct > 20 || stGw.AvgMs > 30 || stGw.JitterMs > 25)
             {
                 ctx.SetShared("path.gw.bad", true);
-                return CheckOutcome.Fail("本机 → 网关段异常",
-                    "第一段就高延迟/丢包说明问题在教室内部：AP 过载、无线干扰或交换机端口劣化。优先换有线/换端口/换 AP，属于本校内处理范围。", details.ToArray());
+                return CheckOutcome.Fail("接入段异常（本机 → 班级中转/楼宇软路由）",
+                    "第一跳就高延迟/丢包，问题在教室到楼宇接入之间：先问同班/同楼层同学是否同时变慢——都慢则是班级中转设备（疑似光猫/交换机）或楼宇软路由过载，属本校报修；仅本机慢则换网线/换端口/换有线排除本机链路。",
+                    details.ToArray());
             }
+
+            // 判定 2：核心段 —— 网关之后内网各跳相对第一跳明显劣化（软路由上联/科技楼服务器压力）
+            if (innerStats.Count > 0)
+            {
+                var core = innerStats[^1];
+                double deltaMs = core.Ping.AvgMs - stGw.AvgMs;
+                double deltaLoss = core.Ping.LossPct - stGw.LossPct;
+                if (deltaMs > 15 || deltaLoss > 10)
+                {
+                    ctx.SetShared("path.core.bad", true);
+                    return CheckOutcome.Warn("核心段压力（楼宇软路由 → 科技楼服务器）",
+                        "到直连网关很快、到内网核心明显变慢：楼宇软路由上联、级联中转链路或科技楼服务器（全校共享核心）负载偏高。大流量任务（更新/资料分发）请错峰；持续出现请信息中心核查软路由连接数与服务器上联利用率。",
+                        details.ToArray());
+                }
+            }
+
+            // 判定 3：出口段 —— 内网快、出公网慢（裸光纤/城域网高峰拥塞）
             if (stDns.LossPct > 10 || stDns.AvgMs - stGw.AvgMs > 80)
             {
                 ctx.SetShared("path.uplink.bad", true);
-                return CheckOutcome.Warn("网关 → 城域网出口段拥塞",
-                    "本机到网关很快、但出去就慢：典型的出口带宽高峰期拥塞。可错峰使用/限制大流量应用，若持续如此建议教体局信息中心核查出口。", details.ToArray());
+                return CheckOutcome.Warn("出口段拥塞（科技楼服务器 → 裸光纤 → 城域网）",
+                    "内网各段都很快、出公网即慢：典型的裸光纤上联/城域网出口高峰期拥塞。可错峰使用、限制大流量应用；若持续如此，携 PDF 报告请教体局信息中心核查出口带宽与 QoS 策略。",
+                    details.ToArray());
             }
             if (!stFar.AllLost && stFar.AvgMs - stDns.AvgMs > 100)
             {
@@ -261,6 +305,48 @@ public static partial class NetworkChecks
                     "到公共 DNS 很快、到具体网站慢：多为该网站/CDN 本身或其到你所在地区的线路问题，换时段或换资源源站即可验证。", details.ToArray());
             }
             return CheckOutcome.Pass("各段延迟正常，瓶颈更可能在带宽占用或无线速率", details.ToArray());
+        }
+
+        /// <summary>
+        /// tracert 到公网 DNS，提取「网关之后、出公网之前」的内网跳。
+        /// 跃点号直接取自 tracert 行首（网关通常即第 1 跳，已在角色装配时剔除避免重复展示）；
+        /// 角色标注：最后一个内网跳 = 科技楼核心（服务器侧出口），其前的内网跳 = 楼宇软路由/汇聚中转。
+        /// 失败返回空列表（回退两段模式，不阻塞诊断）。
+        /// </summary>
+        private static async Task<List<(string Ip, string Role)>> TraceInnerHopsAsync(CancellationToken ct, string? gw)
+        {
+            var list = new List<(string, string)>();
+            try
+            {
+                var r = await ProcessRunner.RunAsync("tracert -d -h 8 -w 400 223.5.5.5", 32000).ConfigureAwait(false);
+                if (r.ExitCode != 0 || string.IsNullOrEmpty(r.StdOut)) return list;
+
+                var ipRe = new Regex(@"\b(\d{1,3}(?:\.\d{1,3}){3})\b");
+                var rows = new List<(int Hop, string Ip)>();
+                foreach (var raw in r.StdOut.Split('\n'))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var num = Regex.Match(raw, @"^\s*(\d{1,2})\s+");
+                    if (!num.Success) continue;                                 // 只取「跃点数」行
+                    var m = ipRe.Match(raw);
+                    if (!m.Success) continue;                                   // 该跳全超时（* * *）
+                    var ip = m.Groups[1].Value;
+                    if (!NetworkProbeHelper.IsPrivateIp(ip)) break;             // 进入公网段：内网拓扑已完整
+                    rows.Add((int.Parse(num.Groups[1].Value), ip));
+                }
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    var (hop, ip) = rows[i];
+                    if (ip == gw) continue;                                     // 网关已作第1跳单独展示
+                    var role = i == rows.Count - 1
+                        ? $"第{hop}跳 核心段（科技楼服务器/核心出口侧）"
+                        : $"第{hop}跳 核心段（楼宇软路由/汇聚中转）";
+                    list.Add((ip, role));
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { /* tracert 不存在/失败：回退两段模式 */ }
+            return list;
         }
     }
 
@@ -300,7 +386,9 @@ public static partial class NetworkChecks
                 $"测速节点：{result.EndpointLabel}",
                 $"链路协商速率：{result.LinkText} · 实测效率：{result.EfficiencyText}",
                 $"体验档位：{result.ExperienceBand}",
-                $"总下载 {FormatHelper.Bytes(result.BytesTotal)} / 用时 {result.DurationMs / 1000.0:0.#} s"
+                $"总下载 {FormatHelper.Bytes(result.BytesTotal)} / 用时 {result.DurationMs / 1000.0:0.#} s",
+                // 校园拓扑压力提示：测速流量会经楼宇软路由与科技楼服务器出口，短时占用共享带宽
+                $"测速压力说明：限时 {result.DurationMs / 1000.0:0.#} s 多连接下载会短暂占用出口带宽（经楼宇软路由与科技楼服务器），建议避开上课高峰运行。"
             };
             details.AddRange(result.Endpoints.Select(e =>
                 $"· {e.Label}：{(e.Success ? $"{e.MbpsAvg:0.#} Mbps（峰值 {e.MbpsPeak:0.#}，{FormatHelper.Bytes(e.BytesTotal)}）" : e.Error)}"));
