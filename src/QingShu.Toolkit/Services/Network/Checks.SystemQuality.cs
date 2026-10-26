@@ -219,7 +219,10 @@ public static partial class NetworkChecks
                                               && !p.Contains("微软", StringComparison.Ordinal)
                                               && !p.Contains("MSAFD", StringComparison.OrdinalIgnoreCase)
                                               && !p.Contains("RSPCP", StringComparison.OrdinalIgnoreCase)
-                                              && !p.Contains("TCP/IP", StringComparison.OrdinalIgnoreCase)).ToList();
+                                              && !p.Contains("TCP/IP", StringComparison.OrdinalIgnoreCase)
+                                              // RSVP TCP/UDP Service Provider 为 Windows 自带（微软 QoS 组件），
+                                              // 描述中不含 Microsoft/MSAFD/TCP/IP 字样，必须显式排除防误报
+                                              && !p.Contains("RSVP", StringComparison.OrdinalIgnoreCase)).ToList();
             var details = providers.Select(p => p).Take(12).ToArray();
             if (foreign.Count > 0)
                 return CheckOutcome.Warn($"发现 {foreign.Count} 个第三方 LSP 提供程序", "第三方 LSP 可能劫持/拖慢网络，甚至导致“能 ping 通但上不了网”：如无印象，可一键修复重置 Winsock（需重启）。", details.Concat(foreign.Select(f => "第三方: " + f)).ToArray());
