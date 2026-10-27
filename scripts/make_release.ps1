@@ -94,10 +94,21 @@ $headers = @{
     'User-Agent'  = "QingShu.Toolkit-release-script"
 }
 
-# ---- 5. 创建 Release（已存在则复用） ----
+# ---- 5. 校验 Token 与仓库可达性（私库无有效 Token 时 GitHub 同样返 404） ----
+try {
+    $null = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$Repo"
+} catch {
+    throw "无法访问仓库 $Repo —— 请确认：① PAT 有效且具 repo（Contents 读写）权限；② 仓库归属/名称正确。$($_.Exception.Message)"
+}
+
+# ---- 6. 创建 Release（已存在则复用；404=该 tag 尚无 Release，首次发布正常路径） ----
 $rel = $null
-$existing = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" `
-    -ErrorAction SilentlyContinue
+$existing = $null
+try {
+    $existing = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag"
+} catch {
+    $existing = $null
+}
 if ($existing -and $existing.id) {
     Write-Host "==> Release $Tag 已存在（id=$($existing.id)），复用并更新资产" -ForegroundColor Yellow
     $rel = $existing
@@ -114,7 +125,7 @@ if ($existing -and $existing.id) {
 }
 Write-Host "    Release id=$($rel.id)  预发布=$($rel.prerelease)" -ForegroundColor Green
 
-# ---- 6. 上传资产（同名先删后传） ----
+# ---- 7. 上传资产（同名先删后传） ----
 $assetName = Split-Path $zipPath -Leaf
 foreach ($a in @($rel.assets)) {
     if ($a.name -eq $assetName) {
