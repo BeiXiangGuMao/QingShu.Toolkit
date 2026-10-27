@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using QingShu.Toolkit.Services.Update; // UpdateChannel 枚举（属性名与通道类型同名，显式引入保持可达）
 
 namespace QingShu.Toolkit.Models;
 
@@ -73,6 +74,12 @@ public sealed class AppSettings
     public DateTime? LastUpdateCheckUtc { get; set; }
     /// <summary>用户选择“跳过该版本”的版本号</summary>
     public string SkipVersion { get; set; } = "";
+    /// <summary>更新通道：stable（正式发布）/ beta（抢先体验，含预发布）/ lts（长期支持 vX.Y.Z-lts）</summary>
+    public string UpdateChannel { get; set; } = "stable";
+    /// <summary>GitHub 加速：开启后自动优选内置加速线路（失败逐条回退、直连兜底）</summary>
+    public bool AccelerateGitHub { get; set; } = true;
+    /// <summary>最近一次成功的加速线路 id（内部记忆，auto=无记忆）</summary>
+    public string GitHubMirrorId { get; set; } = "auto";
 
     // ---------- 日志 ----------
     public int LogRetentionDays { get; set; } = 90;

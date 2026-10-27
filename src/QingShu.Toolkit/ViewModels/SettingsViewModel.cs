@@ -35,6 +35,8 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _popupEnabled;
     [ObservableProperty] private bool _autoCheckUpdate;
     [ObservableProperty] private string _updateRepo = "";
+    [ObservableProperty] private int _updateChannelIndex;   // 0=稳定版 1=Beta 2=LTS
+    [ObservableProperty] private bool _accelerateGitHub;
     [ObservableProperty] private string _updateStatusText = "";
     [ObservableProperty] private double _updateProgress;
     [ObservableProperty] private bool _isUpdateBusy;
@@ -79,6 +81,8 @@ public partial class SettingsViewModel : ObservableObject
         _popupEnabled = s.PopupBlockEnabled;
         _autoCheckUpdate = s.AutoCheckUpdate;
         _updateRepo = s.UpdateRepo;
+        _updateChannelIndex = s.UpdateChannel switch { "beta" => 1, "lts" => 2, _ => 0 };
+        _accelerateGitHub = s.AccelerateGitHub;
         _logRetentionText = s.LogRetentionDays.ToString();
         _logRootText = _log.Root;
         _loading = false;
@@ -107,6 +111,8 @@ public partial class SettingsViewModel : ObservableObject
         s.PopupBlockEnabled = PopupEnabled;
         s.AutoCheckUpdate = AutoCheckUpdate;
         s.UpdateRepo = UpdateRepo?.Trim() ?? s.UpdateRepo;
+        s.UpdateChannel = UpdateChannelIndex switch { 1 => "beta", 2 => "lts", _ => "stable" };
+        s.AccelerateGitHub = AccelerateGitHub;
         s.LogRetentionDays = Math.Clamp(ParseInt(_logRetentionText, 90), 7, 3650);
         await _settings.SaveAsync().ConfigureAwait(true);
         SavedTip = $"{DateTime.Now:HH:mm:ss} 设置已保存并即时生效。";
@@ -162,6 +168,21 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnApplyEcoQosToSelfChanged(bool value) => _ = SaveAsync();
     partial void OnPopupEnabledChanged(bool value) => _ = SaveAsync();
     partial void OnAutoCheckUpdateChanged(bool value) => _ = SaveAsync();
+    partial void OnAccelerateGitHubChanged(bool value) => _ = SaveAsync();
+
+    // 切换更新通道：保存后立即按新通道重新检查，让用户马上看到对应通道的可用版本
+    partial void OnUpdateChannelIndexChanged(int value)
+    {
+        _ = SaveAsync();
+        if (!_loading && !IsUpdateBusy)
+            _ = RecheckForChannelAsync();
+    }
+
+    private async Task RecheckForChannelAsync()
+    {
+        try { await Task.Delay(300).ConfigureAwait(true); } catch { /* 窗口关闭时的延迟取消 */ }
+        if (!IsUpdateBusy) await _update.CheckAsync(manual: true).ConfigureAwait(true);
+    }
 
     // ---- 文本框类设置同样即时保存（TwoWay 绑定在失焦时回写，此前缺失处理器
     //      导致门户地址/DNS/阈值/仓库/日志天数等“改了不生效”）----
