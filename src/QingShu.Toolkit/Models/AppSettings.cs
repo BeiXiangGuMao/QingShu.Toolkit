@@ -74,7 +74,7 @@ public sealed class AppSettings
     public DateTime? LastUpdateCheckUtc { get; set; }
     /// <summary>用户选择“跳过该版本”的版本号</summary>
     public string SkipVersion { get; set; } = "";
-    /// <summary>更新通道：stable（正式发布）/ beta（抢先体验，含预发布）/ lts（长期支持 vX.Y.Z-lts）</summary>
+    /// <summary>更新通道：stable（正式发布）/ beta（抢先体验，含预发布）。版本只分稳定版与 Beta 两档。</summary>
     public string UpdateChannel { get; set; } = "stable";
     /// <summary>GitHub 加速：开启后自动优选内置加速线路（失败逐条回退、直连兜底）</summary>
     public bool AccelerateGitHub { get; set; } = true;

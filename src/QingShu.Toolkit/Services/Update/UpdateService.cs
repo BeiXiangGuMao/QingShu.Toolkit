@@ -39,10 +39,11 @@ public interface IUpdateService
 }
 
 /// <summary>
-/// 自动更新服务（GitHub Releases，Beta / LTS 双通道）：
-///  · 通道：Stable 只接收正式发布；Beta 跟踪一切发布（含预发布）；LTS 只接收 vX.Y.Z-lts 维护版
+/// 自动更新服务（GitHub Releases，稳定版 / Beta 双通道）。
+/// 版本只分稳定版与 Beta 两档：Stable 只接收正式发布；Beta 跟踪一切发布（含预发布）。
 ///  · 加速：内置多条 GitHub 加速线路，检查与下载自动优选并记忆最近可用线路，失败逐条回退、直连兜底；
 ///          API 全灭时降级 releases.atom 通道解析（保证"能发现新版本"）
+///  · 状态精确区分：无发布（空列表短路，提示先建 Release）/ 仓库 404（地址错误）/ 网络不可达
 ///  · 下载：断点续传（Range）+ 读停滞看门狗（90s 无数据自动换线）+ 实时速度显示
 ///  · 询问式：发现新版本 → 弹窗询问 → 下载（进度可见）→ 再次询问 → 退出并安装，全程不静默
 /// </summary>
@@ -52,9 +53,14 @@ public sealed class UpdateService : IUpdateService
     private const int AtomTimeoutSeconds = 8;       // Atom 降级单线路超时
     private const int DownloadIdleSeconds = 90;     // 下载读停滞看门狗
 
+    /// <summary>检查探测结果：Found=有发布 / Empty=仓库可达但无发布（短路）/ Unreachable=线路全灭。</summary>
+    private enum ReleasesProbe { Found, Empty, Unreachable }
+    private enum AtomProbe { TagFound, Empty, ChannelMismatch, Unreachable }
+
     private readonly ISettingsService _settings;
     private readonly ILogService _log;
     private readonly HttpClient _http;
+    private bool _saw404; // 本轮检查是否出现过 404（仓库地址错误/转私有的关键线索）
 
     public event Action<UpdateStatus>? StatusChanged;
     public UpdateStatus Current { get; private set; } = new() { Phase = UpdatePhase.Idle };
@@ -101,38 +107,61 @@ public sealed class UpdateService : IUpdateService
     public async Task CheckAsync(bool manual)
     {
         Set(new UpdateStatus { Phase = UpdatePhase.Checking, Message = "正在检查更新…" });
+        _saw404 = false;
         try
         {
             var repo = _settings.Current.UpdateRepo;
             var channel = UpdateChannelHelper.Parse(_settings.Current.UpdateChannel);
-            var channelText = channel switch
-            {
-                UpdateChannel.Beta => "Beta 通道",
-                UpdateChannel.Lts => "LTS 通道",
-                _ => "稳定版通道"
-            };
+            var channelText = channel == UpdateChannel.Beta ? "Beta 通道" : "稳定版通道";
 
-            // 1) releases 列表（多线路 failover）
-            var fetched = await TryFetchReleasesAsync(repo).ConfigureAwait(false);
-            if (fetched.HasValue)
+            // 1) releases 列表（多线路 failover；200+空列表=仓库可达但无发布，立即短路）
+            var (probe, list, via) = await TryFetchReleasesAsync(repo).ConfigureAwait(false);
+            if (probe == ReleasesProbe.Found)
             {
-                await HandleReleaseListAsync(fetched.Value.Releases, fetched.Value.Via, channel, channelText, manual).ConfigureAwait(false);
+                await HandleReleaseListAsync(list, via!, channel, channelText, manual).ConfigureAwait(false);
+                return;
+            }
+            if (probe == ReleasesProbe.Empty)
+            {
+                _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
+                await _settings.SaveAsync().ConfigureAwait(false);
+                Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual
+                    ? "仓库可达，但尚无任何发布版本：请先在 GitHub 创建 Release（附 zip 资产）。可运行仓库内 scripts/make_release.ps1 一键发布。"
+                    : "" });
+                _log.App(LogLevel.Warn, "update", "仓库可达但没有任何 Release，更新检查空转");
                 return;
             }
 
             // 2) API 全灭 → releases.atom 降级解析（只能拿到 tag，无资产信息）
-            var atomTag = await TryFetchLatestTagViaAtomAsync(repo, channel).ConfigureAwait(false);
-            if (atomTag is null)
+            var (atomProbe, atomTag) = await TryFetchLatestTagViaAtomAsync(repo, channel).ConfigureAwait(false);
+            switch (atomProbe)
             {
-                Set(new UpdateStatus { Phase = UpdatePhase.Error, Message = manual
-                    ? "检查失败：加速与直连线路均无法访问 GitHub，请检查校园网或稍后重试。"
-                    : "自动检查更新失败（所有线路不可达，将稍后重试）。" });
-                return;
+                case AtomProbe.TagFound:
+                    _log.App(LogLevel.Warn, "update", $"API 不可达，已降级经 Atom 解析到 {atomTag}（{channelText}）");
+                    _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
+                    await _settings.SaveAsync().ConfigureAwait(false);
+                    HandleAtomTag(atomTag, repo, manual);
+                    return;
+                case AtomProbe.Empty:
+                    _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
+                    await _settings.SaveAsync().ConfigureAwait(false);
+                    Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual
+                        ? "仓库可达，但尚无任何发布版本：请先在 GitHub 创建 Release（附 zip 资产）。可运行仓库内 scripts/make_release.ps1 一键发布。" });
+                    return;
+                case AtomProbe.ChannelMismatch:
+                    _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
+                    await _settings.SaveAsync().ConfigureAwait(false);
+                    Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual
+                        ? $"仓库有发布，但{channelText}暂无匹配版本（仓库仅有预发布版本时，稳定版通道不可见）。" });
+                    return;
             }
-            _log.App(LogLevel.Warn, "update", $"API 不可达，已降级经 Atom 解析到 {atomTag}（{channelText}）");
-            _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
-            await _settings.SaveAsync().ConfigureAwait(false);
-            HandleAtomTag(atomTag, repo, manual);
+
+            // 3) 所有线路均不可达（含 Atom 降级）
+            Set(new UpdateStatus { Phase = UpdatePhase.Error, Message = _saw404
+                ? "检查失败：仓库返回 404。请检查设置中的 GitHub 仓库地址是否正确（仓库可能已改名或转私有）。"
+                : (manual
+                    ? "检查失败：加速与直连线路均无法访问 GitHub，请检查网络或稍后重试。"
+                    : "自动检查更新失败（所有线路不可达，将稍后重试）。") });
         }
         catch (Exception ex)
         {
@@ -140,7 +169,7 @@ public sealed class UpdateService : IUpdateService
         }
     }
 
-    private async Task<(JsonElement Releases, GitHubMirror Via)?> TryFetchReleasesAsync(string repo)
+    private async Task<(ReleasesProbe Probe, JsonElement List, GitHubMirror? Via)> TryFetchReleasesAsync(string repo)
     {
         var chain = GitHubAccess.BuildApiChain(MemoryId, _settings.Current.AccelerateGitHub, repo);
         foreach (var (mirror, url) in chain)
@@ -151,18 +180,25 @@ public sealed class UpdateService : IUpdateService
                 using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
+                    if ((int)resp.StatusCode == 404) _saw404 = true;
                     _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
                     continue;
                 }
                 await using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var doc = await JsonDocument.ParseAsync(stream, default, cts.Token).ConfigureAwait(false);
-                if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 {
                     _log.App(LogLevel.Info, "update", $"检查线路返回异常（{mirror.Name}）：非 release 列表");
                     continue;
                 }
+                if (doc.RootElement.GetArrayLength() == 0)
+                {
+                    // 200 + 空数组 = 仓库可达但无发布：立即短路，无需再试其他线路或 Atom
+                    _log.App(LogLevel.Info, "update", $"检查经线路 {mirror.Name} 确认：仓库尚无任何 Release");
+                    return (ReleasesProbe.Empty, default, mirror);
+                }
                 _log.App(LogLevel.Info, "update", $"更新检查经线路 {mirror.Name} 成功");
-                return (doc.RootElement.Clone(), mirror);
+                return (ReleasesProbe.Found, doc.RootElement.Clone(), mirror);
             }
             catch (OperationCanceledException)
             {
@@ -173,7 +209,7 @@ public sealed class UpdateService : IUpdateService
                 _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：{ex.Message}");
             }
         }
-        return null;
+        return (ReleasesProbe.Unreachable, default, null);
     }
 
     private async Task HandleReleaseListAsync(JsonElement list, GitHubMirror via, UpdateChannel channel, string channelText, bool manual)
@@ -195,12 +231,9 @@ public sealed class UpdateService : IUpdateService
 
         if (!picked.HasValue)
         {
-            string hint = channel switch
-            {
-                UpdateChannel.Lts => "（LTS 通道：仓库暂无形如 vX.Y.Z-lts 的长期支持版本）",
-                UpdateChannel.Beta => "（Beta 通道：仓库尚无任何发布）",
-                _ => "（稳定版通道：仓库暂无正式发布）"
-            };
+            string hint = channel == UpdateChannel.Beta
+                ? "（Beta 通道：仓库发布列表为空或仅剩草稿）"
+                : "（稳定版通道：仓库仅有预发布版本，暂无正式发布）";
             Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual ? $"已是最新版本。{hint}" : "" });
             return;
         }
@@ -252,7 +285,7 @@ public sealed class UpdateService : IUpdateService
 
     // ---- Atom 降级 ----
 
-    private async Task<string?> TryFetchLatestTagViaAtomAsync(string repo, UpdateChannel channel)
+    private async Task<(AtomProbe Probe, string Tag)> TryFetchLatestTagViaAtomAsync(string repo, UpdateChannel channel)
     {
         var chain = GitHubAccess.BuildAtomChain(_settings.Current.AccelerateGitHub, repo);
         foreach (var (mirror, url) in chain)
@@ -263,37 +296,47 @@ public sealed class UpdateService : IUpdateService
                 using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
+                    if ((int)resp.StatusCode == 404) _saw404 = true;
                     _log.App(LogLevel.Info, "update", $"Atom 降级线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
                     continue;
                 }
                 var xml = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
                 var doc = XDocument.Parse(xml);
                 var ns = doc.Root?.Name.Namespace;
-                var entry = doc.Descendants(ns + "entry").FirstOrDefault();
                 // 真实结构（实测）：link href = .../releases/tag/{tag}；id = tag:github.com,2008:Repository/{rid}/{tag}
-                var href = entry?.Element(ns + "link")?.Attribute("href")?.Value ?? "";
-                var id = entry?.Element(ns + "id")?.Value ?? "";
-                string tag = "";
-                if (href.Contains("/releases/tag/", StringComparison.Ordinal))
-                    tag = href.Split("/releases/tag/")[^1].Trim();
-                else if (id.Length > 0)
+                string TagOf(XElement el)
                 {
+                    var href = el.Element(ns + "link")?.Attribute("href")?.Value ?? "";
+                    if (href.Contains("/releases/tag/", StringComparison.Ordinal))
+                        return href.Split("/releases/tag/")[^1].Trim();
+                    var id = el.Element(ns + "id")?.Value ?? "";
                     var tail = id.Split('/')[^1].Trim();
-                    if (tail.Length > 0 && !tail.All(char.IsDigit)) tag = tail;
+                    return tail.Length > 0 && !tail.All(char.IsDigit) ? tail : "";
                 }
-                if (tag.Length == 0) continue;
-
-                var key = GitHubAccess.ParseVersionKey(tag);
-                if (!GitHubAccess.ChannelMatchesByKey(channel, key)) continue;
-                _log.App(LogLevel.Info, "update", $"Atom 降级经线路 {mirror.Name} 解析到 {tag}");
-                return tag;
+                var entries = doc.Descendants(ns + "entry").ToList();
+                if (entries.Count == 0)
+                {
+                    _log.App(LogLevel.Info, "update", $"Atom 经线路 {mirror.Name} 确认：仓库尚无任何 Release");
+                    return (AtomProbe.Empty, "");
+                }
+                foreach (var entry in entries)
+                {
+                    var tag = TagOf(entry);
+                    if (tag.Length == 0) continue;
+                    var key = GitHubAccess.ParseVersionKey(tag);
+                    if (!GitHubAccess.ChannelMatchesByKey(channel, key)) continue;
+                    _log.App(LogLevel.Info, "update", $"Atom 降级经线路 {mirror.Name} 解析到 {tag}");
+                    return (AtomProbe.TagFound, tag);
+                }
+                // feed 有内容但当前通道无匹配（稳定版通道 + 仓库仅有预发布）
+                return (AtomProbe.ChannelMismatch, "");
             }
             catch (Exception ex)
             {
                 _log.App(LogLevel.Info, "update", $"Atom 降级线路不可用（{mirror.Name}）：{ex.Message}");
             }
         }
-        return null;
+        return (AtomProbe.Unreachable, "");
     }
 
     private void HandleAtomTag(string tag, string repo, bool manual)

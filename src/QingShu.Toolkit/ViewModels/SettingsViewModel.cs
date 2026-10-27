@@ -81,7 +81,7 @@ public partial class SettingsViewModel : ObservableObject
         _popupEnabled = s.PopupBlockEnabled;
         _autoCheckUpdate = s.AutoCheckUpdate;
         _updateRepo = s.UpdateRepo;
-        _updateChannelIndex = s.UpdateChannel switch { "beta" => 1, "lts" => 2, _ => 0 };
+        _updateChannelIndex = s.UpdateChannel == "beta" ? 1 : 0;
         _accelerateGitHub = s.AccelerateGitHub;
         _logRetentionText = s.LogRetentionDays.ToString();
         _logRootText = _log.Root;
@@ -111,7 +111,7 @@ public partial class SettingsViewModel : ObservableObject
         s.PopupBlockEnabled = PopupEnabled;
         s.AutoCheckUpdate = AutoCheckUpdate;
         s.UpdateRepo = UpdateRepo?.Trim() ?? s.UpdateRepo;
-        s.UpdateChannel = UpdateChannelIndex switch { 1 => "beta", 2 => "lts", _ => "stable" };
+        s.UpdateChannel = UpdateChannelIndex == 1 ? "beta" : "stable";
         s.AccelerateGitHub = AccelerateGitHub;
         s.LogRetentionDays = Math.Clamp(ParseInt(_logRetentionText, 90), 7, 3650);
         await _settings.SaveAsync().ConfigureAwait(true);

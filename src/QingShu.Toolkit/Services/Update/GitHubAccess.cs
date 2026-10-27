@@ -4,24 +4,17 @@ using System.Linq;
 
 namespace QingShu.Toolkit.Services.Update;
 
-/// <summary>更新通道：Stable=正式发布 / Beta=抢先体验（含预发布）/ Lts=长期支持维护版。</summary>
-public enum UpdateChannel { Stable, Beta, Lts }
+/// <summary>更新通道：Stable=正式发布 / Beta=抢先体验（含预发布）。</summary>
+public enum UpdateChannel { Stable, Beta }
 
 public static class UpdateChannelHelper
 {
-    public static UpdateChannel Parse(string? s) => s?.Trim().ToLowerInvariant() switch
-    {
-        "beta" => UpdateChannel.Beta,
-        "lts" => UpdateChannel.Lts,
-        _ => UpdateChannel.Stable
-    };
+    public static UpdateChannel Parse(string? s) => s?.Trim().ToLowerInvariant() == "beta"
+        ? UpdateChannel.Beta
+        : UpdateChannel.Stable; // 旧版遗留 "lts" 值回退稳定版
 
-    public static string ToSettingValue(this UpdateChannel ch) => ch switch
-    {
-        UpdateChannel.Beta => "beta",
-        UpdateChannel.Lts => "lts",
-        _ => "stable"
-    };
+    public static string ToSettingValue(this UpdateChannel ch) =>
+        ch == UpdateChannel.Beta ? "beta" : "stable";
 }
 
 /// <summary>一条 GitHub 加速线路。Prefix 拼接规则：{Prefix}{原始完整 URL}。</summary>
@@ -127,36 +120,20 @@ public static class GitHubAccess
     // ---------------- 通道语义与版本键 ----------------
 
     /// <summary>
-    /// 通道匹配规则：Beta 跟踪一切发布（含预发布）；Stable 仅正式发布；LTS 仅带 lts 标记的正式发布。
-    /// 发布约定：tag 形如 v1.3.0（正式）/ v1.3.0-beta.2（预发布）/ v1.2.4-lts（长期支持）。
+    /// 通道匹配规则（版本只分稳定版与 Beta 两档）：Beta 跟踪一切发布（含预发布）；Stable 仅正式发布。
+    /// 发布约定：tag 形如 v1.3.0（正式）/ v1.3.0-beta.2（预发布）。
     /// </summary>
     public static bool ChannelMatches(UpdateChannel channel, bool isPrerelease, string tag)
-    {
-        bool lts = tag.Contains("lts", StringComparison.OrdinalIgnoreCase);
-        return channel switch
-        {
-            UpdateChannel.Beta => true,
-            UpdateChannel.Lts => !isPrerelease && lts,
-            _ => !isPrerelease
-        };
-    }
+        => channel == UpdateChannel.Beta || !isPrerelease;
 
-    /// <summary>Atom 降级模式的通道匹配：无 prerelease 标志，用版本键级别近似判断。</summary>
+    /// <summary>Atom 降级模式的通道匹配：无 prerelease 标志，用版本键级别近似判断（级别=预发布视为预发布）。</summary>
     public static bool ChannelMatchesByKey(UpdateChannel channel, ReleaseVersionKey key)
-    {
-        bool lts = key.Rank == 2;
-        bool pre = key.Rank == 1;
-        return channel switch
-        {
-            UpdateChannel.Beta => true,
-            UpdateChannel.Lts => !pre && lts,
-            _ => !pre
-        };
-    }
+        => channel == UpdateChannel.Beta || key.Rank != 1;
 
     /// <summary>
-    /// 解析 tag/版本号为版本键：v1.3.0-beta.2 → (1.3.0, 级别=预发布, 修订=2)；1.2.4-lts → 级别=LTS；
+    /// 解析 tag/版本号为版本键：v1.3.0-beta.2 → (1.3.0, 级别=预发布, 修订=2)；
     /// 1.3.0 / v1.3.0 / 1.3.0-stable → 级别=正式。数字部分解析失败回退 0.0.0（排序恒最低）。
+    /// 保留 lts 级别(2)解析以兼容历史 tag：稳定版通道仍会把它视为正式发布。
     /// </summary>
     public static ReleaseVersionKey ParseVersionKey(string? tagOrVersion)
     {
