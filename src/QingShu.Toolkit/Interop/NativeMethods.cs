@@ -245,6 +245,14 @@ internal static partial class NativeMethods
 
     public static bool TryCloseWindow(IntPtr hWnd) => PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private const int SW_HIDE = 0;
+
+    /// <summary>强制隐藏窗口（WM_CLOSE 被忽略的顽固弹窗兜底手段；进程仍在运行，仅窗口不可见）。</summary>
+    public static bool HideWindow(IntPtr hWnd) => ShowWindow(hWnd, SW_HIDE);
+
     public delegate void WinEventDelegate(IntPtr hHook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
 
     [DllImport("user32.dll")]
