@@ -146,13 +146,15 @@ public sealed class UpdateService : IUpdateService
                     _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
                     await _settings.SaveAsync().ConfigureAwait(false);
                     Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual
-                        ? "仓库可达，但尚无任何发布版本：请先在 GitHub 创建 Release（附 zip 资产）。可运行仓库内 scripts/make_release.ps1 一键发布。" });
+                        ? "仓库可达，但尚无任何发布版本：请先在 GitHub 创建 Release（附 zip 资产）。可运行仓库内 scripts/make_release.ps1 一键发布。"
+                        : "" });
                     return;
                 case AtomProbe.ChannelMismatch:
                     _settings.Current.LastUpdateCheckUtc = DateTime.UtcNow;
                     await _settings.SaveAsync().ConfigureAwait(false);
                     Set(new UpdateStatus { Phase = UpdatePhase.UpToDate, Message = manual
-                        ? $"仓库有发布，但{channelText}暂无匹配版本（仓库仅有预发布版本时，稳定版通道不可见）。" });
+                        ? $"仓库有发布，但{channelText}暂无匹配版本（仓库仅有预发布版本时，稳定版通道不可见）。"
+                        : "" });
                     return;
             }
 
