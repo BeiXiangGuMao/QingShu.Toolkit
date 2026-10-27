@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     青枢工具箱一键发布脚本：本地构建 → 打 zip → 创建 GitHub Release → 上传资产。
     更新系统（自动检查更新）依赖仓库中存在 Release，首次使用先运行本脚本发布一次。
@@ -42,6 +42,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 默认可能未启用 TLS1.2，访问 api.github.com 会报"基础连接已经关闭"
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $Repo = "BeiXiangGuMao/QingShu.Toolkit"
 $ProjectDir = Join-Path $PSScriptRoot "..\src\QingShu.Toolkit"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -77,7 +79,7 @@ $zipPath = Join-Path $RepoRoot "QingShu.Toolkit-$version.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Write-Host "==> 打包 $zipPath ..." -ForegroundColor Cyan
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath -CompressionLevel Optimal
-$zipSize = "{0:N1} MB" -f ((Get-Item $zipPath).Length / 1MB)
+$zipSize = "{0:N1} MB" -f ((Get-Item $zipPath).Length / 1048576)
 Write-Host "    完成（$zipSize）" -ForegroundColor Green
 if ($PackOnly) { Write-Host "==> -PackOnly 模式：不创建 Release。zip 位于 $zipPath" -ForegroundColor Yellow; return }
 
