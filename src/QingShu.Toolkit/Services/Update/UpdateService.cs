@@ -174,42 +174,64 @@ public sealed class UpdateService : IUpdateService
         var chain = GitHubAccess.BuildApiChain(MemoryId, _settings.Current.AccelerateGitHub, repo);
         foreach (var (mirror, url) in chain)
         {
-            try
+            var (probe, list, via) = await FetchReleasesViaAsync(mirror, repo).ConfigureAwait(false);
+            if (probe == ReleasesProbe.Found) return (probe, list, via);
+            if (probe == ReleasesProbe.Empty)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(ApiTimeoutSeconds));
-                using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode)
+                // 镜像 200+空数组可能来自代理缓存/异常响应：直连复核一次防误报“无发布”，
+                // 直连拿到数据则改用直连结果（直连仍空或不可达 → 维持空结论）
+                if (!GitHubAccess.IsDirect(mirror) && _settings.Current.AccelerateGitHub)
                 {
-                    if ((int)resp.StatusCode == 404) _saw404 = true;
-                    _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
-                    continue;
+                    _log.App(LogLevel.Info, "update", $"线路 {mirror.Name} 报告空列表，直连复核中…");
+                    var (p2, l2, v2) = await FetchReleasesViaAsync(GitHubAccess.Direct, repo).ConfigureAwait(false);
+                    if (p2 == ReleasesProbe.Found) return (p2, l2, v2);
                 }
-                await using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                using var doc = await JsonDocument.ParseAsync(stream, default, cts.Token).ConfigureAwait(false);
-                if (doc.RootElement.ValueKind != JsonValueKind.Array)
-                {
-                    _log.App(LogLevel.Info, "update", $"检查线路返回异常（{mirror.Name}）：非 release 列表");
-                    continue;
-                }
-                if (doc.RootElement.GetArrayLength() == 0)
-                {
-                    // 200 + 空数组 = 仓库可达但无发布：立即短路，无需再试其他线路或 Atom
-                    _log.App(LogLevel.Info, "update", $"检查经线路 {mirror.Name} 确认：仓库尚无任何 Release");
-                    return (ReleasesProbe.Empty, default, mirror);
-                }
-                _log.App(LogLevel.Info, "update", $"更新检查经线路 {mirror.Name} 成功");
-                return (ReleasesProbe.Found, doc.RootElement.Clone(), mirror);
+                return (ReleasesProbe.Empty, default, mirror);
             }
-            catch (OperationCanceledException)
-            {
-                _log.App(LogLevel.Info, "update", $"检查线路超时（{mirror.Name}，{ApiTimeoutSeconds}s）");
-            }
-            catch (Exception ex)
-            {
-                _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：{ex.Message}");
-            }
+            // Unreachable → 尝试下一线路
         }
         return (ReleasesProbe.Unreachable, default, null);
+    }
+
+    /// <summary>单线路 releases 列表探测：成功返回 Found+列表；200+空数组返回 Empty；其余 Unreachable。</summary>
+    private async Task<(ReleasesProbe Probe, JsonElement List, GitHubMirror? Via)> FetchReleasesViaAsync(GitHubMirror mirror, string repo)
+    {
+        try
+        {
+            var url = $"{mirror.Prefix}https://api.github.com/repos/{repo}/releases?per_page=15";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(ApiTimeoutSeconds));
+            using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                if ((int)resp.StatusCode == 404) _saw404 = true;
+                _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
+                return (ReleasesProbe.Unreachable, default, mirror);
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream, default, cts.Token).ConfigureAwait(false);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                _log.App(LogLevel.Info, "update", $"检查线路返回异常（{mirror.Name}）：非 release 列表");
+                return (ReleasesProbe.Unreachable, default, mirror);
+            }
+            if (doc.RootElement.GetArrayLength() == 0)
+            {
+                // 200 + 空数组 = 线路确认仓库无发布（外层会按需直连复核后短路）
+                _log.App(LogLevel.Info, "update", $"检查经线路 {mirror.Name} 确认：仓库尚无任何 Release");
+                return (ReleasesProbe.Empty, default, mirror);
+            }
+            _log.App(LogLevel.Info, "update", $"更新检查经线路 {mirror.Name} 成功");
+            return (ReleasesProbe.Found, doc.RootElement.Clone(), mirror);
+        }
+        catch (OperationCanceledException)
+        {
+            _log.App(LogLevel.Info, "update", $"检查线路超时（{mirror.Name}，{ApiTimeoutSeconds}s）");
+        }
+        catch (Exception ex)
+        {
+            _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：{ex.Message}");
+        }
+        return (ReleasesProbe.Unreachable, default, mirror);
     }
 
     private async Task HandleReleaseListAsync(JsonElement list, GitHubMirror via, UpdateChannel channel, string channelText, bool manual)
@@ -411,6 +433,7 @@ public sealed class UpdateService : IUpdateService
             }
             else if (release.AssetSize > 0 && existing == release.AssetSize)
             {
+                EnsureZipFile(target, release); // 长度符合仍需校验内容，防历史异常残留
                 Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
                     DownloadedFile = target, Message = "下载完成，准备安装。" });
                 return;
@@ -423,10 +446,16 @@ public sealed class UpdateService : IUpdateService
 
         if ((int)resp.StatusCode == 416 && existing > 0)
         {
-            // 范围越界 → 本地已完整
-            Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
-                DownloadedFile = target, Message = "下载完成，准备安装。" });
-            return;
+            // 范围越界：仅当本地长度已达到期望全长才视为完整；
+            // 镜像文件滞后（服务器文件比 API 报的 size 小）时 416 不代表下载完成，换线路重来
+            if (release.AssetSize <= 0 || existing >= release.AssetSize)
+            {
+                EnsureZipFile(target, release);
+                Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
+                    DownloadedFile = target, Message = "下载完成，准备安装。" });
+                return;
+            }
+            throw new IOException($"该线路文件长度({existing})小于期望({release.AssetSize})，数据可能滞后，需换线路");
         }
         resp.EnsureSuccessStatusCode();
 
@@ -484,10 +513,42 @@ public sealed class UpdateService : IUpdateService
 
         long finalLen = done + copied;
         if (total > 0 && finalLen < total)
+        {
+            // 全量模式收到非 zip 数据（镜像错误页）：清理残留，避免下一线路把坏前缀续传进来
+            if (!resumed && !IsZipHead(target))
+            {
+                try { File.Delete(target); } catch { }
+            }
             throw new IOException($"下载不完整（{finalLen}/{total} 字节）");
+        }
 
+        EnsureZipFile(target, release); // 完整性终检：防故障镜像返回 200+错误页被当作更新包
         Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
             DownloadedFile = target, Message = $"下载完成，准备安装。（{FormatSpeed(speedBps)} 结束）" });
+    }
+
+    /// <summary>
+    /// zip 内容终检：文件头必须是 "PK"。故障镜像可能返回 200 + HTML 错误页（HTTP 层成功、
+    /// 长度也可能与流结束一致），不作校验会一路走到 Expand-Archive 才失败。
+    /// 校验失败删除残留文件并抛异常 → 上层自动切换下一线路。
+    /// </summary>
+    private static void EnsureZipFile(string file, ReleaseInfo release)
+    {
+        if (IsZipHead(file)) return;
+        try { File.Delete(file); } catch { }
+        throw new IOException($"下载内容校验失败（非 zip 数据，线路 {release.Tag} 可能返回了错误页），已清理残留文件");
+    }
+
+    /// <summary>文件头是否为 "PK"（任意 zip 变体均以 PK 开头）。</summary>
+    private static bool IsZipHead(string file)
+    {
+        try
+        {
+            using var fs = File.OpenRead(file);
+            var buf = new byte[2];
+            return fs.Read(buf, 0, 2) == 2 && buf[0] == 0x50 && buf[1] == 0x4B;
+        }
+        catch { return false; }
     }
 
     private static string FormatSpeed(double bps) => bps >= 1024 * 1024
@@ -522,7 +583,7 @@ public sealed class UpdateService : IUpdateService
                 $"del /f /q \"{downloadedFile}\"",
                 $"start \"\" \"{Path.Combine(appDir, "QingShu.Toolkit.exe")}\"",
                 "exit /b 0"
-            }), System.Text.Encoding.UTF8);
+            }), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false)); // 无 BOM：cmd 对带 BOM 批处理首行 @echo 会报错（Task 19 同款教训）
 
             _log.App(LogLevel.Info, "update", "启动更新脚本并退出主程序");
             Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c \"{script}\"")
