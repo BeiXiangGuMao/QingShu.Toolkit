@@ -209,11 +209,52 @@ if (-not $NoMsix) {
         Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
         Sort-Object NotAfter -Descending | Select-Object -First 1
     if (-not $cert) {
-        $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject `
-            -KeyUsage DigitalSignature -FriendlyName "QingShu.Toolkit MSIX" `
-            -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) `
-            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
-        Write-Host "    已新建签名证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+        # 三级兜底：部分机器 CertEnroll/CNG 创建密钥报 0x80090020 NTE_FAIL
+        # （KSP 服务异常/组策略限制），逐级降级直到成功
+        $textExt = @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+        $t1err = ""
+        $t2err = ""
+        try {
+            $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -TextExtension $textExt
+            Write-Host "    已新建签名证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+        } catch {
+            $t1err = $_.Exception.Message
+            Write-Host "    默认 KSP 创建证书失败，改用传统加密提供程序重试 ..." -ForegroundColor Yellow
+        }
+        if (-not $cert) {
+            try {
+                $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -KeySpec Signature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -KeyLength 2048 -Provider "Microsoft Enhanced Cryptographic Provider v1.5" -TextExtension $textExt
+                Write-Host "    已用传统提供程序新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+            } catch {
+                $t2err = $_.Exception.Message
+                Write-Host "    传统提供程序也失败，改用 .NET 密钥直签兜底 ..." -ForegroundColor Yellow
+            }
+        }
+        if (-not $cert) {
+            # .NET CertificateRequest + CAPI RSA 直签：完全绕开 CertEnroll
+            try {
+                $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider(2048)
+                $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($certSubject, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.X509Certificates.RSASignaturePadding]::Pkcs1)
+                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension([System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
+                $oids = New-Object System.Security.Cryptography.OidCollection
+                $null = $oids.Add("1.3.6.1.5.5.7.3.3")
+                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($oids, $false)))
+                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($false, $false, 0, $false)))
+                $selfSigned = $req.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(5))
+                $pfxBytes = $selfSigned.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "qs-local-import")
+                $tmpCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+                $tmpCert.Import($pfxBytes, "qs-local-import", ([System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable))
+                $tmpCert.FriendlyName = "QingShu.Toolkit MSIX"
+                $store = New-Object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+                $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                $store.Add($tmpCert)
+                $store.Close()
+                $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $tmpCert.Thumbprint } | Select-Object -First 1
+                Write-Host "    已用 .NET 直签兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+            } catch {
+                throw "证书创建三种方式全部失败。① $t1err ② $t2err ③ $($_.Exception.Message)。常见原因：密钥容器服务异常（重启 Cryptographic Services 服务或重启电脑后重试）、组策略 FIPS 限制；或加 -NoMsix 先跳过 MSIX 打包。"
+            }
+        }
     }
 
     $cerPath = Join-Path $RepoRoot "QingShu.Toolkit-$version.cer"
