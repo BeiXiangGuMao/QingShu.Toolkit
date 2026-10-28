@@ -16,16 +16,8 @@
             <!-- 左侧：Logo + 标题（拖拽区） -->
             <Grid x:Name="TitleDragArea" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0" Spacing="10">
-                    <Border Width="26" Height="26" CornerRadius="8">
-                        <Border.Background>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#0A84FF" Offset="0" />
-                                <GradientStop Color="#409CFF" Offset="1" />
-                            </LinearGradientBrush>
-                        </Border.Background>
-                        <TextBlock Text="枢" Foreground="White" FontSize="14" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
-                    </Border>
+                    <!-- 应用图标（Assets/AppIcon.png，与 exe/MSIX 图标同源，tools/make_assets.py 生成） -->
+                    <Image Source="ms-appx:///Assets/AppIcon.png" Width="26" Height="26" Stretch="Uniform" />
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <TextBlock Text="青枢工具箱" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{ThemeResource TextPrimaryBrush}" />
@@ -114,6 +106,8 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
                     <TextBlock Text="青枢工具箱" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" />
                     <TextBlock x:Name="VersionText" FontSize="11" Foreground="{ThemeResource PlaceholderTextBrush}" />
+                    <TextBlock Text="· © 2026 BeiXiangGuMao" FontSize="11"
+                               Foreground="{ThemeResource PlaceholderTextBrush}" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="16">
                     <!-- 弹窗拦截计数（点击打开白名单管理） -->

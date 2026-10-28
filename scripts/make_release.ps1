@@ -226,27 +226,12 @@ if (-not $NoMsix) {
     Copy-Item -Path (Join-Path $publishDir "*") -Destination $stage -Recurse -Force
     Get-ChildItem $stage -Recurse -Filter *.pdb | Remove-Item -Force
 
+    # 图标：直接复用仓库 Assets（tools/make_assets.py 由设计稿源图生成），不再现场绘制
     $assetsDir = Join-Path $stage "Assets"
     New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
-    Add-Type -AssemblyName System.Drawing
-    foreach ($pair in @(@("Square44x44Logo.png", 44), @("Square150x150Logo.png", 150), @("StoreLogo.png", 50))) {
-        $logoPath = Join-Path $assetsDir $pair[0]
-        $size = $pair[1]
-        $bmp = New-Object System.Drawing.Bitmap($size, $size)
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-        $bg = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 32, 110, 235))
-        $g.FillRectangle($bg, 0, 0, $size, $size)
-        $font = New-Object System.Drawing.Font("Microsoft YaHei UI", ($size * 0.5), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-        $fmt = New-Object System.Drawing.StringFormat
-        $fmt.Alignment = [System.Drawing.StringAlignment]::Center
-        $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-        $rect = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
-        $g.DrawString("青", $font, [System.Drawing.Brushes]::White, $rect, $fmt)
-        $g.Dispose()
-        $bmp.Save($logoPath, [System.Drawing.Imaging.ImageFormat]::Png)
-        $bmp.Dispose()
+    $srcAssets = Join-Path $RepoRoot "src\QingShu.Toolkit\Assets"
+    foreach ($logo in @("Square44x44Logo.png", "Square150x150Logo.png", "StoreLogo.png")) {
+        Copy-Item (Join-Path $srcAssets $logo) (Join-Path $assetsDir $logo) -Force
     }
 
     $manifest = @"
