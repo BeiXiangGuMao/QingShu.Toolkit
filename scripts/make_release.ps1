@@ -15,6 +15,9 @@
       # 只打包不上传（先本地验收 zip / msix / cer）
       .\scripts\make_release.ps1 -PackOnly
 
+      # 本机安装 MSIX（自动提权导入证书 → 安装；解决 0x800B0109 证书不受信任）
+      .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-<版本>.msix
+
     Token 权限：repo（Contents: read & write）即可。
     注意：发布的 tag 版本号必须高于用户本机版本号，更新检查才会提示升级。
 
@@ -93,7 +96,9 @@ $zipSize = "{0:N1} MB" -f ((Get-Item $zipPath).Length / 1048576)
 Write-Host "    完成（$zipSize）" -ForegroundColor Green
 
 # ---- 4. 打包签名 MSIX（Windows SDK MakeAppx + SignTool；-NoMsix 跳过） ----
-# MSIX 为手动安装格式：先双击 .cer 装证书（本地计算机 → 受信任的人），再双击 .msix 安装。
+# MSIX 为手动安装格式：必须先装 .cer 证书（本地计算机 → 受信任的人）再装 .msix，
+# 否则 Add-AppxPackage 报 0x800B0109（签名根证书不受信任）。仓库内一键完成：
+# .\scripts\install_msix.ps1（自动提权导证书 + 安装，证书已信任时不重复提权）。
 # 应用内自动更新始终使用 zip 资产，与 MSIX 互不影响（MSIX 安装目录只读，勿在其内测自动更新）。
 $msixPath = ""
 $cerPath = ""
@@ -298,7 +303,7 @@ if ($PackOnly) {
     Write-Host "    zip ：$zipPath"
     if ($msixPath) {
         Write-Host "    msix：$msixPath"
-        Write-Host "    cer ：$cerPath —— 本机验收：双击 cer 装到「本地计算机 → 受信任的人」→ 双击 msix 安装"
+        Write-Host ('    cer ：{0} —— 本机验收：.\scripts\install_msix.ps1 -Msix "{1}" 一键装证书并安装' -f $cerPath, $msixPath)
     }
     return
 }
@@ -337,7 +342,7 @@ if ($existing -and $existing.id) {
         tag_name         = $Tag
         name             = "青枢工具箱 $version"
         prerelease       = [bool]$isPrerelease
-        body             = "青枢工具箱 $version 发布。zip：解压替换即可使用，应用内「设置 → 自动更新」可直接在线升级。MSIX（手动安装格式）：先双击 .cer 把证书装到「本地计算机 → 受信任的人」，再双击 .msix 安装；应用内自动更新仅支持 zip 版。"
+        body             = "青枢工具箱 $version 发布。zip：解压替换即可使用，应用内「设置 → 自动更新」可直接在线升级。MSIX（手动安装格式）：先双击 .cer 把证书装到「本地计算机 → 受信任的人」（或管理员 PowerShell 执行 certutil -addstore TrustedPeople <cer文件名>），再双击 .msix 安装；应用内自动更新仅支持 zip 版。"
     } | ConvertTo-Json
     Write-Host "==> 创建 Release $Tag ..." -ForegroundColor Cyan
     $rel = Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" `

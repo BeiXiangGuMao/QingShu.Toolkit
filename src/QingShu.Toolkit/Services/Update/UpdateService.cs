@@ -326,7 +326,12 @@ public sealed class UpdateService : IUpdateService
                 }
                 var xml = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
                 var doc = XDocument.Parse(xml);
-                var ns = doc.Root?.Name.Namespace;
+                if (doc.Root is null)
+                {
+                    _log.App(LogLevel.Info, "update", $"Atom 降级经线路 {mirror.Name} 返回内容不是有效 XML 文档");
+                    continue;
+                }
+                var ns = doc.Root.Name.Namespace;
                 // 真实结构（实测）：link href = .../releases/tag/{tag}；id = tag:github.com,2008:Repository/{rid}/{tag}
                 string TagOf(XElement el)
                 {
