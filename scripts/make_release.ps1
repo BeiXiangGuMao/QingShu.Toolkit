@@ -209,11 +209,13 @@ if (-not $NoMsix) {
         Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
         Sort-Object NotAfter -Descending | Select-Object -First 1
     if (-not $cert) {
-        # 三级兜底：部分机器 CertEnroll/CNG 创建密钥报 0x80090020 NTE_FAIL
-        # （KSP 服务异常/组策略限制），逐级降级直到成功
+        # 四级兜底：部分机器 CertEnroll/CNG 创建密钥报 0x80090020 NTE_FAIL
+        # （KSP 服务异常/密钥存储损坏/组策略限制），逐级降级直到成功
         $textExt = @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
         $t1err = ""
         $t2err = ""
+        $t3err = ""
+        $t4err = ""
         try {
             $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -TextExtension $textExt
             Write-Host "    已新建签名证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
@@ -222,19 +224,25 @@ if (-not $NoMsix) {
             Write-Host "    默认 KSP 创建证书失败，改用传统加密提供程序重试 ..." -ForegroundColor Yellow
         }
         if (-not $cert) {
-            try {
-                $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -KeySpec Signature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -KeyLength 2048 -Provider "Microsoft Enhanced Cryptographic Provider v1.5" -TextExtension $textExt
-                Write-Host "    已用传统提供程序新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
-            } catch {
-                $t2err = $_.Exception.Message
-                Write-Host "    传统提供程序也失败，改用 .NET 密钥直签兜底 ..." -ForegroundColor Yellow
+            # T2：传统 CAPI CSP 轮试——不同机器注册表里 CSP 注册项可能部分缺失
+            foreach ($csp in @("Microsoft Enhanced Cryptographic Provider v1.5", "Microsoft Strong Cryptographic Provider", "Microsoft Base Cryptographic Provider v1.5")) {
+                try {
+                    $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -KeySpec Signature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -KeyLength 2048 -Provider $csp -TextExtension $textExt
+                    Write-Host ('    已用 {0} 新建证书（5 年有效）：{1}' -f $csp, $cert.Thumbprint) -ForegroundColor Yellow
+                    break
+                } catch {
+                    $t2err = ('{0} / {1}' -f $t2err, $_.Exception.Message).Trim(' /')
+                }
             }
+            if (-not $cert) { Write-Host "    传统提供程序全部无效，改用 .NET 密钥直签兜底 ..." -ForegroundColor Yellow }
         }
         if (-not $cert) {
-            # .NET CertificateRequest + CAPI RSA 直签：完全绕开 CertEnroll
+            # T3：.NET CertificateRequest + CAPI RSA 直签，完全绕开 CertEnroll。
+            # 注意 RSASignaturePadding 位于 System.Security.Cryptography 命名空间
+            # （不在 X509Certificates 下，误加前缀时 PS5.1 报"找不到类型"）
             try {
                 $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider(2048)
-                $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($certSubject, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.X509Certificates.RSASignaturePadding]::Pkcs1)
+                $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($certSubject, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
                 $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension([System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
                 $oids = New-Object System.Security.Cryptography.OidCollection
                 $null = $oids.Add("1.3.6.1.5.5.7.3.3")
@@ -252,8 +260,48 @@ if (-not $NoMsix) {
                 $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $tmpCert.Thumbprint } | Select-Object -First 1
                 Write-Host "    已用 .NET 直签兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
             } catch {
-                throw "证书创建三种方式全部失败。① $t1err ② $t2err ③ $($_.Exception.Message)。常见原因：密钥容器服务异常（重启 Cryptographic Services 服务或重启电脑后重试）、组策略 FIPS 限制；或加 -NoMsix 先跳过 MSIX 打包。"
+                $t3err = $_.Exception.Message
+                Write-Host "    .NET 直签也失败，改用 certreq 兜底 ..." -ForegroundColor Yellow
             }
+        }
+        if (-not $cert) {
+            # T4：certreq.exe + INF 自签证书——独立进程、传统 CAPI 路径，
+            # 与 CertEnroll cmdlet 实现互异，前三级挂掉时仍可能成功
+            try {
+                $prePrints = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Object { $_.Thumbprint })
+                $infPath = Join-Path $env:TEMP "qs-msix-cert.inf"
+                $reqPath = Join-Path $env:TEMP "qs-msix-cert.req"
+                $infText = @"
+[Version]
+Signature="`$Windows NT`$"
+
+[NewRequest]
+Subject = "CN=QingShu.Toolkit"
+KeyLength = 2048
+KeySpec = 2
+Exportable = TRUE
+MachineKeySet = FALSE
+KeyUsage = 0x80
+RequestType = Cert
+ValidityPeriod = Years
+ValidityPeriodUnits = 5
+
+[EnhancedKeyUsageExtension]
+OID = 1.3.6.1.5.5.7.3.3
+"@
+                Set-Content -Path $infPath -Value $infText -Encoding ASCII
+                $certReqOut = & certreq.exe -new $infPath $reqPath 2>&1
+                if ($LASTEXITCODE -ne 0) { throw ('certreq exit={0}：{1}' -f $LASTEXITCODE, ($certReqOut -join ' ')) }
+                $cert = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $prePrints -notcontains $_.Thumbprint -and $_.Subject -eq $certSubject }) |
+                    Sort-Object NotAfter -Descending | Select-Object -First 1
+                if (-not $cert) { throw "certreq 报成功但未在 CurrentUser\My 找到新证书" }
+                Write-Host "    已用 certreq 兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+            } catch {
+                $t4err = $_.Exception.Message
+            }
+        }
+        if (-not $cert) {
+            throw ('证书创建四级方式全部失败。① {0} ② {1} ③ {2} ④ {3}。处置建议：先重启电脑再重试（多数 NTE_FAIL 属密钥服务临时故障）；仍失败可尝试管理员 PowerShell 执行 Restart-Service CryptSvc，并检查 %APPDATA%\Microsoft\Crypto\RSA 目录是否可写（可将其重命名后重试）；排查第三方杀软或组策略加密限制；或加 -NoMsix 先跳过 MSIX 打包（zip 与应用内自动更新不受影响）。' -f $t1err, $t2err, $t3err, $t4err)
         }
     }
 
