@@ -151,7 +151,7 @@ if (-not $NoMsix) {
         }
     }
     if (-not $toolRoot) {
-        # NuGet 全局缓存兑底（装过含 Microsoft.Windows.SDK.BuildTools 引用的项目即有）
+        # NuGet 全局缓存兜底（装过含 Microsoft.Windows.SDK.BuildTools 引用的项目即有）
         $nugetGlobal = ""
         try {
             $locLine = (& dotnet nuget locals global-packages --list) -join " "
@@ -169,7 +169,7 @@ if (-not $NoMsix) {
         }
     }
     if (-not $toolRoot) {
-        # 最后兑底：下载微软官方打包工具包（一次性，缓存到本地复用）
+        # 最后兜底：下载微软官方打包工具包（一次性，缓存到本地复用）
         $toolsCache = Join-Path $env:LOCALAPPDATA "QingShu.Toolkit\sdk-build-tools"
         $marker = Join-Path $toolsCache "makeappx.located"
         if (Test-Path $marker) {
@@ -203,12 +203,28 @@ if (-not $NoMsix) {
     }
     Write-Host "    打包工具：$toolRoot"
 
-    # 签名证书按主题复用（各版本签名一致 → 用户只需装一次证书），没有才新建
+    # 签名证书按主题复用（各版本签名一致 → 用户只需装一次证书），没有才新建。
+    # 复用候选必须私钥可打开——KSP 持久化失败的机器会出现"证书在、密钥容器丢"
+    # 的废证书（certutil 显示'找不到储存的密钥集'），必须排除并在新建前清理
     $certSubject = "CN=QingShu.Toolkit"
-    $cert = Get-ChildItem Cert:\CurrentUser\My |
-        Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
-        Sort-Object NotAfter -Descending | Select-Object -First 1
+    $cert = $null
+    foreach ($cand in @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+            Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
+            Sort-Object NotAfter -Descending)) {
+        try {
+            if ($cand.HasPrivateKey -and $cand.PrivateKey) { $cert = $cand; break }
+        } catch { }
+    }
     if (-not $cert) {
+        foreach ($junk in @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+                Where-Object { $_.Subject -eq $certSubject })) {
+            $junkDead = $false
+            try { if (-not $junk.HasPrivateKey -or -not $junk.PrivateKey) { $junkDead = $true } } catch { $junkDead = $true }
+            if ($junkDead) {
+                Remove-Item ('Cert:\CurrentUser\My\{0}' -f $junk.Thumbprint) -Force
+                Write-Host ('    已清理私钥丢失的废证书：{0}' -f $junk.Thumbprint) -ForegroundColor Yellow
+            }
+        }
         # 四级兜底：部分机器 CertEnroll/CNG 创建密钥报 0x80090020 NTE_FAIL
         # （KSP 服务异常/密钥存储损坏/组策略限制），逐级降级直到成功
         $textExt = @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
@@ -238,6 +254,9 @@ if (-not $NoMsix) {
         }
         if (-not $cert) {
             # T3：.NET CertificateRequest + CAPI RSA 直签，完全绕开 CertEnroll。
+            # 私钥用 RSACryptoServiceProvider（CAPI 持久容器），刻意不走 CNG KSP——
+            # KSP 持久化失败的机器（现场：证书入库而密钥容器丢失）靠这条绕行；
+            # 直存后必须回查并验证私钥可打开，验证不过视为失败交给 T4。
             # 注意 RSASignaturePadding 位于 System.Security.Cryptography 命名空间
             # （不在 X509Certificates 下，误加前缀时 PS5.1 报"找不到类型"）
             try {
@@ -249,15 +268,13 @@ if (-not $NoMsix) {
                 $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($oids, $false)))
                 $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($false, $false, 0, $false)))
                 $selfSigned = $req.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(5))
-                $pfxBytes = $selfSigned.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "qs-local-import")
-                $tmpCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-                $tmpCert.Import($pfxBytes, "qs-local-import", ([System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable))
-                $tmpCert.FriendlyName = "QingShu.Toolkit MSIX"
                 $store = New-Object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
                 $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $store.Add($tmpCert)
+                $store.Add($selfSigned)
                 $store.Close()
-                $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $tmpCert.Thumbprint } | Select-Object -First 1
+                $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $selfSigned.Thumbprint } | Select-Object -First 1
+                try { if (-not $cert -or -not $cert.HasPrivateKey -or -not $cert.PrivateKey) { $cert = $null } } catch { $cert = $null }
+                if (-not $cert) { throw "证书已入库但私钥未持久化（密钥容器丢失）" }
                 Write-Host "    已用 .NET 直签兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
             } catch {
                 $t3err = $_.Exception.Message
@@ -297,6 +314,8 @@ OID = 1.3.6.1.5.5.7.3.3
                 $cert = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $prePrints -notcontains $_.Thumbprint -and $_.Subject -eq $certSubject }) |
                     Sort-Object NotAfter -Descending | Select-Object -First 1
                 if (-not $cert) { throw "certreq 报成功但未在 CurrentUser\My 找到新证书" }
+                try { if (-not $cert.HasPrivateKey -or -not $cert.PrivateKey) { $cert = $null } } catch { $cert = $null }
+                if (-not $cert) { throw "certreq 证书已入库但私钥未持久化" }
                 Write-Host "    已用 certreq 兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
             } catch {
                 $t4err = $_.Exception.Message
@@ -381,7 +400,7 @@ OID = 1.3.6.1.5.5.7.3.3
     }
     if (-not $signed) {
         & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $msixPath | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw ('SignTool 签名失败（exit={0}）。PFX 路径错误：{1}。可运行 certutil -user -store My {2} 检查证书私钥。' -f $LASTEXITCODE, $pfxErr, $cert.Thumbprint) }
+        if ($LASTEXITCODE -ne 0) { throw ('SignTool 签名失败（exit={0}）。PFX 路径错误：{1}。若 certutil -user -store My {2} 显示"找不到储存的密钥集"，表示证书私钥已丢失——新版脚本已会自动清理废证书并重建，拉取最新代码重跑即可。' -f $LASTEXITCODE, $pfxErr, $cert.Thumbprint) }
     }
     Remove-Item $stage -Recurse -Force
     $msixSize = "{0:N1} MB" -f ((Get-Item $msixPath).Length / 1048576)
