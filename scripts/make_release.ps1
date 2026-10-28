@@ -34,7 +34,11 @@
     只构建并打包，不创建 Release（上传前本地验收）。
 
 .PARAMETER NoMsix
-    跳过 MSIX 打包（需 Windows SDK 的 MakeAppx/SignTool；缺省会打包签名 MSIX 并附 .cer）。
+    跳过 MSIX 打包。缺省会打包签名 MSIX 并附 .cer。
+
+.PARAMETER SdkBin
+    手动指定含 x64\makeappx.exe 与 x64\signtool.exe 的目录。
+    缺省自动查找：Windows Kits 路径/注册表 → NuGet 缓存 → 从 NuGet 下载官方打包工具。
 #>
 [CmdletBinding()]
 param(
@@ -43,7 +47,8 @@ param(
     [switch]$Stable,
     [switch]$SkipBuild,
     [switch]$PackOnly,
-    [switch]$NoMsix
+    [switch]$NoMsix,
+    [string]$SdkBin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,17 +103,100 @@ if (-not $NoMsix) {
     }
     $msixVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 
-    $kitRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-    if (-not (Test-Path $kitRoot)) { throw "未找到 Windows SDK（$kitRoot），无法打包 MSIX。可安装 VS2022「Windows 应用程序开发」工作负载，或加 -NoMsix 跳过。" }
-    $sdkBin = Get-ChildItem $kitRoot -Directory |
-        Where-Object { $_.Name -match '^\d+\.' } |
-        Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $sdkBin) { throw "Windows SDK 目录下没有版本号子目录，无法定位 MakeAppx。可加 -NoMsix 跳过。" }
-    $makeappx = Join-Path $sdkBin.FullName "x64\makeappx.exe"
-    $signtool = Join-Path $sdkBin.FullName "x64\signtool.exe"
-    foreach ($tool in @($makeappx, $signtool)) {
-        if (-not (Test-Path $tool)) { throw "缺少工具：$tool（Windows SDK 未装全）。可加 -NoMsix 跳过 MSIX。" }
+    # 定位 MakeAppx/SignTool：-SdkBin 手动指定 → Windows Kits 路径/注册表 →
+    # NuGet 全局缓存 → 从 NuGet 下载微软官方 Microsoft.Windows.SDK.BuildTools。
+    # 注意：Windows App SDK（构建 WinUI 用）不提供 MakeAppx，它们是两个东西。
+    $makeappx = ""
+    $signtool = ""
+    $toolRoot = ""
+    if ($SdkBin) {
+        if ((Test-Path (Join-Path $SdkBin "x64\makeappx.exe")) -and (Test-Path (Join-Path $SdkBin "x64\signtool.exe"))) {
+            $toolRoot = $SdkBin
+        } else { throw "-SdkBin 指定目录下没有 x64\makeappx.exe / x64\signtool.exe：$SdkBin" }
     }
+    if (-not $toolRoot) {
+        $searchDirs = @(
+            (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"),
+            (Join-Path $env:ProgramFiles "Windows Kits\10\bin")
+        )
+        foreach ($regPath in @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Microsoft SDKs\Windows\v10.0",
+            "HKCU:\SOFTWARE\Microsoft\Microsoft SDKs\Windows\v10.0",
+            "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots",
+            "HKCU:\SOFTWARE\Microsoft\Windows Kits\Installed Roots"
+        )) {
+            try {
+                $props = Get-ItemProperty -Path $regPath -ErrorAction Stop
+                $root10 = $props.InstallationFolder
+                if (-not $root10) { $root10 = $props.KitsRoot10 }
+                if ($root10) { $searchDirs += (Join-Path $root10 "bin") }
+            } catch { }
+        }
+        foreach ($dir in $searchDirs) {
+            if ($toolRoot) { break }
+            if (-not (Test-Path $dir)) { continue }
+            if ((Test-Path (Join-Path $dir "x64\makeappx.exe")) -and (Test-Path (Join-Path $dir "x64\signtool.exe"))) {
+                $toolRoot = $dir
+                break
+            }
+            $hit = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+                Where-Object { (Test-Path (Join-Path $_.FullName "x64\makeappx.exe")) -and (Test-Path (Join-Path $_.FullName "x64\signtool.exe")) } |
+                Sort-Object Name -Descending | Select-Object -First 1
+            if ($hit) { $toolRoot = $hit.FullName }
+        }
+    }
+    if (-not $toolRoot) {
+        # NuGet 全局缓存兑底（装过含 Microsoft.Windows.SDK.BuildTools 引用的项目即有）
+        $nugetGlobal = ""
+        try {
+            $locLine = (& dotnet nuget locals global-packages --list) -join " "
+            if ($locLine -match 'global-packages:\s*(.+)$') { $nugetGlobal = $Matches[1].Trim() }
+        } catch { }
+        if ($nugetGlobal -and (Test-Path (Join-Path $nugetGlobal "microsoft.windows.sdk.build.tools"))) {
+            $pkgRoot = Join-Path $nugetGlobal "microsoft.windows.sdk.build.tools"
+            $hit = Get-ChildItem $pkgRoot -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.DirectoryName -like "*x64" } |
+                Sort-Object FullName -Descending | Select-Object -First 1
+            if ($hit) {
+                $toolRoot = $hit.DirectoryName
+                Write-Host "    已从 NuGet 缓存定位打包工具：$toolRoot" -ForegroundColor Yellow
+            }
+        }
+    }
+    if (-not $toolRoot) {
+        # 最后兑底：下载微软官方打包工具包（一次性，缓存到本地复用）
+        $toolsCache = Join-Path $env:LOCALAPPDATA "QingShu.Toolkit\sdk-build-tools"
+        $marker = Join-Path $toolsCache "makeappx.located"
+        if (Test-Path $marker) {
+            $toolRoot = (Get-Content $marker -Raw).Trim()
+        } else {
+            Write-Host "==> 本机未安装 Windows 10/11 SDK，改从 NuGet 下载微软官方打包工具（约 70MB，仅一次）..." -ForegroundColor Yellow
+            $downloaded = $false
+            foreach ($pkgVer in @("10.0.28000.2705", "10.0.28000.2526", "10.0.22621.756")) {
+                $zipFile = Join-Path $env:TEMP "winsdk-buildtools-$pkgVer.zip"
+                try {
+                    Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.build.tools/$pkgVer/microsoft.windows.sdk.build.tools.$pkgVer.nupkg" -OutFile $zipFile -UseBasicParsing
+                    $downloaded = $true
+                    break
+                } catch { }
+            }
+            if (-not $downloaded) { throw "无法从 NuGet 下载打包工具且本机无 Windows 10/11 SDK。解决：VS 安装器 → 单个组件 → 勾选『Windows 10/11 SDK』，或加 -NoMsix 跳过，或 -SdkBin 手动指定。" }
+            New-Item -ItemType Directory -Path $toolsCache -Force | Out-Null
+            Expand-Archive -Path $zipFile -DestinationPath $toolsCache -Force
+            Remove-Item $zipFile -Force
+            $hit = Get-ChildItem $toolsCache -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.DirectoryName -like "*x64" } | Select-Object -First 1
+            if (-not $hit) { throw "下载的工具包内容异常（未找到 x64 makeappx.exe）。" }
+            $toolRoot = $hit.DirectoryName
+            Set-Content -Path $marker -Value $toolRoot -Encoding ASCII
+        }
+    }
+    $makeappx = Join-Path $toolRoot "x64\makeappx.exe"
+    $signtool = Join-Path $toolRoot "x64\signtool.exe"
+    foreach ($tool in @($makeappx, $signtool)) {
+        if (-not (Test-Path $tool)) { throw "缺少工具：$tool。可加 -NoMsix 跳过 MSIX。" }
+    }
+    Write-Host "    打包工具：$toolRoot"
 
     # 签名证书按主题复用（各版本签名一致 → 用户只需装一次证书），没有才新建
     $certSubject = "CN=QingShu.Toolkit"
