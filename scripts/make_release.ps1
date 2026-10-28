@@ -342,7 +342,7 @@ if ($existing -and $existing.id) {
         tag_name         = $Tag
         name             = "青枢工具箱 $version"
         prerelease       = [bool]$isPrerelease
-        body             = "青枢工具箱 $version 发布。zip：解压替换即可使用，应用内「设置 → 自动更新」可直接在线升级。MSIX（手动安装格式）：先双击 .cer 把证书装到「本地计算机 → 受信任的人」（或管理员 PowerShell 执行 certutil -addstore TrustedPeople <cer文件名>），再双击 .msix 安装；应用内自动更新仅支持 zip 版。"
+        body             = "青枢工具箱 $version 发布。zip：解压替换即可使用，应用内「设置 → 自动更新」可直接在线升级。MSIX（手动安装格式）：先双击 .cer 把证书装到「本地计算机 → 受信任的人」（或管理员 PowerShell 执行 certutil -addstore TrustedPeople <cer文件名>），再双击 .msix 安装；Windows 11 开启「智能应用控制」会拦截自签名 MSIX，需在安全中心关闭后再装；应用内自动更新仅支持 zip 版。"
     } | ConvertTo-Json
     Write-Host "==> 创建 Release $Tag ..." -ForegroundColor Cyan
     $rel = Invoke-RestMethod -Method Post -Headers $headers -ContentType "application/json" `

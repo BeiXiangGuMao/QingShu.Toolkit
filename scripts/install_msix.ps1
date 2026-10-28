@@ -98,6 +98,14 @@ if (-not $trusted) {
 
 # ---- 6. 安装 ----
 if (-not $CertOnly) {
+    # 智能应用控制（SAC，Windows 11）开启时会按云端信誉拦截自签名包，且无"仍要运行"按钮
+    try {
+        $sac = (Get-CimInstance -Namespace root\Microsoft\Windows\Defender -ClassName MSFT_MpComputerStatus -ErrorAction Stop).SmartAppControlState
+    } catch { $sac = "" }
+    if ($sac -eq "ON" -or $sac -eq "EVAL") {
+        Write-Host "==> 注意：智能应用控制处于 $sac 状态，可能拦截自签名 MSIX（提示「智能应用控制已阻止」）" -ForegroundColor Yellow
+        Write-Host "    关闭路径：Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置 → 关（关闭不可逆）。"
+    }
     Write-Host "==> Add-AppxPackage 安装中（约十几秒）..." -ForegroundColor Cyan
     try {
         Add-AppxPackage -Path $Msix
@@ -112,7 +120,9 @@ if (-not $CertOnly) {
                 Write-Host "    安装成功！开始菜单搜索「青枢工具箱」即可启动。" -ForegroundColor Green
             } catch {
                 Write-Host "    重试仍失败：$($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "    请运行 Get-AppPackageLog -Latest | Select -Last 20 查看部署日志详情。"
+                Write-Host "    若刚才弹出「智能应用控制已阻止」：这是 Windows 11 SAC 拦截自签名包，"
+                Write-Host "    需在安全中心 → 应用和浏览器控制 → 智能应用控制设置关闭后再重试。"
+                Write-Host "    部署日志：Get-AppPackageLog -Latest | Select -Last 20"
                 throw
             }
         } elseif ($msg -match "0x80073D06") {
