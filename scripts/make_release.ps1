@@ -227,7 +227,7 @@ if (-not $NoMsix) {
             # T2：传统 CAPI CSP 轮试——不同机器注册表里 CSP 注册项可能部分缺失
             foreach ($csp in @("Microsoft Enhanced Cryptographic Provider v1.5", "Microsoft Strong Cryptographic Provider", "Microsoft Base Cryptographic Provider v1.5")) {
                 try {
-                    $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -KeySpec Signature -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -KeyLength 2048 -Provider $csp -TextExtension $textExt
+                    $cert = New-SelfSignedCertificate -Type Custom -Subject $certSubject -KeyUsage DigitalSignature -KeySpec KeyExchange -FriendlyName "QingShu.Toolkit MSIX" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -KeyLength 2048 -Provider $csp -TextExtension $textExt
                     Write-Host ('    已用 {0} 新建证书（5 年有效）：{1}' -f $csp, $cert.Thumbprint) -ForegroundColor Yellow
                     break
                 } catch {
@@ -278,7 +278,9 @@ Signature="`$Windows NT`$"
 [NewRequest]
 Subject = "CN=QingShu.Toolkit"
 KeyLength = 2048
-KeySpec = 2
+; KeySpec must be 1 (AT_KEYEXCHANGE): KeySpec=2 (AT_SIGNATURE) private keys
+; cannot be exported to PFX, breaking Export-PfxCertificate later
+KeySpec = 1
 Exportable = TRUE
 MachineKeySet = FALSE
 KeyUsage = 0x80
@@ -359,14 +361,28 @@ OID = 1.3.6.1.5.5.7.3.3
     & $makeappx pack /o /d $stage /p $msixPath | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx 打包失败（exit=$LASTEXITCODE）" }
 
-    # SignTool 签名（PFX 仅本地临时使用，不随 Release 上传）
+    # SignTool 签名：优先导 PFX 文件签；私钥不可 PFX 导出（如历史 AT_SIGNATURE
+    # 存量证书）时退回按 SHA1 指纹直接引用存储证书签（PFX 仅本地临时用，不上传）
     $pfxPath = Join-Path $env:TEMP "qs-msix-sign.pfx"
     if (Test-Path $pfxPath) { Remove-Item $pfxPath -Force }
     $pfxPwd = ConvertTo-SecureString -String "qs-toolkit-local-pfx" -Force -AsPlainText
-    Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pfxPwd | Out-Null
-    & $signtool sign /fd SHA256 /f $pfxPath /p "qs-toolkit-local-pfx" $msixPath | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "SignTool 签名失败（exit=$LASTEXITCODE）" }
-    Remove-Item $pfxPath -Force
+    $signed = $false
+    $pfxErr = ""
+    try {
+        Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pfxPwd -ErrorAction Stop | Out-Null
+    } catch {
+        $pfxErr = $_.Exception.Message
+        Write-Host "    私钥不可导出 PFX，改按 SHA1 指纹直签存储证书 ..." -ForegroundColor Yellow
+    }
+    if (-not $pfxErr) {
+        & $signtool sign /fd SHA256 /f $pfxPath /p "qs-toolkit-local-pfx" $msixPath | Out-Null
+        if ($LASTEXITCODE -eq 0) { $signed = $true }
+        Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $signed) {
+        & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $msixPath | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw ('SignTool 签名失败（exit={0}）。PFX 路径错误：{1}。可运行 certutil -user -store My {2} 检查证书私钥。' -f $LASTEXITCODE, $pfxErr, $cert.Thumbprint) }
+    }
     Remove-Item $stage -Recurse -Force
     $msixSize = "{0:N1} MB" -f ((Get-Item $msixPath).Length / 1048576)
     Write-Host "    完成（$msixSize）+ 证书 $cerPath" -ForegroundColor Green
