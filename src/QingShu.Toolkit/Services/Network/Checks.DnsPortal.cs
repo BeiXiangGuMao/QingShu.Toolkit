@@ -14,7 +14,7 @@ using QingShu.Toolkit.Models;
 namespace QingShu.Toolkit.Services.Network;
 
 /// <summary>
-/// 第二层：DNS / 城域网认证 / 校园内网 / 互联网连通（11 项）。
+/// 第二层：DNS / 城域网认证 / 校园内网 / 互联网连通（10 项）。
 /// </summary>
 public static partial class NetworkChecks
 {

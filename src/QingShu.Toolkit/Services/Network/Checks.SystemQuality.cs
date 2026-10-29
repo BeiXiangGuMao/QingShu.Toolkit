@@ -271,6 +271,10 @@ public static partial class NetworkChecks
 
             // payload = MTU - 28(IP+ICMP头)
             var (payload, mtu) = await ProbeAsync(gw, 1472).ConfigureAwait(false);
+            if (payload == 0)
+                // 全部载荷探测失败：多为网关禁 ICMP 或链路不通（连通性问题由 gateway.reachable 等项定性），
+                // 不能推断出「MTU 偏小（约 0）」这类误导结论，如实报跳过。
+                return CheckOutcome.Skip("网关未响应任何 MTU 探测包（可能禁 ICMP 或链路不通），无法推断 MTU；若网关连通性检查正常，此项可忽略。");
             var details = new List<string> { $"测试有效载荷 {payload} 字节（DF 置位）→ 推断 MTU {mtu}" };
             if (mtu >= 1500)
                 return CheckOutcome.Pass("链路 MTU 为标准 1500。", details.ToArray());

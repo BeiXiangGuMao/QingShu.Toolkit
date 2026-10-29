@@ -74,7 +74,7 @@ public sealed class NetworkRepairService : INetworkRepairService
 
         if (Has("clock.skew"))
             plan.Add(new RepairAction("resync_clock", "同步系统时间",
-                "向时间服务器强制同步系统时钟，修复证书错误与认证失败。", true, false,
+                "向时间服务器强制同步系统时钟，修复证书错误与认证失败；同步失败常见于时间服务未运行，脚本会自动启动时间服务后重试一次。", true, false,
                 new[] { "clock.skew" }));
 
         if (Has("proxy.system"))
@@ -281,7 +281,9 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "resync_clock":
-                    sb.AppendLine($"w32tm /resync /force >nul 2>&1 && echo ##OK##{a.Id} || (net time \\\\localhost /set /y >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id})");
+                    // 失败回退：先启动 Windows 时间服务再重试一次。旧写法 net time \\\\localhost /set /y
+                    // 是「向本机自身时钟对时」的空操作，无论是否真同步成功都会返回成功（假成功掩盖真实故障）。
+                    sb.AppendLine($"w32tm /resync /force >nul 2>&1 && echo ##OK##{a.Id} || (net start w32time >nul 2>&1 & w32tm /resync /force >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id})");
                     break;
                 case "proxy_winhttp":
                     sb.AppendLine($"netsh winhttp reset proxy >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
@@ -297,13 +299,13 @@ public sealed class NetworkRepairService : INetworkRepairService
                 case "dns_set_public":
                     if (adapterName.Length > 0)
                     {
-                        sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1");
-                        sb.AppendLine($"netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                        // 链式：主 DNS 设置失败即 FAIL，不再执行次要操作，避免被 add 次 DNS 的成功掩盖成 OK
+                        sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1 && netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     }
                     break;
                 case "tcp_autotuning":
-                    sb.AppendLine("netsh int tcp set global autotuninglevel=normal >nul 2>&1");
-                    sb.AppendLine("netsh int tcp set global rss=enabled >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 两条都必须成功：主设置（autotuninglevel）失败不能被次设置（rss）成功掩盖成 OK
+                    sb.AppendLine("(netsh int tcp set global autotuninglevel=normal >nul 2>&1) && (netsh int tcp set global rss=enabled >nul 2>&1) && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "disable_delivopt":
                     sb.AppendLine("reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization\" /v DODownloadMode /t REG_DWORD /d 100 /f >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
@@ -325,7 +327,10 @@ public sealed class NetworkRepairService : INetworkRepairService
             }
         }
         sb.AppendLine("echo ##DONE##");
-        File.WriteAllText(script, sb.ToString(), System.Text.Encoding.UTF8);
+        // cmd.exe 不容错 UTF-8 BOM：带 BOM 时首行 "@echo off" 会被 BOM 字节污染为非法命令
+        // （报错 + 回显失控）。chcp 65001 在第 2 行生效，此后中文 echo 正常，故文件本体须无 BOM
+        // （与 CleanupService 提权脚本同规格）。
+        File.WriteAllText(script, sb.ToString(), new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return (script, outLog);
     }
 }
