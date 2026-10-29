@@ -207,6 +207,7 @@ if (-not $NoMsix) {
     # 复用候选必须私钥可打开——KSP 持久化失败的机器会出现"证书在、密钥容器丢"
     # 的废证书（certutil 显示'找不到储存的密钥集'），必须排除并在新建前清理
     $certSubject = "CN=QingShu.Toolkit"
+    $certPfxPath = ""
     $cert = $null
     foreach ($cand in @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
             Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
@@ -253,31 +254,63 @@ if (-not $NoMsix) {
             if (-not $cert) { Write-Host "    传统提供程序全部无效，改用 .NET 密钥直签兜底 ..." -ForegroundColor Yellow }
         }
         if (-not $cert) {
-            # T3：.NET CertificateRequest + CAPI RSA 直签，完全绕开 CertEnroll。
-            # 私钥用 RSACryptoServiceProvider（CAPI 持久容器），刻意不走 CNG KSP——
-            # KSP 持久化失败的机器（现场：证书入库而密钥容器丢失）靠这条绕行；
-            # 直存后必须回查并验证私钥可打开，验证不过视为失败交给 T4。
+            # T3：.NET 直签全内存路径——密钥生成/自签/导 PFX 全程在内存完成，
+            # 不依赖证书存储与 KSP/CAPI 持久化（CertEnroll/KSP/certreq 全挂的
+            # 极端机器上的救命路径）。密钥源两级：CAPI 容器 → CNG 临时密钥。
             # 注意 RSASignaturePadding 位于 System.Security.Cryptography 命名空间
             # （不在 X509Certificates 下，误加前缀时 PS5.1 报"找不到类型"）
-            try {
-                $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider(2048)
-                $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($certSubject, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension([System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
-                $oids = New-Object System.Security.Cryptography.OidCollection
-                $null = $oids.Add("1.3.6.1.5.5.7.3.3")
-                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($oids, $false)))
-                $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($false, $false, 0, $false)))
-                $selfSigned = $req.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(5))
-                $store = New-Object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-                $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $store.Add($selfSigned)
-                $store.Close()
-                $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $selfSigned.Thumbprint } | Select-Object -First 1
-                try { if (-not $cert -or -not $cert.HasPrivateKey -or -not $cert.PrivateKey) { $cert = $null } } catch { $cert = $null }
-                if (-not $cert) { throw "证书已入库但私钥未持久化（密钥容器丢失）" }
-                Write-Host "    已用 .NET 直签兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
-            } catch {
-                $t3err = $_.Exception.Message
+            $certPfxPath = Join-Path $env:TEMP "qs-msix-memory.pfx"
+            if (Test-Path $certPfxPath) { Remove-Item $certPfxPath -Force }
+            $errCapi = ""
+            $errCng = ""
+            foreach ($keySrc in @("capi", "cng")) {
+                try {
+                    if ($keySrc -eq "capi") {
+                        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider(2048)
+                    } else {
+                        # CNG 临时密钥（Ephemeral）：完全不落盘，绕开一切持久化故障
+                        $kp = New-Object System.Security.Cryptography.CngKeyCreationParameters
+                        $kp.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::AllowExport -bor [System.Security.Cryptography.CngExportPolicies]::AllowPlaintextExport
+                        $cngKey = [System.Security.Cryptography.CngKey]::Create([System.Security.Cryptography.CngAlgorithm]::Rsa, $null, $kp)
+                        $rsa = New-Object System.Security.Cryptography.RSACng($cngKey)
+                    }
+                    $req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($certSubject, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+                    $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509KeyUsageExtension([System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature, $true)))
+                    $oids = New-Object System.Security.Cryptography.OidCollection
+                    $null = $oids.Add("1.3.6.1.5.5.7.3.3")
+                    $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension($oids, $false)))
+                    $req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($false, $false, 0, $false)))
+                    $selfSigned = $req.CreateSelfSigned([DateTimeOffset]::Now.AddDays(-1), [DateTimeOffset]::Now.AddYears(5))
+                    # 导出带私钥 PFX（纯内存序列化，签名凭据不依赖任何密钥存储）
+                    [System.IO.File]::WriteAllBytes($certPfxPath, $selfSigned.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "qs-toolkit-local-pfx"))
+                    $cert = $selfSigned
+                    break
+                } catch {
+                    if ($keySrc -eq "capi") { $errCapi = $_.Exception.Message } else { $errCng = $_.Exception.Message }
+                }
+            }
+            if ($cert) {
+                # Best-effort 入库（成功则后续运行复用同一证书，用户只需装一次 .cer）。
+                # 入库后强制回查验证私钥可打开——假入库（KSP 静默丢私钥）时降级为
+                # 临时证书模式：本轮照常出包，但证书每轮重建、.cer 需重新安装
+                $storeOk = $false
+                try {
+                    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::My, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+                    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                    $store.Add($cert)
+                    $store.Close()
+                    $inStore = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $cert.Thumbprint } | Select-Object -First 1
+                    if ($inStore -and $inStore.HasPrivateKey -and $inStore.PrivateKey) { $storeOk = $true }
+                } catch { $storeOk = $false }
+                if ($storeOk) {
+                    Write-Host "    已用 .NET 直签兜底新建证书（5 年有效）：$($cert.Thumbprint)" -ForegroundColor Yellow
+                } else {
+                    Write-Host "    本机证书存储无法可靠保存私钥（KSP 异常），改用临时证书签名——本轮照常出包；下次发布将重建证书，届时需重新安装 .cer" -ForegroundColor Yellow
+                }
+            } else {
+                $t3err = ('{0} / {1}' -f $errCapi, $errCng).Trim(' /')
+                if (Test-Path $certPfxPath) { Remove-Item $certPfxPath -Force -ErrorAction SilentlyContinue }
+                $certPfxPath = ""
                 Write-Host "    .NET 直签也失败，改用 certreq 兜底 ..." -ForegroundColor Yellow
             }
         }
@@ -380,23 +413,33 @@ OID = 1.3.6.1.5.5.7.3.3
     & $makeappx pack /o /d $stage /p $msixPath | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "MakeAppx 打包失败（exit=$LASTEXITCODE）" }
 
-    # SignTool 签名：优先导 PFX 文件签；私钥不可 PFX 导出（如历史 AT_SIGNATURE
-    # 存量证书）时退回按 SHA1 指纹直接引用存储证书签（PFX 仅本地临时用，不上传）
-    $pfxPath = Join-Path $env:TEMP "qs-msix-sign.pfx"
-    if (Test-Path $pfxPath) { Remove-Item $pfxPath -Force }
-    $pfxPwd = ConvertTo-SecureString -String "qs-toolkit-local-pfx" -Force -AsPlainText
+    # SignTool 签名三级：① T3 全内存路径已产出的 PFX 直接用；
+    # ② 存储证书导 PFX；③ 私钥不可导时按 SHA1 指纹直签存储证书
+    # （PFX 仅本地临时使用，不随 Release 上传）
     $signed = $false
     $pfxErr = ""
-    try {
-        Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pfxPwd -ErrorAction Stop | Out-Null
-    } catch {
-        $pfxErr = $_.Exception.Message
-        Write-Host "    私钥不可导出 PFX，改按 SHA1 指纹直签存储证书 ..." -ForegroundColor Yellow
+    $memPfxTried = $false
+    if ($certPfxPath -and (Test-Path $certPfxPath)) {
+        $memPfxTried = $true
+        & $signtool sign /fd SHA256 /f $certPfxPath /p "qs-toolkit-local-pfx" $msixPath | Out-Null
+        if ($LASTEXITCODE -eq 0) { $signed = $true } else { $pfxErr = "内存 PFX 签名 exit=$LASTEXITCODE" }
+        Remove-Item $certPfxPath -Force -ErrorAction SilentlyContinue
     }
-    if (-not $pfxErr) {
-        & $signtool sign /fd SHA256 /f $pfxPath /p "qs-toolkit-local-pfx" $msixPath | Out-Null
-        if ($LASTEXITCODE -eq 0) { $signed = $true }
-        Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+    if (-not $signed -and -not $memPfxTried) {
+        $pfxPath = Join-Path $env:TEMP "qs-msix-sign.pfx"
+        if (Test-Path $pfxPath) { Remove-Item $pfxPath -Force }
+        $pfxPwd = ConvertTo-SecureString -String "qs-toolkit-local-pfx" -Force -AsPlainText
+        try {
+            Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pfxPwd -ErrorAction Stop | Out-Null
+        } catch {
+            $pfxErr = $_.Exception.Message
+            Write-Host "    私钥不可导出 PFX，改按 SHA1 指纹直签存储证书 ..." -ForegroundColor Yellow
+        }
+        if (-not $pfxErr) {
+            & $signtool sign /fd SHA256 /f $pfxPath /p "qs-toolkit-local-pfx" $msixPath | Out-Null
+            if ($LASTEXITCODE -eq 0) { $signed = $true }
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+        }
     }
     if (-not $signed) {
         & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $msixPath | Out-Null
