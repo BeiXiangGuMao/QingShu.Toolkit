@@ -83,6 +83,9 @@
                 <NavigationViewItem Tag="popupguard" Content="弹窗拦截">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Tag="usb" Content="U盘工具">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="MapDrive" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Tag="logs" Content="日志查看">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Clock" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

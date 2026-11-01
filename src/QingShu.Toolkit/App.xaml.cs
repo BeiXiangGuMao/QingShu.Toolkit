@@ -15,6 +15,7 @@ using QingShu.Toolkit.Services.Power;
 using QingShu.Toolkit.Services.Popup;
 using QingShu.Toolkit.Services.Reporting;
 using QingShu.Toolkit.Services.Update;
+using QingShu.Toolkit.Services.Usb;
 using QingShu.Toolkit.ViewModels;
 using QingShu.Toolkit.Views;
 
@@ -99,6 +100,12 @@ public partial class App : Application
         services.AddSingleton<IImScanService, ImScanService>();
         services.AddSingleton<ILargeFileScanService, LargeFileScanService>();
 
+        // U盘工具
+        services.AddSingleton<IUsbProbeService, UsbProbeService>();
+        services.AddSingleton<IUsbHealthService, UsbHealthService>();
+        services.AddSingleton<IUsbScanService, UsbScanService>();
+        services.AddSingleton<IUsbRepairService, UsbRepairService>();
+
         // 优化
         services.AddSingleton<IMemoryOptimizeService, MemoryOptimizeService>();
         services.AddSingleton<IStartupListService, StartupListService>();
@@ -109,6 +116,7 @@ public partial class App : Application
         services.AddTransient<CleanupViewModel>();
         services.AddTransient<OptimizeViewModel>();
         services.AddTransient<PopupGuardViewModel>();
+        services.AddTransient<UsbToolViewModel>();
         services.AddTransient<LogsViewModel>();
         services.AddTransient<SettingsViewModel>();
     }

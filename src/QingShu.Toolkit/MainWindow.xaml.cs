@@ -33,6 +33,7 @@ public sealed partial class MainWindow : Window
         ["cleanup"] = typeof(DiskCleanupPage),
         ["optimize"] = typeof(OptimizePage),
         ["popupguard"] = typeof(PopupGuardPage),
+        ["usb"] = typeof(UsbToolPage),
         ["logs"] = typeof(LogsPage),
         ["settings"] = typeof(SettingsPage)
     };
