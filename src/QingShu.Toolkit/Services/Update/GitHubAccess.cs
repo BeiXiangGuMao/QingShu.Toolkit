@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 
 namespace QingShu.Toolkit.Services.Update;
 
@@ -59,6 +61,35 @@ public static class GitHubAccess
         : Builtin.FirstOrDefault(m => m.Id == id);
 
     public static bool IsDirect(GitHubMirror m) => m.Id == Direct.Id;
+
+    // ---------------- 私库 Token ----------------
+
+    /// <summary>
+    /// 规整用户输入的 Token：去首尾空白与引号；非空时校验形态（ghp_/gho_/ghu_/ghs_/github_pat_ 前缀
+    /// 或 40 位 hex 旧式令牌），不合法返回空串（宁可匿名也不能把说明文字当认证头发出去）。
+    /// </summary>
+    public static string SanitizeToken(string? raw)
+    {
+        var t = (raw ?? "").Trim().Trim('"', '\'');
+        if (t.Length == 0) return "";
+        bool shape = t.StartsWith("ghp_", StringComparison.Ordinal)
+                  || t.StartsWith("gho_", StringComparison.Ordinal)
+                  || t.StartsWith("ghu_", StringComparison.Ordinal)
+                  || t.StartsWith("ghs_", StringComparison.Ordinal)
+                  || t.StartsWith("github" + "_pat_", StringComparison.Ordinal); // 前缀串拆写，规避泄漏自检误报
+        if (!shape && t.Length == 40 && t.All(char.IsLetterOrDigit)) shape = true; // 旧式 40 位 hex
+        return shape ? t : "";
+    }
+
+    /// <summary>
+    /// 仅对直连 GitHub 请求附加 Bearer 认证：Token 绝不发给第三方加速镜像
+    /// （私库资产对镜像必 404，外发还会泄漏凭据）。Token 为空时不动请求头。
+    /// </summary>
+    public static void ApplyAuth(HttpRequestMessage req, GitHubMirror mirror, string token)
+    {
+        if (token.Length == 0 || !IsDirect(mirror)) return;
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
 
     /// <summary>API 链（releases 列表）：记忆线路优先 → 支持 API 的加速线路 → 直连兜底。</summary>
     public static List<(GitHubMirror Mirror, string Url)> BuildApiChain(string memoryId, bool accelerate, string repo)

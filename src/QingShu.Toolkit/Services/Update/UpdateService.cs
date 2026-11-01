@@ -77,6 +77,9 @@ public sealed class UpdateService : IUpdateService
     private static string DownloadDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QingShu.Toolkit", "update");
 
+    /// <summary>当前生效的 GitHub Token（已规整；空=匿名模式）。仅随直连请求发送，绝不写日志。</summary>
+    private string Token => GitHubAccess.SanitizeToken(_settings.Current.GitHubToken);
+
     // ---- 线路记忆：会话内字段优先，持久化到设置（下次启动沿用最近可用线路） ----
     private GitHubMirror? _lastMirror;
     private string MemoryId => _lastMirror?.Id ?? _settings.Current.GitHubMirrorId ?? "auto";
@@ -113,6 +116,8 @@ public sealed class UpdateService : IUpdateService
             var repo = _settings.Current.UpdateRepo;
             var channel = UpdateChannelHelper.Parse(_settings.Current.UpdateChannel);
             var channelText = channel == UpdateChannel.Beta ? "Beta 通道" : "稳定版通道";
+            if (Token.Length > 0)
+                _log.App(LogLevel.Info, "update", "更新检查启用 Token（私库模式：直连 api.github.com，镜像链跳过）");
 
             // 1) releases 列表（多线路 failover；200+空列表=仓库可达但无发布，立即短路）
             var (probe, list, via) = await TryFetchReleasesAsync(repo).ConfigureAwait(false);
@@ -160,7 +165,9 @@ public sealed class UpdateService : IUpdateService
 
             // 3) 所有线路均不可达（含 Atom 降级）
             Set(new UpdateStatus { Phase = UpdatePhase.Error, Message = _saw404
-                ? "检查失败：仓库返回 404。请检查设置中的 GitHub 仓库地址是否正确（仓库可能已改名或转私有）。"
+                ? (Token.Length > 0
+                    ? "检查失败：仓库返回 404。请检查设置中的 GitHub 仓库地址是否正确，或确认 Token 已被授予该仓库的读取权限。"
+                    : "检查失败：仓库返回 404。请检查设置中的 GitHub 仓库地址是否正确；若仓库为私有，可在设置中填入 GitHub Token。")
                 : (manual
                     ? "检查失败：加速与直连线路均无法访问 GitHub，请检查网络或稍后重试。"
                     : "自动检查更新失败（所有线路不可达，将稍后重试）。") });
@@ -195,14 +202,17 @@ public sealed class UpdateService : IUpdateService
         return (ReleasesProbe.Unreachable, default, null);
     }
 
-    /// <summary>单线路 releases 列表探测：成功返回 Found+列表；200+空数组返回 Empty；其余 Unreachable。</summary>
+    /// <summary>单线路 releases 列表探测：成功返回 Found+列表；200+空数组返回 Empty；其余 Unreachable。
+    /// Token 仅随直连请求附加（私库对匿名镜像必 404）。</summary>
     private async Task<(ReleasesProbe Probe, JsonElement List, GitHubMirror? Via)> FetchReleasesViaAsync(GitHubMirror mirror, string repo)
     {
         try
         {
             var url = $"{mirror.Prefix}https://api.github.com/repos/{repo}/releases?per_page=15";
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(ApiTimeoutSeconds));
-            using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            GitHubAccess.ApplyAuth(req, mirror, Token);
+            using var resp = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
                 if ((int)resp.StatusCode == 404) _saw404 = true;
@@ -317,7 +327,9 @@ public sealed class UpdateService : IUpdateService
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(AtomTimeoutSeconds));
-                using var resp = await _http.GetAsync(url, cts.Token).ConfigureAwait(false);
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                GitHubAccess.ApplyAuth(req, mirror, Token);
+                using var resp = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
                     if ((int)resp.StatusCode == 404) _saw404 = true;
@@ -402,6 +414,12 @@ public sealed class UpdateService : IUpdateService
             Set(new UpdateStatus { Phase = UpdatePhase.Downloading, Release = release, ProgressPercent = 0, Message = "正在下载更新…" });
 
             var chain = GitHubAccess.BuildDownloadChain(MemoryId, _settings.Current.AccelerateGitHub, release.AssetUrl);
+            if (Token.Length > 0)
+            {
+                // 私库模式：第三方镜像无法透传凭据（必 404），且 Token 不可外发 → 下载链只保留直连
+                chain = chain.Where(c => GitHubAccess.IsDirect(c.Mirror)).ToList();
+                _log.App(LogLevel.Info, "update", "下载启用 Token（私库模式）：跳过镜像线路，仅直连（断点续传仍有效）");
+            }
             Exception? last = null;
             foreach (var (mirror, url) in chain)
             {
@@ -449,6 +467,7 @@ public sealed class UpdateService : IUpdateService
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (existing > 0) req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(existing, null);
+        GitHubAccess.ApplyAuth(req, mirror, Token);
         using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
 
         if ((int)resp.StatusCode == 416 && existing > 0)

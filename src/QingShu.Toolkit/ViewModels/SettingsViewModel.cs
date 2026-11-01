@@ -35,6 +35,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _popupEnabled;
     [ObservableProperty] private bool _autoCheckUpdate;
     [ObservableProperty] private string _updateRepo = "";
+    [ObservableProperty] private string _gitHubToken = "";
     [ObservableProperty] private int _updateChannelIndex;   // 0=稳定版 1=Beta（LTS 通道已按产品决策移除）
     [ObservableProperty] private bool _accelerateGitHub;
     [ObservableProperty] private string _updateStatusText = "";
@@ -91,6 +92,7 @@ public partial class SettingsViewModel : ObservableObject
         _popupEnabled = s.PopupBlockEnabled;
         _autoCheckUpdate = s.AutoCheckUpdate;
         _updateRepo = s.UpdateRepo;
+        _gitHubToken = s.GitHubToken;
         _updateChannelIndex = s.UpdateChannel == "beta" ? 1 : 0;
         _accelerateGitHub = s.AccelerateGitHub;
         _logRetentionText = s.LogRetentionDays.ToString();
@@ -121,6 +123,8 @@ public partial class SettingsViewModel : ObservableObject
         s.PopupBlockEnabled = PopupEnabled;
         s.AutoCheckUpdate = AutoCheckUpdate;
         s.UpdateRepo = UpdateRepo?.Trim() ?? s.UpdateRepo;
+        // Token 保存规整后的值：不合法输入（粘贴了说明文字等）不入库，避免发出无效认证头
+        s.GitHubToken = GitHubAccess.SanitizeToken(GitHubToken);
         s.UpdateChannel = UpdateChannelIndex == 1 ? "beta" : "stable";
         s.AccelerateGitHub = AccelerateGitHub;
         s.LogRetentionDays = Math.Clamp(ParseInt(_logRetentionText, 90), 7, 3650);
@@ -217,6 +221,7 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnImOldDaysTextChanged(string value) => _ = SaveAsync();
     partial void OnLargeMinMbTextChanged(string value) => _ = SaveAsync();
     partial void OnUpdateRepoChanged(string value) => _ = SaveAsync();
+    partial void OnGitHubTokenChanged(string value) => _ = SaveAsync();
     partial void OnLogRetentionTextChanged(string value) => _ = SaveAsync();
 
     [RelayCommand]

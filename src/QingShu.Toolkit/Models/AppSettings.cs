@@ -80,6 +80,12 @@ public sealed class AppSettings
     public bool AccelerateGitHub { get; set; } = true;
     /// <summary>最近一次成功的加速线路 id（内部记忆，auto=无记忆）</summary>
     public string GitHubMirrorId { get; set; } = "auto";
+    /// <summary>
+    /// GitHub 个人访问令牌（可选）：私有仓库 releases 检查/下载用。
+    /// 仅随直连 api.github.com / github.com 请求发送，绝不发给第三方加速镜像；留空走匿名（公库够用）。
+    /// 仅存本机设置文件，不参与打包与源码。
+    /// </summary>
+    public string GitHubToken { get; set; } = "";
 
     // ---------- 日志 ----------
     public int LogRetentionDays { get; set; } = 90;
