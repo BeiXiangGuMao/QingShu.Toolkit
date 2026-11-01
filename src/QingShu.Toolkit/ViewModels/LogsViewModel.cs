@@ -75,13 +75,21 @@ public partial class LogsViewModel : ObservableObject
         if (Files.Count > 0) SelectedFile = Files[0];
     }
 
+    private int _previewSeq; // 预览序号：连续快速切换文件时丢弃过期结果（旧读慢于新读会反向覆盖）
+
     partial void OnSelectedFileChanged(LogFileVm? value)
     {
         if (value == null) return;
+        var seq = ++_previewSeq;
+        PreviewText = "正在读取…";
         Task.Run(() => _log.ReadTail(value.FullPath, 600))
             .ContinueWith(t =>
             {
-                PreviewText = t.Result;
+                if (seq != _previewSeq) return; // 已切换到其它文件，过期结果不回写
+                // 此前直接 t.Result：读取失败时延续任务故障被静默吞掉，预览区永远停在旧内容
+                PreviewText = t.Status == TaskStatus.RanToCompletion
+                    ? t.Result
+                    : "日志读取失败：文件可能被占用或已被清理。";
             }, System.Threading.CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.FromCurrentSynchronizationContext());
     }
 

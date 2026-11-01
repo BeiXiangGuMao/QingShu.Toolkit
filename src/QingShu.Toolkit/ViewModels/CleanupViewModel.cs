@@ -111,7 +111,12 @@ public partial class CleanupViewModel : ObservableObject
     private readonly ILargeFileScanService _large;
     private readonly ISettingsService _settings;
     private readonly ILogService _log;
-    private CancellationTokenSource? _cts;
+
+    // 四路扫描各自独立的取消源（扫描服务内部循环均检查 ct.IsCancellationRequested）
+    private CancellationTokenSource? _ctsRegular;
+    private CancellationTokenSource? _ctsWeChat;
+    private CancellationTokenSource? _ctsQq;
+    private CancellationTokenSource? _ctsLarge;
 
     public ObservableCollection<CleanTargetVm> RegularTargets { get; } = new();
 
@@ -181,11 +186,21 @@ public partial class CleanupViewModel : ObservableObject
 
     private async Task LoadDrivesAsync()
     {
-        var drives = await _large.GetFixedDrivesAsync().ConfigureAwait(true);
-        Drives.Clear();
-        foreach (var d in drives) Drives.Add(d);
-        HasDrives = Drives.Count > 0;
-        DriveIndex = 0;
+        try
+        {
+            var drives = await _large.GetFixedDrivesAsync().ConfigureAwait(true);
+            Drives.Clear();
+            foreach (var d in drives) Drives.Add(d);
+            HasDrives = Drives.Count > 0;
+            DriveIndex = 0;
+            if (!HasDrives) LargeStatus = "未发现可用分区，大文件扫描不可用。";
+        }
+        catch (Exception ex)
+        {
+            // 此前静默吞掉：枚举失败时 HasDrives 恒 false，大文件页无盘可选且无任何提示
+            LargeStatus = $"磁盘分区枚举失败：{ex.Message}";
+            _log.App(LogLevel.Error, "cleanup", "固定分区枚举异常", new { ex = ex.ToString() });
+        }
     }
 
     partial void OnDeleteToRecycleBinChanged(bool value)
@@ -231,8 +246,8 @@ public partial class CleanupViewModel : ObservableObject
         IsRegularBusy = true;
         RegularProgress = 0;
         RegularStatus = "正在扫描…";
-        _cts?.Dispose();
-        _cts = new CancellationTokenSource();
+        _ctsRegular?.Dispose();
+        _ctsRegular = new CancellationTokenSource();
         try
         {
             var targets = RegularTargets.Select(t => t.Def).ToList();
@@ -249,13 +264,20 @@ public partial class CleanupViewModel : ObservableObject
                 }
             });
             RegularProgress = 0;
-            await _cleanup.ScanAsync(targets, progress, _cts.Token).ConfigureAwait(true);
+            await _cleanup.ScanAsync(targets, progress, _ctsRegular.Token).ConfigureAwait(true);
             UpdateRegularSelected();
             RegularStatus = "扫描完成，请确认要清理的项目后点击“开始清理”。";
         }
         catch (OperationCanceledException) { RegularStatus = "扫描已取消。"; }
         catch (Exception ex) { RegularStatus = $"扫描失败：{ex.Message}"; }
         finally { IsRegularBusy = false; }
+    }
+
+    /// <summary>取消常规清理扫描（此前 _cts 与取消捕获齐备但没有触发入口，大目录扫描只能干等）。</summary>
+    [RelayCommand]
+    private void CancelRegularScan()
+    {
+        if (IsRegularBusy) _ctsRegular?.Cancel();
     }
 
     [RelayCommand]
@@ -330,17 +352,28 @@ public partial class CleanupViewModel : ObservableObject
         IsWeChatBusy = true;
         WeChatFiles.Clear();
         WeChatStatus = "正在扫描微信目录…";
+        _ctsWeChat?.Dispose();
+        _ctsWeChat = new CancellationTokenSource();
         try
         {
-            var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
+            var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), _ctsWeChat.Token).ConfigureAwait(true);
+            // 扫描服务取消时是 break 返回部分结果而非抛 OCE：这里如实报取消，避免误标“扫描完成”
+            if (_ctsWeChat.IsCancellationRequested) { WeChatStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             WeChatFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "微信", OnImRowSelectionChanged));
             UpdateImSelected();
             WeChatStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
                 : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
         }
+        catch (OperationCanceledException) { WeChatStatus = "扫描已取消。"; }
         catch (Exception ex) { WeChatStatus = $"扫描失败：{ex.Message}"; }
         finally { IsWeChatBusy = false; }
+    }
+
+    [RelayCommand]
+    private void CancelWeChatScan()
+    {
+        _ctsWeChat?.Cancel();
     }
 
     [RelayCommand]
@@ -350,17 +383,27 @@ public partial class CleanupViewModel : ObservableObject
         IsQqBusy = true;
         QqFiles.Clear();
         QqStatus = "正在扫描 QQ 目录…";
+        _ctsQq?.Dispose();
+        _ctsQq = new CancellationTokenSource();
         try
         {
-            var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), CancellationToken.None).ConfigureAwait(true);
+            var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), _ctsQq.Token).ConfigureAwait(true);
+            if (_ctsQq.IsCancellationRequested) { QqStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             QqFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "QQ", OnImRowSelectionChanged));
             UpdateImSelected();
             QqStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
                 : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
         }
+        catch (OperationCanceledException) { QqStatus = "扫描已取消。"; }
         catch (Exception ex) { QqStatus = $"扫描失败：{ex.Message}"; }
         finally { IsQqBusy = false; }
+    }
+
+    [RelayCommand]
+    private void CancelQqScan()
+    {
+        _ctsQq?.Cancel();
     }
 
     [RelayCommand]
@@ -464,18 +507,37 @@ public partial class CleanupViewModel : ObservableObject
         IsLargeBusy = true;
         LargeFiles.Clear();
         LargeStatus = "正在扫描（大分区可能需要 1-2 分钟）…";
+        _ctsLarge?.Dispose();
+        _ctsLarge = new CancellationTokenSource();
         try
         {
             var drive = Drives.ElementAtOrDefault(DriveIndex);
             if (drive == default) return;
-            var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), CancellationToken.None).ConfigureAwait(true);
+            var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), _ctsLarge.Token).ConfigureAwait(true);
+            if (_ctsLarge.IsCancellationRequested) { LargeStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             LargeFiles = new ObservableCollection<LargeFileVm>(files.Take(200).Select(f => new LargeFileVm(f)));
             UpdateLargeSelected();
             LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
         }
+        catch (OperationCanceledException) { LargeStatus = "扫描已取消。"; }
         catch (Exception ex) { LargeStatus = $"扫描失败：{ex.Message}"; }
         finally { IsLargeBusy = false; }
     }
+
+    [RelayCommand]
+    private void CancelLargeScan()
+    {
+        if (IsLargeBusy) _ctsLarge?.Cancel();
+    }
+
+    // busy 可见性（取消按钮仅在扫描中显示）
+    public bool WeChatBusyVis => IsWeChatBusy;
+    public bool QqBusyVis => IsQqBusy;
+    public bool LargeBusyVis => IsLargeBusy;
+
+    partial void OnIsWeChatBusyChanged(bool value) => OnPropertyChanged(nameof(WeChatBusyVis));
+    partial void OnIsQqBusyChanged(bool value) => OnPropertyChanged(nameof(QqBusyVis));
+    partial void OnIsLargeBusyChanged(bool value) => OnPropertyChanged(nameof(LargeBusyVis));
 
     [RelayCommand]
     private void OpenContainingFolder(object? param)

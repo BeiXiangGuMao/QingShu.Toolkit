@@ -35,7 +35,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _popupEnabled;
     [ObservableProperty] private bool _autoCheckUpdate;
     [ObservableProperty] private string _updateRepo = "";
-    [ObservableProperty] private int _updateChannelIndex;   // 0=稳定版 1=Beta 2=LTS
+    [ObservableProperty] private int _updateChannelIndex;   // 0=稳定版 1=Beta（LTS 通道已按产品决策移除）
     [ObservableProperty] private bool _accelerateGitHub;
     [ObservableProperty] private string _updateStatusText = "";
     [ObservableProperty] private double _updateProgress;
@@ -124,8 +124,16 @@ public partial class SettingsViewModel : ObservableObject
         s.UpdateChannel = UpdateChannelIndex == 1 ? "beta" : "stable";
         s.AccelerateGitHub = AccelerateGitHub;
         s.LogRetentionDays = Math.Clamp(ParseInt(_logRetentionText, 90), 7, 3650);
-        await _settings.SaveAsync().ConfigureAwait(true);
-        SavedTip = $"{DateTime.Now:HH:mm:ss} 设置已保存并即时生效。";
+        try
+        {
+            await _settings.SaveAsync().ConfigureAwait(true);
+            SavedTip = $"{DateTime.Now:HH:mm:ss} 设置已保存并即时生效。";
+        }
+        catch (Exception ex)
+        {
+            // 写盘失败静默的话用户以为已保存，退出后丢配置
+            SavedTip = $"{DateTime.Now:HH:mm:ss} 设置保存失败：{ex.Message}";
+        }
     }
 
     private static int ParseInt(string? s, int fallback) => int.TryParse(s?.Trim(), out var v) && v > 0 ? v : fallback;
@@ -150,6 +158,7 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task DownloadUpdateAsync()
     {
+        if (IsUpdateBusy) return; // 检查/下载进行中禁止重复触发（双击或旧状态残留窗口）
         var rel = _update.Current.Release;
         if (rel == null) return;
         await _update.DownloadAsync(rel).ConfigureAwait(true);

@@ -47,6 +47,8 @@
                             <ProgressBar Width="140" VerticalAlignment="Center" CornerRadius="2"
                                          IsIndeterminate="{x:Bind Vm.IsRegularBusy, Mode=OneWay}"
                                          Visibility="{x:Bind Vm.RegularBusyVis, Mode=OneWay}" />
+                            <Button Content="取消扫描" Command="{x:Bind Vm.CancelRegularScanCommand}"
+                                    Visibility="{x:Bind Vm.RegularBusyVis, Mode=OneWay}" />
                         </StackPanel>
                         <ListView Grid.Row="1" ItemsSource="{x:Bind Vm.RegularTargets, Mode=OneWay}" SelectionMode="None">
                             <ListView.ItemContainerStyle>
@@ -110,6 +112,8 @@
                                     <SymbolIcon Symbol="Sync" /><TextBlock Text="扫描微信" />
                                 </StackPanel>
                             </Button>
+                            <Button Content="取消" Command="{x:Bind Vm.CancelWeChatScanCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.WeChatBusyVis, Mode=OneWay}" />
                             <Button Content="全选" Command="{x:Bind Vm.SelectAllImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="全不选" Command="{x:Bind Vm.SelectNoneImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteImCommand}" VerticalAlignment="Bottom" />
@@ -190,6 +194,8 @@
                                     <SymbolIcon Symbol="Sync" /><TextBlock Text="扫描 QQ" />
                                 </StackPanel>
                             </Button>
+                            <Button Content="取消" Command="{x:Bind Vm.CancelQqScanCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.QqBusyVis, Mode=OneWay}" />
                             <Button Content="全选" Command="{x:Bind Vm.SelectAllImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="全不选" Command="{x:Bind Vm.SelectNoneImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteImCommand}" VerticalAlignment="Bottom" />
@@ -270,6 +276,8 @@
                                     <SymbolIcon Symbol="Sync" /><TextBlock Text="开始扫描" />
                                 </StackPanel>
                             </Button>
+                            <Button Content="取消" Command="{x:Bind Vm.CancelLargeScanCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.LargeBusyVis, Mode=OneWay}" />
                             <Button Content="打开位置" Click="OpenLargeFolder_Click" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteLargeCommand}" VerticalAlignment="Bottom" />
                         </StackPanel>

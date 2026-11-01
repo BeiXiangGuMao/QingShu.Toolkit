@@ -79,11 +79,13 @@
         <!-- 进度 -->
         <Grid Grid.Row="2" ColumnSpacing="10" Visibility="{x:Bind Vm.IsBusy, Mode=OneWay}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <ProgressRing Width="18" Height="18" IsActive="{x:Bind Vm.IsBusy, Mode=OneWay}" />
             <TextBlock Grid.Column="1" Text="{x:Bind Vm.ProgressText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
                        VerticalAlignment="Center" />
+            <Button Grid.Column="2" Content="取消操作" Command="{x:Bind Vm.CancelOperationCommand}"
+                    Padding="12,4" VerticalAlignment="Center" />
         </Grid>
 
         <!-- 双卡：检测与修复 | 查杀 -->

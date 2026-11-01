@@ -117,6 +117,11 @@ public partial class OptimizeViewModel : ObservableObject
             OnPropertyChanged(nameof(EcoReady));
             if (MemoryResult.Length == 0) MemoryResult = "共展示内存占用最高的 25 个进程。勾选后点击“整理所选内存”。";
         }
+        catch (Exception ex)
+        {
+            // 全局 UnhandledException 仅记日志且 e.Handled=true：命令内不接住的话用户点了毫无反应
+            MemoryResult = $"进程列表获取失败：{ex.Message}（可重试或用任务管理器查看）";
+        }
         finally { IsMemoryBusy = false; }
     }
 
@@ -133,6 +138,7 @@ public partial class OptimizeViewModel : ObservableObject
             MemoryResult = $"整理完成：{r.Trimmed} 个进程，释放约 {FormatHelper.Bytes(r.FreedBytes)} 工作集（跳过 {r.Skipped} 个受保护进程）。进程未被结束，仅回收可回收页。";
             await RefreshMemoryAsync().ConfigureAwait(true);
         }
+        catch (Exception ex) { MemoryResult = $"内存整理失败：{ex.Message}"; }
         finally { IsMemoryBusy = false; }
     }
 
@@ -152,6 +158,7 @@ public partial class OptimizeViewModel : ObservableObject
                         (r.Detail.Length > 0 ? $"跳过：{r.Detail}。" : "") +
                         "前台正在使用的进程会被系统自动豁免，降频省电主要体现在转入后台之后。";
         }
+        catch (Exception ex) { EcoResult = $"节能设置失败：{ex.Message}"; }
         finally { IsEcoBusy = false; }
     }
 
@@ -168,6 +175,7 @@ public partial class OptimizeViewModel : ObservableObject
             foreach (var row in EcoProcesses.Where(x => x.IsSelected)) row.EcoApplied = false;
             EcoResult = $"已恢复 {r.Applied} 个进程的正常调度。" + (r.Detail.Length > 0 ? $"跳过：{r.Detail}。" : "");
         }
+        catch (Exception ex) { EcoResult = $"恢复调度失败：{ex.Message}"; }
         finally { IsEcoBusy = false; }
     }
 
@@ -184,6 +192,7 @@ public partial class OptimizeViewModel : ObservableObject
             foreach (var i in items) StartupItems.Add(new StartupRowVm(i, this));
             if (StartupItems.Count == 0) StartupHint = "未发现注册表 Run 键 / 启动文件夹中的自启动项。";
         }
+        catch (Exception ex) { StartupResult = $"启动项读取失败：{ex.Message}"; }
         finally { IsStartupBusy = false; }
     }
 
@@ -203,6 +212,7 @@ public partial class OptimizeViewModel : ObservableObject
                                : err;
             if (ok) await RefreshStartupAsync().ConfigureAwait(true);
         }
+        catch (Exception ex) { StartupResult = $"{(row.Enabled ? "禁用" : "启用")}失败：{ex.Message}"; }
         finally { IsStartupBusy = false; }
     }
 

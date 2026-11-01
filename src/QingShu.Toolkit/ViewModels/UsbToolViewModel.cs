@@ -260,6 +260,14 @@ public partial class UsbToolViewModel : ObservableObject
 
     // ================= 公共 =================
 
+    /// <summary>取消当前长操作（健康检测/表面扫描/查杀/修复在步骤边界生效）。
+    /// 此前 _cts 与取消捕获齐备却没有触发入口，用户面对 150s 表面扫描只能干等。</summary>
+    [RelayCommand]
+    private void CancelOperation()
+    {
+        if (IsBusy) _cts?.Cancel();
+    }
+
     private async Task RunGuardedAsync(string busyText, Func<CancellationToken, Task> body)
     {
         IsBusy = true;
