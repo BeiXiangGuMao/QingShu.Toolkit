@@ -139,6 +139,10 @@ public sealed class NetworkRepairService : INetworkRepairService
                 "禁用并重新启用网卡，重新协商速率与双工；会短暂断网数秒，默认不勾选。", true, true,
                 new[] { "speed.nic_rate" }));
 
+        // 危险项默认不勾选（winsock 重置需重启 / 改 DNS / 网卡重协商会短暂断网）——
+        // 与修复区提示「危险项默认不勾选」保持一致；此前所有动作默认勾选，属文案与行为矛盾。
+        foreach (var a in plan) a.IsSelected = !a.Risky;
+
         return plan;
     }
 

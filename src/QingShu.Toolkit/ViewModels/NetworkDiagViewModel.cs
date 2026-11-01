@@ -97,6 +97,7 @@ public partial class NetworkDiagViewModel : ObservableObject
     private async Task StartAsync()
     {
         if (IsRunning) return;
+        if (IsRepairing) return; // 修复提权进行中禁止重开诊断：避免并发操作/UAC 弹窗交叠与列表竞态
         IsRunning = true;
         HasRun = false;
         ReportReady = false;
@@ -237,6 +238,25 @@ public partial class NetworkDiagViewModel : ObservableObject
         try
         {
             await _repair.RunAsync(selected, progress, CancellationToken.None).ConfigureAwait(true);
+
+            // 修复成功 → 对应检查项转「已修复」：打通 Fixed 状态链路（计数芯片/绿勾/PDF 样式此前均已支持，
+            // 但全工程从未写入该状态，导致修复后列表永远停在红/黄、无闭环反馈）。
+            // open_portal 的成功仅代表门户已打开，认证是否成功须复诊确认，不翻转；
+            // winsock 重置需重启才生效，翻转文案特别标注。
+            if (!IsRunning) // 用户已重开诊断则不动新列表
+            {
+                foreach (var a in selected.Where(a => a.Status == RepairStatus.Ok && a.Id != "open_portal"))
+                {
+                    var suffix = a.Id == "winsock_reset" ? "，重启计算机后生效" : "";
+                    foreach (var item in Items.Where(i => a.RelatedCheckIds.Contains(i.Id)
+                                                          && i.Status is CheckStatus.Warning or CheckStatus.Fail))
+                    {
+                        item.Status = CheckStatus.Fixed;
+                        item.Summary = $"已执行修复（{a.Title}{suffix}）";
+                    }
+                }
+                Recount();
+            }
             RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
         }
         finally
