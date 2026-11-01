@@ -13,5 +13,7 @@ public sealed partial class PopupGuardPage : Page
     {
         Vm = App.Services.GetRequiredService<PopupGuardViewModel>();
         InitializeComponent();
+        // 离开页面即释放 VM：退订拦截服务/设置服务单例事件（Transient VM 否则越进越重）
+        this.Unloaded += (_, _) => Vm.Dispose();
     }
 }

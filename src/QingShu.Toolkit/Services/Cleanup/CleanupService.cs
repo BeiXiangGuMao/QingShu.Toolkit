@@ -389,25 +389,35 @@ public sealed class CleanupService : ICleanupService
         sb.AppendLine("echo [QingShu] 正在以管理员权限清理…");
         foreach (var t in targets)
         {
-            foreach (var path in t.Def.Paths())
+            var paths = t.Def.Paths().Where(p => Directory.Exists(p)).ToList();
+            if (paths.Count == 0) continue;
+            // 单目标单标记：历史写法每条路径各回显一次 ##OK##id，crashdumps（CrashDumps + Minidump）
+            // 这类多路径目标会输出两条完成记录；且「路径1成功+路径2失败」会同时给出 OK 与 FAIL。
+            // 改为 QSTOK 汇总：任一路径删后仍存在即 0，全部消失才 OK（目录已被外部清掉也视为达成）。
+            bool isWinOld = t.Def.Id == "windows.old";
+            if (isWinOld)
             {
-                if (!Directory.Exists(path)) continue;
-                if (t.Def.Id == "windows.old")
+                foreach (var path in paths)
                 {
                     // Windows.old 含只读系统属性，先清除属性再删（整目录删除，不重建）
                     sb.AppendLine($"takeown /f \"{path}\" /r /d y >nul 2>&1");
                     sb.AppendLine($"icacls \"{path}\" /grant administrators:F /t >nul 2>&1");
-                    sb.AppendLine($"rd /s /q \"{path}\" >nul 2>&1 && echo ##OK##{t.Def.Id} || echo ##FAIL##{t.Def.Id}");
                 }
-                else
+            }
+            sb.AppendLine("set QSTOK=1");
+            foreach (var path in paths)
+            {
+                sb.AppendLine($"rd /s /q \"{path}\" >nul 2>&1");
+                sb.AppendLine($"if exist \"{path}\" set QSTOK=0");
+                if (!isWinOld)
                 {
                     // 历史 bug：裸 rd /s /q 连目录本身一起删除（SoftwareDistribution\Download、DeliveryOptimization\Cache
                     // 等系统目录被移除后依赖系统自愈）。改为删除后立即重建空目录，保持目录存在。
                     // cmd 无法直接进回收站：提权目标退化为永久删除（UI 已明确告知）
-                    sb.AppendLine($"rd /s /q \"{path}\" >nul 2>&1 && echo ##OK##{t.Def.Id} || echo ##FAIL##{t.Def.Id}");
                     sb.AppendLine($"md \"{path}\" >nul 2>&1");
                 }
             }
+            sb.AppendLine($"if \"%QSTOK%\"==\"1\" (echo ##OK##{t.Def.Id}) else (echo ##FAIL##{t.Def.Id})");
         }
         sb.AppendLine("echo ##DONE##");
         // 无 BOM 的 UTF-8：cmd 对带 BOM 的批处理首行会解析出乱码字符（'\ufeff@echo' 不是内部或外部命令）

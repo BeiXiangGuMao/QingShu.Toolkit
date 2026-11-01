@@ -235,8 +235,13 @@ public static partial class NetworkChecks
             var found = new List<string>();
             foreach (var p in Process.GetProcesses())
             {
-                var name = p.ProcessName.ToLowerInvariant();
-                if (Signs.Any(s => name.Contains(s, StringComparison.Ordinal))) found.Add(p.ProcessName);
+                try
+                {
+                    var name = p.ProcessName.ToLowerInvariant();
+                    if (Signs.Any(s => name.Contains(s, StringComparison.Ordinal))) found.Add(p.ProcessName);
+                }
+                catch { }
+                finally { p.Dispose(); } // 全进程枚举不释放会累积进程句柄，直至 GC 兜底
             }
             if (found.Count > 0)
                 return Task.FromResult(CheckOutcome.Pass($"检测到认证客户端进程：{string.Join(", ", found.Take(3))}",

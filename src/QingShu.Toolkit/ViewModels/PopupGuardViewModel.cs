@@ -90,20 +90,36 @@ public partial class PopupGuardViewModel : ObservableObject
         _popup = popup;
         _settings = settings;
         _popupEnabled = settings.Current.PopupBlockEnabled;
-        _popup.Blocked += count => UiDispatcher.Run(() =>
-        {
-            PopupCountText = count.ToString();
-            ReloadRecent();
-        });
+        _popup.Blocked += OnPopupBlocked;
+        _settings.Changed += OnSettingsChanged;
         PopupCountText = popup.BlockedCount.ToString();
         ReloadWhitelist();
         ReloadRecent();
+    }
+
+    private void OnPopupBlocked(int count)
+    {
+        // 服务事件源侧已调度回 UI 线程（UiDispatcher.Run），此处可直接碰绑定属性
+        PopupCountText = count.ToString();
+        ReloadRecent();
+    }
+
+    private void OnSettingsChanged()
+    {
         // 白名单与开关可能与设置页双向同步修改：设置变更时自动刷新，保持两处一致
-        _settings.Changed += () =>
-        {
-            if (_settings.Current.PopupBlockEnabled != PopupEnabled) PopupEnabled = _settings.Current.PopupBlockEnabled;
-            ReloadWhitelist();
-        };
+        if (_settings.Current.PopupBlockEnabled != PopupEnabled) PopupEnabled = _settings.Current.PopupBlockEnabled;
+        ReloadWhitelist();
+    }
+
+    private bool _disposed;
+
+    /// <summary>页面 Unloaded 时释放：退订单例事件，否则旧 VM 永远挂在拦截服务/设置服务上累积。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _popup.Blocked -= OnPopupBlocked;
+        _settings.Changed -= OnSettingsChanged;
     }
 
     [RelayCommand]

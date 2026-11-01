@@ -12,11 +12,11 @@ namespace QingShu.Toolkit.Services.Usb;
 
 public interface IUsbScanService
 {
-    /// <summary>查杀扫描（启发式 + 特征，只读）。返回威胁清单。</summary>
+    /// <summary>查杀扫描（启发式 + 特征，只读）。返回威胁清单。扫描在线程池执行，不占用调用方线程。</summary>
     Task<(List<UsbThreat> Threats, int FilesScanned, List<string> Notes)> ScanVolumeAsync(
         UsbVolume volume, IProgress<string>? progress, CancellationToken ct);
-    /// <summary>隔离所选威胁文件（可恢复，附清单）。</summary>
-    Task<(int Ok, int Fail, List<string> Notes)> QuarantineAsync(IReadOnlyList<string> files, string letter);
+    /// <summary>隔离所选威胁文件（可恢复，附清单与成功清单）。</summary>
+    Task<(int Ok, int Fail, List<string> Notes, List<string> Quarantined)> QuarantineAsync(IReadOnlyList<string> files, string letter);
     /// <summary>解除蠕虫隐藏属性（文件夹可见化）。</summary>
     Task<bool> UnhideFoldersAsync(string letter);
     /// <summary>创建 autorun.inf 免疫目录（阻止蠕虫落盘自启动文件）。</summary>
@@ -57,7 +57,13 @@ public sealed class UsbScanService : IUsbScanService
         catch { return Encoding.Latin1; } // 提供器注册失败时退 Latin1：ASCII 检测标记不受影响
     }
 
-    public async Task<(List<UsbThreat>, int, List<string>)> ScanVolumeAsync(
+    public Task<(List<UsbThreat>, int, List<string>)> ScanVolumeAsync(
+        UsbVolume volume, IProgress<string>? progress, CancellationToken ct)
+        // 递归扫描最长 90 秒 / 3 万文件：必须整体在线程池执行。此前方法体无真实 await，
+        // 全部同步跑在调用方（UI）线程上——扫描期间界面完全冻结、进度文本永远不刷新。
+        => Task.Run(() => ScanVolumeCore(volume, progress, ct), ct);
+
+    private static (List<UsbThreat>, int, List<string>) ScanVolumeCore(
         UsbVolume volume, IProgress<string>? progress, CancellationToken ct)
     {
         var threats = new List<UsbThreat>();
@@ -111,7 +117,7 @@ public sealed class UsbScanService : IUsbScanService
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { notes.Add($"扫描异常：{ex.Message}"); }
 
-        return await Task.FromResult((threats, scanned, notes)).ConfigureAwait(false);
+        return (threats, scanned, notes);
     }
 
     // ---------------- 单文件判定 ----------------
@@ -187,11 +193,13 @@ public sealed class UsbScanService : IUsbScanService
             foreach (var raw in lines)
             {
                 var line = raw.Trim().ToLowerInvariant();
-                if (line.StartsWith("open=") || line.StartsWith("shellexecute="))
+                // open=/shellexecute= 之外，还必须检 shell\open\command= 形态——
+                // 经典 SXS 蠕虫正是利用「资源管理器双击时优先执行 shell\open\command」落地的
+                if (line.StartsWith("open=") || line.StartsWith("shellexecute=") || line.Contains("command="))
                 {
                     var target = line[(line.IndexOf('=') + 1)..].Trim();
                     if (ExecExt.Any(e => target.Contains(e, StringComparison.Ordinal)) || target.Contains("\\", StringComparison.Ordinal))
-                        return new UsbThreat(p, "Malicious", "autorun 自启动指向可执行体", $"autorun.inf 的 {line[..Math.Min(60, line.Length)]}… 会在插入时拉起程序，判为恶意。");
+                        return new UsbThreat(p, "Malicious", "autorun 自启动指向可执行体", $"autorun.inf 的 {line[..Math.Min(60, line.Length)]}… 会在插入/双击时拉起程序，判为恶意。");
                 }
             }
             return new UsbThreat(p, "Suspicious", "autorun.inf 存在", "autorun.inf 存在但未指向可执行体：蠕虫残留或历史遗留，建议隔离后重建免疫目录。");
@@ -229,12 +237,13 @@ public sealed class UsbScanService : IUsbScanService
 
     // ---------------- 处置动作 ----------------
 
-    public Task<(int Ok, int Fail, List<string> Notes)> QuarantineAsync(IReadOnlyList<string> files, string letter)
+    public Task<(int Ok, int Fail, List<string> Notes, List<string> Quarantined)> QuarantineAsync(IReadOnlyList<string> files, string letter)
     {
         return Task.Run(() =>
         {
             int ok = 0, fail = 0;
             var notes = new List<string>();
+            var quarantined = new List<string>();
             var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "QingShu.Toolkit", "quarantine", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + letter);
             Directory.CreateDirectory(root);
@@ -246,6 +255,7 @@ public sealed class UsbScanService : IUsbScanService
                     var dest = Path.Combine(root, f.Length >= 3 ? f[3..].Replace('\\', '_') : Path.GetFileName(f));
                     File.Move(f, dest, overwrite: false);
                     notes.Add($"已隔离：{f} → {dest}");
+                    quarantined.Add(f);
                     ok++;
                 }
                 catch (UnauthorizedAccessException)
@@ -261,7 +271,7 @@ public sealed class UsbScanService : IUsbScanService
             }
             File.WriteAllText(Path.Combine(root, "manifest.txt"),
                 "隔离时间: " + DateTime.Now + "\n" + string.Join("\n", notes), Encoding.UTF8);
-            return (ok, fail, notes);
+            return (ok, fail, notes, quarantined);
         });
     }
 

@@ -159,11 +159,9 @@ public sealed class UsbHealthService : IUsbHealthService
         var notes = new List<string>();
         long read = 0, bad = 0, slow = 0;
         var sw = Stopwatch.StartNew();
+        FileStream? fs = null;
         try
         {
-            using var h = NativeStorageIo.OpenRaw(drive.PhysicalPath, write: false, exclusive: false);
-            if (h.IsInvalid) return new RegionStat(0, 0, 0, 0, notes);
-            using var fs = new FileStream(h, FileAccess.Read, Chunk, isAsync: false);
             long start = (long)(drive.SizeBytes * startFraction);
             start -= start % 512;
             var buf = new byte[Chunk];
@@ -171,8 +169,33 @@ public sealed class UsbHealthService : IUsbHealthService
                      && (timeBudgetMs is null || sw.ElapsedMilliseconds < timeBudgetMs); off += Chunk)
             {
                 ct.ThrowIfCancellationRequested();
-                var (n, ms) = await ReadChunkAsync(fs, off, buf).ConfigureAwait(false);
-                if (n <= 0) { bad++; if (notes.Count < 12) notes.Add($"偏移 {FormatHelper.Bytes(off)}：读取失败"); }
+                if (fs is null)
+                {
+                    var h = NativeStorageIo.OpenRaw(drive.PhysicalPath, write: false, exclusive: false);
+                    if (h.IsInvalid)
+                    {
+                        bad++;
+                        if (notes.Count < 12) notes.Add($"偏移 {FormatHelper.Bytes(off)}：设备重新打开失败");
+                        break;
+                    }
+                    fs = new FileStream(h, FileAccess.Read, Chunk, isAsync: false);
+                }
+                var (n, ms, timedOut) = await ReadChunkAsync(fs, off, buf).ConfigureAwait(false);
+                if (n <= 0)
+                {
+                    bad++;
+                    if (notes.Count < 12)
+                        notes.Add(timedOut
+                            ? $"偏移 {FormatHelper.Bytes(off)}：读取超时（{ms} ms 无响应）"
+                            : $"偏移 {FormatHelper.Bytes(off)}：读取失败");
+                    if (timedOut)
+                    {
+                        // 超时的弃读任务可能仍挂在同一句柄上，与后续 Seek+Read 竞争同一文件指针
+                        //（读到错位数据→误报坏/慢区）。弃用旧句柄，下一轮重新打开后再继续。
+                        try { fs.Dispose(); } catch { }
+                        fs = null;
+                    }
+                }
                 else
                 {
                     read += n;
@@ -184,6 +207,7 @@ public sealed class UsbHealthService : IUsbHealthService
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { if (notes.Count < 12) notes.Add($"探测中断：{ex.Message}"); }
+        finally { if (fs != null) { try { fs.Dispose(); } catch { } } }
         double mbps = sw.Elapsed.TotalSeconds > 0.2 ? read / (1024.0 * 1024) / sw.Elapsed.TotalSeconds : 0;
         return new RegionStat(read, bad, slow, mbps, notes);
     }
@@ -191,7 +215,8 @@ public sealed class UsbHealthService : IUsbHealthService
     private static Task<RegionStat> ScanSurfaceAsync(UsbDrive drive, IProgress<string>? progress, CancellationToken ct)
         => ProbeRegionAsync(drive, progress, ct, startFraction: 0.0, budgetBytes: long.MaxValue / 2, timeBudgetMs: (long)SurfaceBudget.TotalMilliseconds);
 
-    private static async Task<(int Read, long Ms)> ReadChunkAsync(FileStream fs, long offset, Memory<byte> buf)
+    /// <summary>返回 (读字节数, 耗时ms, 是否超时)。超时按坏区计；调用方超时后应重开句柄再继续。</summary>
+    private static async Task<(int Read, long Ms, bool TimedOut)> ReadChunkAsync(FileStream fs, long offset, Memory<byte> buf)
     {
         fs.Seek(offset, SeekOrigin.Begin);
         var sw = Stopwatch.StartNew();
@@ -201,8 +226,8 @@ public sealed class UsbHealthService : IUsbHealthService
             catch { return 0; }
         });
         var done = await Task.WhenAny(readTask, Task.Delay(ReadTimeoutMs)).ConfigureAwait(false);
-        if (done != readTask) return (0, sw.ElapsedMilliseconds); // 超时按坏区计
-        return (await readTask.ConfigureAwait(false), sw.ElapsedMilliseconds);
+        if (done != readTask) return (0, sw.ElapsedMilliseconds, true); // 超时按坏区计
+        return (await readTask.ConfigureAwait(false), sw.ElapsedMilliseconds, false);
     }
 
     // ---------------- 写速度（文件级、写穿） ----------------
@@ -269,7 +294,7 @@ public sealed class UsbHealthService : IUsbHealthService
                 int got = 0;
                 while (got < probeLen)
                 {
-                    var (n, _) = await ReadChunkAsync(fs, offset + got, back.AsMemory(got)).ConfigureAwait(false);
+                    var (n, _, _) = await ReadChunkAsync(fs, offset + got, back.AsMemory(got)).ConfigureAwait(false);
                     if (n <= 0) return new CapacityProbe(offset, true, false, $"偏移 {offset / (1024 * 1024)} MB：回读失败（超出真实容量的典型表现）");
                     got += n;
                 }

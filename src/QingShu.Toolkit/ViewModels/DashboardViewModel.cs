@@ -236,8 +236,14 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         try { Process.Start(new ProcessStartInfo(_log.Root) { UseShellExecute = true }); } catch { }
     }
 
+    private bool _disposed;
+
+    /// <summary>页面 Unloaded 时释放：停实时采样定时器、退订单例事件。VM 每次进入页面新建（Transient），
+    /// 不释放则旧 VM 的 2 秒 DispatcherTimer 与事件订阅永不消亡，越进越重。</summary>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _timer.Stop();
         _power.Changed -= OnPowerChanged;
         _popup.Blocked -= OnPopupBlocked;

@@ -34,13 +34,16 @@ public sealed class ImScanService : IImScanService
 
     private static string Documents => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
-    // 分类：目录名 → 展示类型
+    // 分类：目录名 → 展示类型。匹配规则为 Contains 顺序取先命中，
+    // 故长键必须排在短键前：否则 filerecv 命中 file（「接收文件」显示成「文件」）、
+    // msgattach 命中 attach（「会话附件」显示成「附件」）
     private static readonly (string Key, string Kind)[] KindMap =
     {
-        ("file", "文件"), ("filerecv", "接收文件"), ("attach", "附件"),
+        ("msgattach", "会话附件"), ("filerecv", "接收文件"),
+        ("attach", "附件"), ("file", "文件"),
         ("image", "图片"), ("pic", "图片"), ("ori", "原图"),
         ("video", "视频"), ("thumb", "缩略图"),
-        ("cache", "缓存"), ("msgattach", "会话附件"), ("emotion", "表情"), ("emoji", "表情"),
+        ("cache", "缓存"), ("emotion", "表情"), ("emoji", "表情"),
         ("pte", "表情")
     };
 

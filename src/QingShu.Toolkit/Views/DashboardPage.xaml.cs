@@ -14,6 +14,8 @@ public sealed partial class DashboardPage : Page
     {
         Vm = App.Services.GetRequiredService<DashboardViewModel>();
         InitializeComponent();
+        // 离开页面即释放 VM：停 2s 采样定时器、退订单例服务事件（VM 为 Transient，否则越进越重）
+        this.Unloaded += (_, _) => Vm.Dispose();
     }
 
     private void PowerModes_SelectionChanged(object sender, SelectionChangedEventArgs e)

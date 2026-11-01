@@ -68,6 +68,14 @@ public partial class UsbToolViewModel : ObservableObject
     {
         if (IsBusy) return;
         IsBusy = true;
+        try { await RefreshDevicesCoreAsync().ConfigureAwait(true); }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>枚举核心（不碰 IsBusy 守卫）：修复/重建完成后在忙碌态内也要能调用，
+    /// 此前直接调 RefreshDevicesAsync 会被自身 IsBusy 守卫空跑，「执行后自动刷新」是死代码。</summary>
+    private async Task RefreshDevicesCoreAsync()
+    {
         try
         {
             ProgressText = "正在枚举 USB 存储设备…";
@@ -87,7 +95,6 @@ public partial class UsbToolViewModel : ObservableObject
             ProgressText = $"设备枚举失败：{ex.Message}";
             _log.App(LogLevel.Error, "usb", "USB 设备枚举异常", new { ex = ex.ToString() });
         }
-        finally { IsBusy = false; }
     }
 
     private async Task BuildFixPlanAsync()
@@ -174,15 +181,14 @@ public partial class UsbToolViewModel : ObservableObject
         await RunGuardedAsync("隔离中…", async _ =>
         {
             var letter = selected[0].Length > 0 ? selected[0][0].ToString() : "";
-            var (ok, fail, notes) = await _scan.QuarantineAsync(selected, letter).ConfigureAwait(true);
+            var (ok, fail, notes, quarantined) = await _scan.QuarantineAsync(selected, letter).ConfigureAwait(true);
             foreach (var n in notes.Take(3)) _log.App(ok > 0 ? LogLevel.Info : LogLevel.Error, "usb", "隔离结果", n);
-            // 隔离成功的行直接从列表移除（按文件路径匹配）
-            if (ok > 0)
-                foreach (var path in selected)
-                {
-                    var row = Threats.FirstOrDefault(t => t.FilePath == path);
-                    if (row != null) Threats.Remove(row);
-                }
+            // 只移除真正隔离成功的行（此前按全局成功数删全部勾选行，失败文件被误标已清理）
+            foreach (var path in quarantined)
+            {
+                var row = Threats.FirstOrDefault(t => t.FilePath == path);
+                if (row != null) Threats.Remove(row);
+            }
             ThreatSummary = $"隔离完成：成功 {ok} · 失败 {fail}。";
             Hint = $"隔离完成：成功 {ok} · 失败 {fail}。被隔离文件存放在本机隔离区（见日志），可人工恢复。";
             ProgressText = "隔离完成。建议点「解除隐藏」找回被蠕虫藏起来的真实文件。";
@@ -231,7 +237,7 @@ public partial class UsbToolViewModel : ObservableObject
             await _repair.RunAsync(SelectedDevice.Drive, selected, new Progress<UsbFixAction>(_ => { }), ct).ConfigureAwait(true);
             int ok = selected.Count(a => a.Status == "Ok");
             Hint = $"修复执行完毕（成功 {ok}/{selected.Count}）。建议「刷新设备」后重新健康检测复核；设备栈重置若生效会短暂掉线重连。";
-            if (ok > 0) await RefreshDevicesAsync().ConfigureAwait(true);
+            if (ok > 0) await RefreshDevicesCoreAsync().ConfigureAwait(true);
         });
     }
 
@@ -248,7 +254,7 @@ public partial class UsbToolViewModel : ObservableObject
                 "重建分区表", a.Status == "Ok" ? "Pass" : "Fail", a.Output,
                 a.Status == "Ok" ? "" : "可尝试：重新插拔 → 重置设备栈 → 再重建；diskpart 失败多为设备离线或写保护。")));
             Hint = a.Status == "Ok" ? "分区已重建并格式化，请「刷新设备」识别新卷。" : "重建失败，详见检查结果与日志。";
-            if (a.Status == "Ok") await RefreshDevicesAsync().ConfigureAwait(true);
+            if (a.Status == "Ok") await RefreshDevicesCoreAsync().ConfigureAwait(true);
         });
     }
 

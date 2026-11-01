@@ -59,6 +59,16 @@ public partial class SettingsViewModel : ObservableObject
         _update.StatusChanged += OnUpdateStatus;
     }
 
+    private bool _disposed;
+
+    /// <summary>页面 Unloaded 时释放：退订单例事件，否则旧 VM 永远挂在 UpdateService 上累积。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _update.StatusChanged -= OnUpdateStatus;
+    }
+
     private void LoadFromSettings()
     {
         var s = _settings.Current;

@@ -90,7 +90,9 @@ public static class NativeStorageIo
 
                 uint vendorOff = LE32(outBuf, 12), productOff = LE32(outBuf, 16),
                      revOff = LE32(outBuf, 20), bus = LE32(outBuf, 28);
-                bool removable = outBuf[10] != 0;
+                // STORAGE_DEVICE_DESCRIPTOR 布局：Type@8 / RemovableMedia@9（随后 2 字节对齐填充，
+                // VendorIdOffset@12）。此前误读 outBuf[10]（=填充字节恒 0），可移动标志永远 false。
+                bool removable = outBuf[9] != 0;
                 static string Str(byte[] b, uint off)
                 {
                     if (off == 0 || off >= b.Length) return "";
