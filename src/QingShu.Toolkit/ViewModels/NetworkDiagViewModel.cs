@@ -28,6 +28,7 @@ public partial class NetworkDiagViewModel : ObservableObject
     private DiagnosticSessionReport? _lastReport;
     private CheckContext? _lastContext;
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _ctsRepair; // 修复专用：与诊断分立，取消互不误伤
 
     public ObservableCollection<CheckItem> Items { get; } = new();
     public ObservableCollection<RepairAction> RepairActions { get; } = new();
@@ -45,6 +46,11 @@ public partial class NetworkDiagViewModel : ObservableObject
     [ObservableProperty] private int _skipCount;
     [ObservableProperty] private bool _hasRun;
     [ObservableProperty] private bool _isRepairing;
+
+    /// <summary>修复执行中的取消按钮可见性（bool → x:Bind 隐式转 Visibility，与全项目 BusyVis 模式一致）。</summary>
+    public bool RepairCancelVis => IsRepairing;
+
+    partial void OnIsRepairingChanged(bool value) => OnPropertyChanged(nameof(RepairCancelVis));
     [ObservableProperty] private string _repairHint = "";
     [ObservableProperty] private string _lastReportPath = "";
     [ObservableProperty] private bool _reportReady;
@@ -199,6 +205,12 @@ public partial class NetworkDiagViewModel : ObservableObject
         if (IsRunning) _cts?.Cancel();
     }
 
+    [RelayCommand]
+    private void CancelRepair()
+    {
+        if (IsRepairing) _ctsRepair?.Cancel();
+    }
+
     private void Recount()
     {
         PassCount = Items.Count(x => x.Status == CheckStatus.Pass);
@@ -235,9 +247,11 @@ public partial class NetworkDiagViewModel : ObservableObject
         IsRepairing = true;
         OnPropertyChanged(nameof(CanRepair));
         var progress = new Progress<RepairAction>(_ => { });
+        _ctsRepair?.Dispose();
+        _ctsRepair = new CancellationTokenSource(); // 每次执行重建：上轮取消的残留状态不得带入本轮
         try
         {
-            await _repair.RunAsync(selected, progress, CancellationToken.None).ConfigureAwait(true);
+            await _repair.RunAsync(selected, progress, _ctsRepair.Token).ConfigureAwait(true);
 
             // 修复成功 → 对应检查项转「已修复」：打通 Fixed 状态链路（计数芯片/绿勾/PDF 样式此前均已支持，
             // 但全工程从未写入该状态，导致修复后列表永远停在红/黄、无闭环反馈）。
@@ -258,6 +272,14 @@ public partial class NetworkDiagViewModel : ObservableObject
                 Recount();
             }
             RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
+        }
+        catch (OperationCanceledException)
+        {
+            RepairHint = "修复已取消（已执行的动作保留生效，可重新运行诊断复核）。";
+        }
+        catch (Exception ex)
+        {
+            RepairHint = $"修复执行失败：{ex.Message}。可重试，或导出 PDF 报告后手工处理。";
         }
         finally
         {

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -60,7 +61,7 @@ public sealed class UpdateService : IUpdateService
     private readonly ISettingsService _settings;
     private readonly ILogService _log;
     private readonly HttpClient _http;
-    private bool _saw404; // 本轮检查是否出现过 404（仓库地址错误/转私有的关键线索）
+    private bool _saw404; // 本轮检查是否出现过「直连」404（仓库地址错误/转私有/令牌无权限的关键线索；镜像 404 不算：公库镜像故障也会 404）
 
     public event Action<UpdateStatus>? StatusChanged;
     public UpdateStatus Current { get; private set; } = new() { Phase = UpdatePhase.Idle };
@@ -180,7 +181,7 @@ public sealed class UpdateService : IUpdateService
 
     private async Task<(ReleasesProbe Probe, JsonElement List, GitHubMirror? Via)> TryFetchReleasesAsync(string repo)
     {
-        var chain = GitHubAccess.BuildApiChain(MemoryId, _settings.Current.AccelerateGitHub, repo);
+        var chain = GitHubAccess.BuildApiChain(MemoryId, _settings.Current.AccelerateGitHub, repo, Token);
         foreach (var (mirror, url) in chain)
         {
             var (probe, list, via) = await FetchReleasesViaAsync(mirror, repo).ConfigureAwait(false);
@@ -215,7 +216,7 @@ public sealed class UpdateService : IUpdateService
             using var resp = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
-                if ((int)resp.StatusCode == 404) _saw404 = true;
+                if ((int)resp.StatusCode == 404 && GitHubAccess.IsDirect(mirror)) _saw404 = true; // 仅直连 404 才是仓库级线索
                 _log.App(LogLevel.Info, "update", $"检查线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
                 return (ReleasesProbe.Unreachable, default, mirror);
             }
@@ -292,6 +293,7 @@ public sealed class UpdateService : IUpdateService
                 release.AssetName = name;
                 release.AssetUrl = a.GetProperty("browser_download_url").GetString() ?? "";
                 release.AssetSize = a.TryGetProperty("size", out var sz) ? sz.GetInt64() : 0;
+                release.Digest = a.TryGetProperty("digest", out var dig) ? dig.GetString() ?? "" : "";
                 break;
             }
         }
@@ -321,7 +323,7 @@ public sealed class UpdateService : IUpdateService
 
     private async Task<(AtomProbe Probe, string Tag)> TryFetchLatestTagViaAtomAsync(string repo, UpdateChannel channel)
     {
-        var chain = GitHubAccess.BuildAtomChain(_settings.Current.AccelerateGitHub, repo);
+        var chain = GitHubAccess.BuildAtomChain(_settings.Current.AccelerateGitHub, repo, Token);
         foreach (var (mirror, url) in chain)
         {
             try
@@ -332,7 +334,7 @@ public sealed class UpdateService : IUpdateService
                 using var resp = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    if ((int)resp.StatusCode == 404) _saw404 = true;
+                    if ((int)resp.StatusCode == 404 && GitHubAccess.IsDirect(mirror)) _saw404 = true; // 仅直连 404 才是仓库级线索
                     _log.App(LogLevel.Info, "update", $"Atom 降级线路不可用（{mirror.Name}）：HTTP {(int)resp.StatusCode}");
                     continue;
                 }
@@ -458,7 +460,7 @@ public sealed class UpdateService : IUpdateService
             }
             else if (release.AssetSize > 0 && existing == release.AssetSize)
             {
-                EnsureZipFile(target, release); // 长度符合仍需校验内容，防历史异常残留
+                await EnsureZipFileAsync(target, release).ConfigureAwait(false); // 长度符合仍需完整性校验，防历史异常残留
                 Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
                     DownloadedFile = target, Message = "下载完成，准备安装。" });
                 return;
@@ -476,7 +478,7 @@ public sealed class UpdateService : IUpdateService
             // 镜像文件滞后（服务器文件比 API 报的 size 小）时 416 不代表下载完成，换线路重来
             if (release.AssetSize <= 0 || existing >= release.AssetSize)
             {
-                EnsureZipFile(target, release);
+                await EnsureZipFileAsync(target, release).ConfigureAwait(false);
                 Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
                     DownloadedFile = target, Message = "下载完成，准备安装。" });
                 return;
@@ -548,21 +550,70 @@ public sealed class UpdateService : IUpdateService
             throw new IOException($"下载不完整（{finalLen}/{total} 字节）");
         }
 
-        EnsureZipFile(target, release); // 完整性终检：防故障镜像返回 200+错误页被当作更新包
+        await EnsureZipFileAsync(target, release).ConfigureAwait(false); // 完整性终检：防故障镜像返回 200+错误页/截断数据被当作更新包
         Set(new UpdateStatus { Phase = UpdatePhase.ReadyToInstall, Release = release, ProgressPercent = 100,
             DownloadedFile = target, Message = $"下载完成，准备安装。（{FormatSpeed(speedBps)} 结束）" });
     }
 
     /// <summary>
-    /// zip 内容终检：文件头必须是 "PK"。故障镜像可能返回 200 + HTML 错误页（HTTP 层成功、
-    /// 长度也可能与流结束一致），不作校验会一路走到 Expand-Archive 才失败。
-    /// 校验失败删除残留文件并抛异常 → 上层自动切换下一线路。
+    /// 下载完整性终检（三级递进，失败均删除残留并抛异常 → 上层自动切换下一线路）：
+    ///  1) 文件头必须是 "PK"（任意 zip 变体）——拦故障镜像返回的 200+HTML 错误页；
+    ///  2) 发布页提供 SHA-256 摘要（GitHub API digest 字段）→ 全量哈希比对——能抓中间损坏/恶意篡改；
+    ///  3) 无摘要 → 兜底校验 zip 结束目录记录（EOCD，扫末尾 64KB）——能抓「PK 头完好但尾部截断」的残留。
     /// </summary>
-    private static void EnsureZipFile(string file, ReleaseInfo release)
+    private static async Task EnsureZipFileAsync(string file, ReleaseInfo release)
     {
-        if (IsZipHead(file)) return;
-        try { File.Delete(file); } catch { }
-        throw new IOException($"下载内容校验失败（非 zip 数据，线路 {release.Tag} 可能返回了错误页），已清理残留文件");
+        if (!IsZipHead(file))
+        {
+            try { File.Delete(file); } catch { }
+            throw new IOException("下载完整性校验失败（内容不是 zip，该线路可能返回了错误页），已清理残留文件");
+        }
+        if (release.Digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+        {
+            var expected = release.Digest["sha256:".Length..].Trim();
+            if (!await MatchesSha256Async(file, expected).ConfigureAwait(false))
+            {
+                try { File.Delete(file); } catch { }
+                throw new IOException("下载完整性校验失败（SHA-256 与发布页不符，文件可能已损坏），已清理残留文件");
+            }
+            return;
+        }
+        if (!HasZipEocd(file))
+        {
+            try { File.Delete(file); } catch { }
+            throw new IOException("下载完整性校验失败（zip 结束目录缺失，下载可能被截断），已清理残留文件");
+        }
+    }
+
+    /// <summary>全量 SHA-256 比对（大小写不敏感；读取失败视为不匹配）。</summary>
+    private static async Task<bool> MatchesSha256Async(string file, string expectedHex)
+    {
+        try
+        {
+            await using var fs = File.OpenRead(file);
+            var hash = await SHA256.HashDataAsync(fs).ConfigureAwait(false);
+            return string.Equals(Convert.ToHexString(hash), expectedHex, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>扫描末尾 64KB 是否存在 EOCD 签名 "PK\x05\x06"（zip 结束目录记录，任何非空 zip 必有）。</summary>
+    private static bool HasZipEocd(string file)
+    {
+        try
+        {
+            using var fs = File.OpenRead(file);
+            long tail = Math.Min(fs.Length, 65536 + 22);
+            if (tail < 22) return false;
+            fs.Seek(-tail, SeekOrigin.End);
+            var buf = new byte[(int)tail];
+            int off = 0, r;
+            while (off < buf.Length && (r = fs.Read(buf, off, buf.Length - off)) > 0) off += r;
+            for (int i = off - 22; i >= 0; i--)
+                if (buf[i] == 0x50 && buf[i + 1] == 0x4B && buf[i + 2] == 0x05 && buf[i + 3] == 0x06) return true;
+            return false;
+        }
+        catch { return false; }
     }
 
     /// <summary>文件头是否为 "PK"（任意 zip 变体均以 PK 开头）。</summary>
@@ -591,6 +642,7 @@ public sealed class UpdateService : IUpdateService
             var newDir = Path.Combine(DownloadDir, "app-new");
             var script = Path.Combine(DownloadDir, "update.cmd");
             var zip = downloadedFile.Replace("'", "''");
+            var psNewDir = newDir.Replace("'", "''"); // PS 单引号串内的撇号需双写（用户名含撇号时路径才不破裂）；cmd 双引号段无此问题
             File.WriteAllText(script, string.Join("\r\n", new[]
             {
                 "@echo off",
@@ -598,7 +650,7 @@ public sealed class UpdateService : IUpdateService
                 "echo 青枢工具箱正在更新，请勿关闭此窗口...",
                 "timeout /t 2 /nobreak >nul",
                 $"rmdir /s /q \"{newDir}\" 2>nul",
-                $"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -Force -LiteralPath '{zip}' -DestinationPath '{newDir}'\"",
+                $"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -Force -LiteralPath '{zip}' -DestinationPath '{psNewDir}'\"",
                 $"robocopy \"{newDir}\" \"{appDir}\" /e /is /it /njh /njs /ndl /nc /ns >nul",
                 "if errorlevel 8 (",
                 "  echo 更新失败，新版本已保存在下载目录，请手动更新。",

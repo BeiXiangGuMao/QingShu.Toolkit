@@ -91,8 +91,9 @@ public static class GitHubAccess
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
-    /// <summary>API 链（releases 列表）：记忆线路优先 → 支持 API 的加速线路 → 直连兜底。</summary>
-    public static List<(GitHubMirror Mirror, string Url)> BuildApiChain(string memoryId, bool accelerate, string repo)
+    /// <summary>API 链（releases 列表）：带 Token 时直连优先（镜像无法透传凭据，私库必 404，
+    /// 先打镜像只会白耗时并污染 404 线索）；无 Token 时记忆线路优先 → 支持 API 的加速线路 → 直连兜底。</summary>
+    public static List<(GitHubMirror Mirror, string Url)> BuildApiChain(string memoryId, bool accelerate, string repo, string? token = null)
     {
         var chain = new List<(GitHubMirror, string)>();
         void Add(GitHubMirror m)
@@ -100,6 +101,7 @@ public static class GitHubAccess
             if (!m.SupportsApi || chain.Any(c => c.Item1.Id == m.Id)) return;
             chain.Add((m, $"{m.Prefix}https://api.github.com/repos/{repo}/releases?per_page=15"));
         }
+        if (!string.IsNullOrEmpty(token)) Add(Direct); // Token 模式：直连最优路径，镜像降为直连不可达时的公库后备
         if (accelerate)
         {
             var mem = Find(memoryId);
@@ -128,8 +130,8 @@ public static class GitHubAccess
         return chain;
     }
 
-    /// <summary>Atom 降级链（API 全灭时经 releases.atom 解析最新 tag）。</summary>
-    public static List<(GitHubMirror Mirror, string Url)> BuildAtomChain(bool accelerate, string repo)
+    /// <summary>Atom 降级链（API 全灭时经 releases.atom 解析最新 tag）：带 Token 时直连优先，理由同 API 链。</summary>
+    public static List<(GitHubMirror Mirror, string Url)> BuildAtomChain(bool accelerate, string repo, string? token = null)
     {
         var chain = new List<(GitHubMirror, string)>();
         void Add(GitHubMirror m)
@@ -137,6 +139,7 @@ public static class GitHubAccess
             if (chain.Any(c => c.Item1.Id == m.Id)) return;
             chain.Add((m, $"{m.Prefix}https://github.com/{repo}/releases.atom"));
         }
+        if (!string.IsNullOrEmpty(token)) Add(Direct);
         if (accelerate)
         {
             // 实测 gh-proxy.com 不放行 releases.atom，放链尾；403 型镜像对国内 IP 大概率可用

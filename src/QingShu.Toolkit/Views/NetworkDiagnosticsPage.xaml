@@ -246,9 +246,13 @@
                     </Grid.RowDefinitions>
                     <Grid>
                         <TextBlock Text="一键修复（傻瓜模式）" Style="{StaticResource SectionTitleTextBlock}" />
-                        <Button Content="修复所选" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Right"
-                                Command="{x:Bind Vm.FixSelectedCommand}"
-                                IsEnabled="{x:Bind Vm.CanRepair, Mode=OneWay}" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                            <Button Content="取消修复" Command="{x:Bind Vm.CancelRepairCommand}"
+                                    Visibility="{x:Bind Vm.RepairCancelVis, Mode=OneWay}" />
+                            <Button Content="修复所选" Style="{StaticResource AccentButtonStyle}"
+                                    Command="{x:Bind Vm.FixSelectedCommand}"
+                                    IsEnabled="{x:Bind Vm.CanRepair, Mode=OneWay}" />
+                        </StackPanel>
                     </Grid>
                     <ListView Grid.Row="1" ItemsSource="{x:Bind Vm.RepairActions, Mode=OneWay}" SelectionMode="None">
                         <ListView.ItemContainerStyle>

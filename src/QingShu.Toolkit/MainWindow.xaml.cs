@@ -251,18 +251,27 @@ public sealed partial class MainWindow : Window
 
     private async void ConfirmInstall()
     {
-        var dlg = new ContentDialog
+        try
         {
-            Title = "准备安装更新",
-            Content = "更新包已下载完成。点击“立即安装”后，青枢工具箱将自动退出、完成文件替换并重新启动。",
-            PrimaryButtonText = "立即安装",
-            CloseButtonText = "稍后",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = ContentFrame.XamlRoot
-        };
-        var result = await dlg.ShowAsync();
-        if (result == ContentDialogResult.Primary && _update.Current.DownloadedFile.Length > 0)
-            _update.Install(_update.Current.DownloadedFile);
+            var dlg = new ContentDialog
+            {
+                Title = "准备安装更新",
+                Content = "更新包已下载完成。点击“立即安装”后，青枢工具箱将自动退出、完成文件替换并重新启动。",
+                PrimaryButtonText = "立即安装",
+                CloseButtonText = "稍后",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = ContentFrame.XamlRoot
+            };
+            var result = await dlg.ShowAsync();
+            if (result == ContentDialogResult.Primary && _update.Current.DownloadedFile.Length > 0)
+                _update.Install(_update.Current.DownloadedFile);
+        }
+        catch (Exception ex)
+        {
+            // async void 异常不会被任何调用方捕获，全局处理只写日志——这里主动落盘留痕
+            App.Services.GetRequiredService<Services.Logging.ILogService>()
+                .App(Services.Logging.LogLevel.Error, "update", $"安装确认弹窗失败：{ex.Message}");
+        }
     }
 
     private void OnUpdateStatus(UpdateStatus st)

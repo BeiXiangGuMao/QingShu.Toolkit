@@ -83,6 +83,8 @@ public sealed class ReleaseInfo
     public string AssetName { get; set; } = "";
     public string AssetUrl { get; set; } = "";
     public long AssetSize { get; set; }
+    /// <summary>GitHub 为资产提供的摘要（如 "sha256:hex"），用于下载完整性校验；空=发布页未提供。</summary>
+    public string Digest { get; set; } = "";
     public string HtmlUrl { get; set; } = "";
     public DateTime PublishedAt { get; set; }
     public bool IsPrerelease { get; set; }

@@ -117,6 +117,8 @@
                             <Button Content="全选" Command="{x:Bind Vm.SelectAllImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="全不选" Command="{x:Bind Vm.SelectNoneImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteImCommand}" VerticalAlignment="Bottom" />
+                            <Button Content="取消删除" Command="{x:Bind Vm.CancelImDeleteCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.ImDeleteCancelVis, Mode=OneWay}" />
                         </StackPanel>
                         <Grid Grid.Row="2" RowSpacing="6">
                             <Grid.RowDefinitions>
@@ -199,6 +201,8 @@
                             <Button Content="全选" Command="{x:Bind Vm.SelectAllImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="全不选" Command="{x:Bind Vm.SelectNoneImCommand}" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteImCommand}" VerticalAlignment="Bottom" />
+                            <Button Content="取消删除" Command="{x:Bind Vm.CancelImDeleteCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.ImDeleteCancelVis, Mode=OneWay}" />
                         </StackPanel>
                         <Grid Grid.Row="2" RowSpacing="6">
                             <Grid.RowDefinitions>
@@ -280,6 +284,8 @@
                                     Visibility="{x:Bind Vm.LargeBusyVis, Mode=OneWay}" />
                             <Button Content="打开位置" Click="OpenLargeFolder_Click" VerticalAlignment="Bottom" />
                             <Button Content="删除所选" Command="{x:Bind Vm.DeleteLargeCommand}" VerticalAlignment="Bottom" />
+                            <Button Content="取消删除" Command="{x:Bind Vm.CancelLargeDeleteCommand}" VerticalAlignment="Bottom"
+                                    Visibility="{x:Bind Vm.LargeDeleteCancelVis, Mode=OneWay}" />
                         </StackPanel>
                         <Grid Grid.Row="1" RowSpacing="6">
                             <Grid.RowDefinitions>

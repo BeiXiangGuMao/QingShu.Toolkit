@@ -117,6 +117,9 @@ public partial class CleanupViewModel : ObservableObject
     private CancellationTokenSource? _ctsWeChat;
     private CancellationTokenSource? _ctsQq;
     private CancellationTokenSource? _ctsLarge;
+    // 删除链路取消源：三个删除服务均为逐文件检查 ct（break 返回部分结果），此前 VM 传 None 接不上
+    private CancellationTokenSource? _ctsImDelete;
+    private CancellationTokenSource? _ctsLargeDelete;
 
     public ObservableCollection<CleanTargetVm> RegularTargets { get; } = new();
 
@@ -277,7 +280,7 @@ public partial class CleanupViewModel : ObservableObject
     [RelayCommand]
     private void CancelRegularScan()
     {
-        if (IsRegularBusy) _ctsRegular?.Cancel();
+        if (IsRegularBusy) _ctsRegular?.Cancel(); // 扫描与清理共用：清理阶段点击同样生效（CleanAsync 在目标间响应）
     }
 
     [RelayCommand]
@@ -296,17 +299,25 @@ public partial class CleanupViewModel : ObservableObject
         RegularResult = "";
         var succeeded = false;
         string? completion = null;
+        _ctsRegular?.Dispose();
+        _ctsRegular = new CancellationTokenSource(); // 清理与扫描共用取消源：进入前重建，防上轮取消状态残留
         try
         {
             // 必须携带扫描结果：回收站目标依赖 SizeBytes 判断空/非空，传零值会被误判“已是空的”直接跳过（历史 bug）
             var scan = selected.Select(vm => vm.LastScan ?? new CleanScanTarget(vm.Def, 0, 0)).ToList();
             var log = new Progress<string>(line => RegularResult = line);
-            var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, CancellationToken.None).ConfigureAwait(true);
+            var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, _ctsRegular.Token).ConfigureAwait(true);
             completion = $"清理完成：{report.ToSummary()}" +
                          (DeleteToRecycleBin && report.FreedBytes > 0 ? "（已移入回收站，清空回收站后才真正释放磁盘空间）" : "");
             RegularStatus = completion;
             LastResult = $"{DateTime.Now:HH:mm} 清理释放 {FormatHelper.Bytes(report.FreedBytes)}";
             succeeded = true;
+        }
+        catch (OperationCanceledException)
+        {
+            // CleanAsync 在目标间响应取消（ThrowIfCancellationRequested）：已完成目标保留生效，
+            // 不自动重扫（列表停留扫描时快照），引导用户手动重扫确认
+            RegularStatus = "清理已取消（已执行目标保留生效，可重新扫描确认实际状态）。";
         }
         catch (Exception ex)
         {
@@ -466,7 +477,18 @@ public partial class CleanupViewModel : ObservableObject
         ImSelectedText = $"已选 {count} 项 · {FormatHelper.Bytes(bytes)}";
     }
 
-    private bool _imDeleteBusy;
+    [ObservableProperty] private bool _imDeleteBusy;
+
+    /// <summary>微信/QQ 删除执行中的取消按钮可见性（bool → x:Bind 隐式转 Visibility）。</summary>
+    public bool ImDeleteCancelVis => _imDeleteBusy;
+
+    partial void OnImDeleteBusyChanged(bool value) => OnPropertyChanged(nameof(ImDeleteCancelVis));
+
+    [RelayCommand]
+    private void CancelImDelete()
+    {
+        if (_imDeleteBusy) _ctsImDelete?.Cancel();
+    }
 
     [RelayCommand]
     private async Task DeleteImAsync()
@@ -478,15 +500,23 @@ public partial class CleanupViewModel : ObservableObject
         _imDeleteBusy = true;
         try
         {
-            var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
+            _ctsImDelete?.Dispose();
+            _ctsImDelete = new CancellationTokenSource(); // 每次执行重建，防上轮取消状态残留
+            var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, _ctsImDelete.Token).ConfigureAwait(true);
+            bool canceled = _ctsImDelete.IsCancellationRequested; // 服务逐文件 break 不抛 OCE，需显式判定
             var mode = DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）";
-            var status = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{mode}";
-            if (failed > 0 && ok == 0)
-                status += "。本次没有任何文件被删除（全部被占用或已不存在）";
-            else if (failed > 0 && AnyImRunning())
-                status += "；微信/QQ 正在运行，失败项多为其正在使用的文件，完全退出后重试可继续清理";
+            var status = canceled
+                ? $"删除已取消（中止前已处理：成功 {ok}，失败/跳过 {failed}，{FormatHelper.Bytes(freed)}{mode}）"
+                : $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{mode}";
+            if (!canceled)
+            {
+                if (failed > 0 && ok == 0)
+                    status += "。本次没有任何文件被删除（全部被占用或已不存在）";
+                else if (failed > 0 && AnyImRunning())
+                    status += "；微信/QQ 正在运行，失败项多为其正在使用的文件，完全退出后重试可继续清理";
+            }
             QqStatus = "";
-            // 先重扫刷新列表（内部会写扫描状态），再回写删除结果，避免“删除完成”提示被覆盖
+            // 先重扫刷新列表（内部会写扫描状态），再回写删除结果，避免“删除完成/已取消”提示被覆盖
             await ScanWeChatAsync().ConfigureAwait(true);
             _ = ScanQqAsync();
             WeChatStatus = status;
@@ -548,7 +578,18 @@ public partial class CleanupViewModel : ObservableObject
         }
     }
 
-    private bool _largeDeleteBusy;
+    [ObservableProperty] private bool _largeDeleteBusy;
+
+    /// <summary>大文件删除执行中的取消按钮可见性（bool → x:Bind 隐式转 Visibility）。</summary>
+    public bool LargeDeleteCancelVis => _largeDeleteBusy;
+
+    partial void OnLargeDeleteBusyChanged(bool value) => OnPropertyChanged(nameof(LargeDeleteCancelVis));
+
+    [RelayCommand]
+    private void CancelLargeDelete()
+    {
+        if (_largeDeleteBusy) _ctsLargeDelete?.Cancel();
+    }
 
     [RelayCommand]
     private async Task DeleteLargeAsync()
@@ -559,9 +600,16 @@ public partial class CleanupViewModel : ObservableObject
         _largeDeleteBusy = true;
         try
         {
-            var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, CancellationToken.None).ConfigureAwait(true);
-            LargeStatus = $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}"
-                          + (failed > 0 && ok == 0 ? "。本次没有任何文件被删除（文件被占用或已不存在）" : "");
+            _ctsLargeDelete?.Dispose();
+            _ctsLargeDelete = new CancellationTokenSource(); // 每次执行重建，防上轮取消状态残留
+            var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, _ctsLargeDelete.Token).ConfigureAwait(true);
+            bool canceled = _ctsLargeDelete.IsCancellationRequested; // 服务逐文件 break 不抛 OCE，需显式判定
+            var tail = canceled ? "）" : "";
+            LargeStatus = (canceled
+                ? $"删除已取消（中止前已处理：成功 {ok}，失败/跳过 {failed}，{FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}"
+                : $"删除完成：成功 {ok}，失败/跳过 {failed}，处理 {FormatHelper.Bytes(freed)}{(DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）")}")
+                          + tail
+                          + (!canceled && failed > 0 && ok == 0 ? "。本次没有任何文件被删除（文件被占用或已不存在）" : "");
             _ = ScanLargeAsync();
         }
         catch (Exception ex)
