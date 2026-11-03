@@ -23,7 +23,8 @@ public interface IPdfReportService
 /// <summary>
 /// QuestPDF 报告模板（正规文档样式）：
 /// 页眉品牌条 + 报告编号（按日累计次数）→ 设备与位置信息 → 结论概览 →
-/// 分层诊断明细表 → 修复记录 → 分级处置建议 → 签名栏 → 页脚页码。
+/// 分层诊断明细表 → 修复记录 → 综合推断（全报告证据合一的最终判断） →
+/// 分级处置建议 → 签名栏 → 页脚页码。
 /// </summary>
 public sealed class PdfReportService : IPdfReportService
 {
@@ -163,6 +164,7 @@ public sealed class PdfReportService : IPdfReportService
             ComposeDetailSections(col, data);
             ComposeSlowCausesSection(col, data);
             ComposeRepairSection(col, data);
+            ComposeInferenceSection(col, data);
             ComposeAdviceSection(col, data);
             ComposeSignSection(col, data);
         });
@@ -295,6 +297,7 @@ public sealed class PdfReportService : IPdfReportService
             conclusion = $"本次诊断发现 {fail} 项故障、{warn} 项警告。" +
                 (fixedCount > 0 ? $"其中 {fixedCount} 项已尝试自动修复。" : "") +
                 "未通过的故障项请按“四、分级处置建议”逐项处理，处理后可重新运行诊断复核。";
+        conclusion += "全部证据的最终综合判断见下方「综合推断（最终判断）」一节。";
         col.Item().PaddingTop(8).PaddingBottom(2).Text(conclusion).FontSize(9.5f).LineHeight(1.6f);
     }
 
@@ -590,6 +593,58 @@ public sealed class PdfReportService : IPdfReportService
                 if (output.Length > 160) output = output[..160] + "…";
                 BodyCell(table, string.IsNullOrEmpty(output) ? "—" : output, bg, "#6E6E73");
             }
+        });
+    }
+
+    // ---------- 综合推断（全报告证据合一的最终判断） ----------
+    // ReportInference 把结论概览/诊断明细/拓扑快照/网速实测/低速原因/修复记录的
+    // 分散结论合成为一段统一结论：判定横幅 + 跨节证据链 + 交叉验证 + 责任归属。
+    private static void ComposeInferenceSection(ColumnDescriptor col, NetworkReportData data)
+    {
+        var inf = ReportInference.Build(data);
+        SectionTitle(col, "综合推断（最终判断）");
+
+        var (fg, bg) = inf.Level switch
+        {
+            2 => ("#D70015", "#FFEBEA"),
+            1 => ("#C93400", "#FFF4E5"),
+            _ => ("#248A3D", "#E9F9EE")
+        };
+        col.Item().Background(bg).Border(0.8f).BorderColor(fg)
+            .PaddingVertical(7).PaddingHorizontal(10)
+            .Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(9.5f).LineHeight(1.6f));
+                t.Span($"【{inf.Badge}】 ").SemiBold().FontColor(fg);
+                t.Span(inf.Verdict).FontColor("#1D1D1F");
+            });
+
+        col.Item().PaddingTop(7).Text("推断依据（跨节证据链，逐条注明来源）")
+            .FontSize(9).SemiBold().FontColor("#48484A");
+        col.Item().PaddingTop(2).Column(ev =>
+        {
+            foreach (var e in inf.Evidence)
+                ev.Item().PaddingVertical(1.5f).Text(t =>
+                {
+                    t.DefaultTextStyle(x => x.FontSize(8.8f).LineHeight(1.55f).FontColor("#48484A"));
+                    t.Span("• ").FontColor(fg).SemiBold();
+                    t.Span(e);
+                });
+        });
+
+        if (!string.IsNullOrWhiteSpace(inf.CrossCheck))
+            col.Item().PaddingTop(6).Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(8.8f).LineHeight(1.55f));
+                t.Span("交叉验证：").SemiBold().FontColor("#1D1D1F");
+                t.Span(inf.CrossCheck).FontColor("#48484A");
+            });
+
+        col.Item().PaddingTop(4).Text(t =>
+        {
+            t.DefaultTextStyle(x => x.FontSize(8.8f).LineHeight(1.55f));
+            t.Span("责任归属与下一步：").SemiBold().FontColor("#1D1D1F");
+            t.Span(inf.Responsibility).FontColor("#48484A");
         });
     }
 
