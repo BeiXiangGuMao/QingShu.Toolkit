@@ -103,13 +103,15 @@ public static partial class NetworkChecks
             if (servers.Count == 0) return CheckOutcome.Skip("无 DNS 服务器可探测。");
 
             var details = new List<string>();
+            var probes = new List<TopoDnsProbe>(); // 拓扑快照数据：逐台结果供拓扑图 DNS 分支使用
             int okCount = 0;
             foreach (var s in servers)
             {
                 var r = await DnsQueryHelper.ResolveAsync(s, "www.baidu.com", 2000).ConfigureAwait(false);
-                if (r.Ok) { okCount++; details.Add($"✓ {s} → {r.AddressText}（{r.ElapsedMs} ms）"); }
-                else details.Add($"✗ {s} → {r.Error}（{r.ElapsedMs} ms）");
+                if (r.Ok) { okCount++; details.Add($"✓ {s} → {r.AddressText}（{r.ElapsedMs} ms）"); probes.Add(new TopoDnsProbe(s, true, r.ElapsedMs)); }
+                else { details.Add($"✗ {s} → {r.Error}（{r.ElapsedMs} ms）"); probes.Add(new TopoDnsProbe(s, false, r.ElapsedMs)); }
             }
+            ctx.SetShared(TopoKeys.Dns, probes);
 
             if (okCount == 0)
             {
@@ -217,6 +219,10 @@ public static partial class NetworkChecks
             bool looksPortal = r.LooksLikeHtml && keywords.Any(k => snippet.Contains(k, StringComparison.OrdinalIgnoreCase));
 
             ctx.SetShared("portal.detected", true);
+            // 拓扑快照数据：门户探测结果供拓扑图认证分支使用
+            ctx.SetShared(TopoKeys.Portal, new TopoSegmentStats(
+                portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal) ? portalUrl : NcsiUrl,
+                null, false, r.ElapsedMs, "检测到认证门户（未通过认证）"));
             // 仅在真实捕获到门户地址（非 NCSI 兑底）时写入共享上下文，
             // 避免一键修复打开无意义的探测地址
             if (portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal))
@@ -364,12 +370,16 @@ public static partial class NetworkChecks
         public override async Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
         {
             var r = await NetworkProbeHelper.HttpAsync(NcsiUrl, followRedirect: false).ConfigureAwait(false);
+            // 拓扑快照数据：无论结论如何都写入共享上下文供拓扑图使用
+            ctx.SetShared(TopoKeys.Inet, new TopoSegmentStats(NcsiUrl, null, r.Ok && !r.IsRedirect, r.ElapsedMs,
+                r.IsRedirect ? "HTTP 被重定向到认证门户" : ""));
             if (!r.Ok)
                 return CheckOutcome.Fail("HTTP 探测失败", "IP 或可达但 HTTP 被拦截：常见于认证过期（配合认证项）或出口防火墙策略。", $"错误: {r.Error}（{r.ElapsedMs} ms）");
 
             if (r.IsRedirect)
             {
                 ctx.SetShared("portal.detected", true);
+                ctx.SetShared(TopoKeys.Portal, new TopoSegmentStats(NcsiUrl, null, false, r.ElapsedMs, "HTTP 被重定向到认证门户"));
                 return CheckOutcome.Fail("HTTP 被重定向到认证门户",
                     "城域网认证已过期，所有 HTTP 请求都被引导到登录页，请重新认证（可一键修复打开认证页面）。",
                     canFix: true, $"Location: {r.Location}");

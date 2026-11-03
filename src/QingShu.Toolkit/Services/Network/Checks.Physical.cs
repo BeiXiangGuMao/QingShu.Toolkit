@@ -249,6 +249,8 @@ public static partial class NetworkChecks
                 return CheckOutcome.Fail("没有默认网关可测试", "未配置网关意味着无法访问其他网段，请先解决 IP 配置问题。");
 
             var stats = await NetworkProbeHelper.PingAsync(gw, ctx.PingCount, ctx.TimeoutMs).ConfigureAwait(false);
+            // 拓扑快照数据：无论结论如何都写入共享上下文供拓扑图使用
+            ctx.SetShared(TopoKeys.Gateway, new TopoSegmentStats(gw, stats, stats.Received > 0));
             var details = new List<string>
             {
                 $"网关地址: {gw}",

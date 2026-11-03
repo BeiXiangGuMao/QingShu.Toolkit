@@ -27,6 +27,7 @@ public partial class NetworkDiagViewModel : ObservableObject
 
     private DiagnosticSessionReport? _lastReport;
     private CheckContext? _lastContext;
+    private string _topoModeText = ""; // 拓扑卡「生成来源」用的模式名（修复后重建时复用）
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _ctsRepair; // 修复专用：与诊断分立，取消互不误伤
 
@@ -55,6 +56,20 @@ public partial class NetworkDiagViewModel : ObservableObject
     [ObservableProperty] private string _lastReportPath = "";
     [ObservableProperty] private bool _reportReady;
     [ObservableProperty] private string _sessionText = "";
+    // ---- 网络拓扑（诊断后自动生成，页面 Canvas 渲染） ----
+    [ObservableProperty] private NetworkTopology _topology = NetworkTopology.Empty;
+
+    /// <summary>有节点即显示拓扑卡（Empty 快照 0 节点 → 隐藏）。</summary>
+    public bool HasTopology => Topology.Nodes.Count > 0;
+    public string TopologySummary => Topology.SummaryText;
+    public string TopologyBuiltText => Topology.BuiltFrom;
+
+    partial void OnTopologyChanged(NetworkTopology value)
+    {
+        OnPropertyChanged(nameof(HasTopology));
+        OnPropertyChanged(nameof(TopologySummary));
+        OnPropertyChanged(nameof(TopologyBuiltText));
+    }
     // ---- 低速专项实时测速（约 400ms 一拍） ----
     [ObservableProperty] private string _speedPhaseText = "尚未测速";
     [ObservableProperty] private string _speedMbpsText = "—";
@@ -145,6 +160,8 @@ public partial class NetworkDiagViewModel : ObservableObject
             _lastContext = _diag.LastContext;
             HasRun = true;
             Recount();
+            _topoModeText = ModeTextOf(mode);
+            Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
             ProgressText = $"诊断完成：通过 {PassCount} · 警告 {WarnCount} · 未通过 {FailCount}" +
                 (FixedCount > 0 ? $" · 已修复 {FixedCount}" : "");
             SessionText = $"会话日志：{_lastReport.StartedAt:yyyy-MM-dd HH:mm:ss} · {_lastReport.ModeText}";
@@ -156,11 +173,24 @@ public partial class NetworkDiagViewModel : ObservableObject
             ProgressText = "诊断已取消。";
             Recount();
             if (mode == RunMode.Speed) SpeedPhaseText = "已取消";
+            // 部分结果拓扑：已完成节点照常着色，未完成节点灰色并标注「诊断已取消」
+            if (_diag.LastContext != null)
+            {
+                _lastContext = _diag.LastContext;
+                _topoModeText = ModeTextOf(mode);
+                Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText, cancelled: true);
+            }
         }
         catch (Exception ex)
         {
             ProgressText = $"诊断异常：{ex.Message}";
             _log.App(LogLevel.Error, "diag", "诊断执行异常", new { ex = ex.ToString() });
+            if (_diag.LastContext != null)
+            {
+                _lastContext = _diag.LastContext;
+                _topoModeText = ModeTextOf(mode);
+                Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
+            }
         }
         finally
         {
@@ -270,6 +300,8 @@ public partial class NetworkDiagViewModel : ObservableObject
                     }
                 }
                 Recount();
+                // 修复后重建拓扑：Fixed 状态映射为绿色「正常」，断点定位随实际修复结果收敛
+                Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
             }
             RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
         }
@@ -342,6 +374,13 @@ public partial class NetworkDiagViewModel : ObservableObject
         _log.App(LogLevel.Info, "report", $"已导出诊断报告：{path}");
         return path;
     }
+
+    private static string ModeTextOf(RunMode mode) => mode switch
+    {
+        RunMode.Full => "全面诊断",
+        RunMode.Quick => "快速体检",
+        _ => "网速与低速分析"
+    };
 
     private List<(int, string)> BuildRecommendations()
     {

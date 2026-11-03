@@ -266,6 +266,13 @@ public static partial class NetworkChecks
             else
                 details.Add("互联网目标（baidu）：目标禁 ICMP，跳过该段对比");
 
+            // 拓扑快照数据：在判定/提前返回之前写入——无论结论如何都供拓扑图使用
+            //（出口段/目标段/内网跳的结构化实测，键约定见 TopoKeys）
+            ctx.SetShared(TopoKeys.Exit, new TopoSegmentStats(NetworkProbeHelper.PublicDnsServers[0], stDns, stDns.Received > 0));
+            if (!stFar.AllLost)
+                ctx.SetShared(TopoKeys.Target, new TopoSegmentStats("www.baidu.com", stFar, stFar.Received > 0));
+            ctx.SetShared(TopoKeys.Hops, innerStats.Select(h => new TopoHop(h.Ip, h.Ping, h.Role)).ToList());
+
             // 判定 1：接入段 —— 班级中转设备/楼宇软路由的接入侧过载或劣化
             if (stGw.LossPct > 20 || stGw.AvgMs > 30 || stGw.JitterMs > 25)
             {

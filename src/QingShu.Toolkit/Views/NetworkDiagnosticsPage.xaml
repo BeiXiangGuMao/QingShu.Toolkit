@@ -16,6 +16,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -143,8 +144,56 @@
             </StackPanel>
         </Border>
 
+        <!-- 网络拓扑卡（诊断完成后自动生成） -->
+        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="16,12,16,12"
+                Visibility="{x:Bind Vm.HasTopology, Mode=OneWay}">
+            <StackPanel Spacing="6">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="网络拓扑图" Style="{StaticResource SectionTitleTextBlock}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.TopologySummary, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2" Text="{x:Bind Vm.TopologyBuiltText, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
+                               Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                </Grid>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto"
+                              VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
+                    <Viewbox Height="230" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left">
+                        <Canvas x:Name="TopoCanvas" Background="Transparent" />
+                    </Viewbox>
+                </ScrollViewer>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Ellipse Width="9" Height="9" Fill="{ThemeResource SuccessChipFillBrush}"
+                                 Stroke="{ThemeResource SuccessTextBrush}" StrokeThickness="1" />
+                        <TextBlock Text="正常" Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Ellipse Width="9" Height="9" Fill="{ThemeResource WarningChipFillBrush}"
+                                 Stroke="{ThemeResource WarningTextBrush}" StrokeThickness="1" />
+                        <TextBlock Text="警告" Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Ellipse Width="9" Height="9" Fill="{ThemeResource ErrorChipFillBrush}"
+                                 Stroke="{ThemeResource ErrorTextBrush}" StrokeThickness="1" />
+                        <TextBlock Text="未通过" Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Ellipse Width="9" Height="9" Fill="{ThemeResource CardBorderBrush}" />
+                        <TextBlock Text="未检出" Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+                    <TextBlock Text="虚线 = 无线链路 / 未实测段 · 悬停节点查看完整实测数据"
+                               Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
         <!-- 检查结果列表 -->
-        <ListView Grid.Row="4" ItemsSource="{x:Bind Vm.Items, Mode=OneWay}"
+        <ListView Grid.Row="5" ItemsSource="{x:Bind Vm.Items, Mode=OneWay}"
                   SelectionMode="None" IsItemClickEnabled="False">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -233,7 +282,7 @@
         </ListView>
 
         <!-- 修复 + 导出 -->
-        <Grid Grid.Row="5" ColumnSpacing="12" Height="236">
+        <Grid Grid.Row="6" ColumnSpacing="12" Height="236">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1.2*" />
                 <ColumnDefinition Width="*" />
