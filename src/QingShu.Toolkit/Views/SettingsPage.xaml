@@ -125,9 +125,11 @@
                                       IsOn="{x:Bind Vm.AccelerateGitHub, Mode=TwoWay}" />
                     </StackPanel>
                     <TextBox Header="GitHub 仓库" Text="{x:Bind Vm.UpdateRepo, Mode=TwoWay}" Style="{StaticResource SettingTextBox}" />
-                    <TextBox Header="GitHub Token（私有仓库更新用，可选）" Text="{x:Bind Vm.GitHubToken, Mode=TwoWay}"
-                             Style="{StaticResource SettingTextBox}"
-                             PlaceholderText="粘贴 GitHub 个人访问令牌（Personal Access Token）；留空则只能检查公开仓库" />
+                    <!-- 密码框呈现：令牌是凭据，明文 TextBox 会被旁人瞥屏（Task 52）；右侧显隐钮供粘贴时自查 -->
+                    <PasswordBox Header="GitHub Token（私有仓库更新用，可选）" Password="{x:Bind Vm.GitHubToken, Mode=TwoWay}"
+                                 Width="320" HorizontalAlignment="Left" CornerRadius="8"
+                                 IsPasswordRevealButtonEnabled="True"
+                                 PlaceholderText="粘贴 GitHub 个人访问令牌（Personal Access Token）；留空则只能检查公开仓库" />
                     <TextBlock Text="令牌仅保存在本机设置文件，不随程序打包；检查与下载只把令牌随 GitHub 官方直连请求发送，绝不发给第三方加速线路。私有仓库需令牌具备该仓库的读取权限。"
                                Style="{StaticResource CaptionTextBlock}" />
                     <StackPanel Orientation="Horizontal" Spacing="10">

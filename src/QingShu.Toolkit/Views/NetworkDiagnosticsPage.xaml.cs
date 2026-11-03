@@ -27,6 +27,11 @@ public sealed partial class NetworkDiagnosticsPage : Page
         InitializeComponent();
         // 拓扑卡：VM.Topology 变化 → Canvas 重画（诊断完成/取消/修复后三个时机都会触发）
         Vm.PropertyChanged += OnVmPropertyChanged;
+        // 离开页面收尾：取消在途诊断/修复并释放取消源（对齐 Dashboard/PopupGuard/Settings 惯例；
+        // VM 为 transient，不收尾则旧操作后台裸奔且与复入页的新 VM 并发写单例诊断服务）
+        this.Unloaded += (_, _) => Vm.Dispose();
+        // 主题切换时按新主题重画拓扑：节点/连线颜色是本地 FromHex 构造，不随 ThemeResource 自动切换
+        ActualThemeChanged += (_, _) => RenderTopology();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)

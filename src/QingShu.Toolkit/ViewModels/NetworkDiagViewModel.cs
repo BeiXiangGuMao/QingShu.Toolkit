@@ -235,6 +235,29 @@ public partial class NetworkDiagViewModel : ObservableObject
         if (IsRunning) _cts?.Cancel();
     }
 
+    // ================= 生命周期收尾 =================
+    // 与 Dashboard/PopupGuard/Settings 同一惯例：页面 Unloaded 时取消在途长操作并释放取消源。
+    // VM 为 transient：切页再进是全新实例，若不收尾，旧诊断/修复会在后台裸奔（白耗出口带宽），
+    // 且复入页的新 VM 与旧操作并发——诊断服务是单例，LastContext 会被两路交叉写入。
+
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try
+        {
+            _cts?.Cancel();
+            _ctsRepair?.Cancel();
+        }
+        catch (ObjectDisposedException) { } // 与 StartAsync/FixSelectedAsync finally 的释放窗口兜底（同为 UI 线程，实际不会撞）
+        _cts?.Dispose();
+        _ctsRepair?.Dispose();
+        _cts = null;
+        _ctsRepair = null;
+    }
+
     [RelayCommand]
     private void CancelRepair()
     {
@@ -360,7 +383,9 @@ public partial class NetworkDiagViewModel : ObservableObject
             Repairs = RepairActions.ToList(),
             Recommendations = BuildRecommendations(),
             SpeedTest = speed,
-            SlowCauses = _lastReport.SlowCauses
+            SlowCauses = _lastReport.SlowCauses,
+            // 拓扑快照随报告入 PDF（Task 52）：页面 Canvas 与报告共用同一份实测构建结果
+            Topology = Topology.Nodes.Count > 0 ? Topology : null
         };
         var path = await _pdf.GenerateAsync(data).ConfigureAwait(true);
         LastReportPath = path;

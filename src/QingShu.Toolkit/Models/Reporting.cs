@@ -72,6 +72,8 @@ public sealed class NetworkReportData
     public SpeedTestResult? SpeedTest { get; set; }
     /// <summary>低速嫌疑原因分析（低速专项）</summary>
     public List<SlowCause> SlowCauses { get; set; } = new();
+    /// <summary>网络拓扑快照（诊断实测自动生成；无快照时为 null，报告不渲染拓扑节）。</summary>
+    public NetworkTopology? Topology { get; set; }
 }
 
 /// <summary>自动更新信息（GitHub Releases）。</summary>

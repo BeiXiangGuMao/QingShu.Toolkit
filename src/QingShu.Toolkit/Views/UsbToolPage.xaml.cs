@@ -17,6 +17,9 @@ public sealed partial class UsbToolPage : Page
     {
         Vm = App.Services.GetRequiredService<UsbToolViewModel>();
         InitializeComponent();
+        // 离开页面收尾：取消在途破坏性操作（步骤边界生效）。VM 为 transient 且 USB 服务层
+        // 无重入护栏——不收尾则旧操作后台写盘不止，复入页的新 VM 可对同一U盘并发二次操作。
+        this.Unloaded += (_, _) => Vm.Dispose();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)

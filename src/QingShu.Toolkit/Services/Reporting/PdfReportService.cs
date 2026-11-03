@@ -158,6 +158,7 @@ public sealed class PdfReportService : IPdfReportService
         {
             ComposeInfoSection(col, data);
             ComposeSummarySection(col, data);
+            ComposeTopologySnapshot(col, data);
             ComposeSpeedSection(col, data);
             ComposeDetailSections(col, data);
             ComposeSlowCausesSection(col, data);
@@ -302,6 +303,102 @@ public sealed class PdfReportService : IPdfReportService
         row.AutoItem().PaddingRight(6).Background(bgColor).Border(0.5f).BorderColor(bgColor)
             .PaddingVertical(5).PaddingHorizontal(10).Text($"{label} {count}")
             .FontSize(9.5f).SemiBold().FontColor(textColor);
+    }
+
+    // ---------- 网络拓扑快照（诊断实测自动生成，Task 51 遗留项落地） ----------
+    // 与诊断页 Canvas 拓扑同一份数据（NetworkTopologyBuilder 构建）：主链横排节点框 +
+    // 健康着色连线，DNS/认证门户作出口分支行；未诊断（无快照）时整节不渲染。
+    private static void ComposeTopologySnapshot(ColumnDescriptor col, NetworkReportData data)
+    {
+        var topo = data.Topology;
+        if (topo is not { Nodes.Count: > 0 }) return;
+
+        SectionTitle(col, "网络拓扑快照（本次诊断实测自动生成）");
+        col.Item().PaddingTop(2).Text(topo.SummaryText).FontSize(9).LineHeight(1.5f).FontColor("#48484A");
+
+        // 主链：本机 → 网关 → 内网跳(≤3) → 校园出口 → 互联网（构建器按链序产出节点，取链上角色）
+        var chain = topo.Nodes.Where(n => n.Role is TopoRole.Local or TopoRole.Gateway
+            or TopoRole.InnerHop or TopoRole.Exit or TopoRole.Internet).ToList();
+        var edges = topo.Edges.ToDictionary(e => (e.From, e.To));
+        col.Item().PaddingTop(4).Row(row =>
+        {
+            for (int i = 0; i < chain.Count; i++)
+            {
+                if (i > 0)
+                {
+                    var prev = chain[i - 1].Key;
+                    var cur = chain[i].Key;
+                    row.ConstantItem(13).AlignMiddle()
+                        .Element(cc => ConnectorBand(cc, edges.TryGetValue((prev, cur), out var e) ? e : null));
+                }
+                row.RelativeItem().Element(cc => TopoNodeBox(cc, chain[i]));
+            }
+        });
+
+        // 出口分支：DNS 服务器 / 认证门户（逻辑上自「校园出口」引出，与页面拓扑分支一致）
+        var branches = topo.Nodes.Where(n => n.Role is TopoRole.Dns or TopoRole.Portal).ToList();
+        if (branches.Count > 0)
+        {
+            col.Item().PaddingTop(7).Text("出口分支（自「校园出口」引出：DNS 解析与城域网认证门户）")
+                .FontSize(8).FontColor("#6E6E73");
+            col.Item().PaddingTop(3).Row(row =>
+            {
+                for (int i = 0; i < branches.Count; i++)
+                {
+                    if (i > 0) row.ConstantItem(10);
+                    row.RelativeItem().Element(cc => TopoNodeBox(cc, branches[i]));
+                }
+            });
+        }
+
+        col.Item().PaddingTop(7).Text(
+                "连线颜色 = 该段实测健康度：绿 正常 / 黄 瓶颈 / 红 异常；灰白虚线 = 无线链路或未实测段。" +
+                $"生成来源：{topo.BuiltFrom}")
+            .FontSize(8).FontColor("#8E8E93").LineHeight(1.5f);
+    }
+
+    /// <summary>链路连线带：按边健康着色；虚线边（无线/未实测）分段留白，与页面拓扑图例一致。</summary>
+    private static void ConnectorBand(IContainer c, TopoEdge? edge)
+    {
+        var color = edge?.Health switch
+        {
+            TopoHealth.Ok => "#248A3D",
+            TopoHealth.Warn => "#C93400",
+            TopoHealth.Fail => "#D70015",
+            _ => "#C7C7CC"
+        };
+        bool dashed = edge?.Dashed ?? false;
+        c.Row(rr =>
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                var seg = rr.ConstantItem(1.7f).Height(1.1f);
+                if (!dashed || i % 2 == 0) seg.Background(color); // 虚线奇数段留白占位
+            }
+        });
+    }
+
+    /// <summary>拓扑节点框：徽标 + 标题 + 地址 + 状态一句话，边框/状态色按健康档位（与结论概览色板一致）。</summary>
+    private static void TopoNodeBox(IContainer c, TopoNode n)
+    {
+        var (color, bg) = n.Health switch
+        {
+            TopoHealth.Ok => ("#248A3D", "#E9F9EE"),
+            TopoHealth.Warn => ("#C93400", "#FFF4E5"),
+            TopoHealth.Fail => ("#D70015", "#FFEBEA"),
+            _ => ("#6E6E73", "#F5F5F7")
+        };
+        c.Border(0.8f).BorderColor(color).Background(bg).PaddingVertical(3.5f).PaddingHorizontal(4)
+            .Column(box =>
+            {
+                box.Item().Text(n.Badge).FontSize(6.3f).FontColor("#6E6E73");
+                box.Item().Text(string.IsNullOrWhiteSpace(n.Title) ? "—" : n.Title)
+                    .FontSize(7.3f).SemiBold().FontColor("#1D1D1F").LineHeight(1.25f);
+                box.Item().Text(string.IsNullOrWhiteSpace(n.Subtitle) ? "—" : n.Subtitle)
+                    .FontSize(6.3f).FontColor("#48484A").LineHeight(1.3f);
+                if (!string.IsNullOrWhiteSpace(n.StatusText))
+                    box.Item().Text(n.StatusText).FontSize(6.3f).FontColor(color).LineHeight(1.3f);
+            });
     }
 
     // ---------- 分层明细 ----------

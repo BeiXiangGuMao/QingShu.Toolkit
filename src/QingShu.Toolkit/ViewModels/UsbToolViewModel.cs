@@ -268,6 +268,24 @@ public partial class UsbToolViewModel : ObservableObject
         if (IsBusy) _cts?.Cancel();
     }
 
+    // ================= 生命周期收尾 =================
+    // 页面 Unloaded 时取消在途长操作（取消在步骤边界生效，不会打断已开始的写入块）。
+    // Task 52 实锤：VM 为 transient 且 USB 服务层无重入护栏——不收尾则旧破坏性操作
+    // （扩容检测/表面扫描/重建分区）在切页后继续写盘，复入页的新 VM IsBusy=false，
+    // 可对同一U盘并发发起第二次破坏性操作。
+
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { _cts?.Cancel(); }
+        catch (ObjectDisposedException) { } // 与 RunGuardedAsync finally 的释放窗口兜底（同为 UI 线程，实际不会撞）
+        _cts?.Dispose();
+        _cts = null;
+    }
+
     private async Task RunGuardedAsync(string busyText, Func<CancellationToken, Task> body)
     {
         IsBusy = true;
