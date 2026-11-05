@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      元旦晚会智能分流 · 独立服务端（被控端，控制台常驻）。
+      与工具箱内插件共享同一份 Gala 核心源码（下方 Compile 链接，单一事实源），
+      不依赖 WinUI / 宿主程序集；发布为单文件 exe 后复制到各节点机即可运行。
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>QingShu.GalaAgent</AssemblyName>
+    <RootNamespace>QingShu.GalaAgent</RootNamespace>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 共享核心（与插件工程同一份源码）：Agent 逻辑 + 拓扑模型/协议帧 + 压力模型（优先级名称等） -->
+    <Compile Include="..\QingShu.Plugin.GalaDispatch\Gala\GalaAgent.cs" />
+    <Compile Include="..\QingShu.Plugin.GalaDispatch\Gala\GalaModels.cs" />
+    <Compile Include="..\QingShu.Plugin.GalaDispatch\Gala\GalaPressure.cs" />
+  </ItemGroup>
+
+</Project>
