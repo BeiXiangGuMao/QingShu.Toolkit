@@ -320,7 +320,6 @@ public sealed class GalaMaster
 
     private async Task ProbeLoopAsync(CancellationToken ct)
     {
-        using var ping = new Ping();
         while (!ct.IsCancellationRequested)
         {
             try
@@ -328,32 +327,12 @@ public sealed class GalaMaster
                 var nodes = _cfg.Nodes
                     .Where(n => (n.Type == "router" || n.Type == "server") && n.Ip.Length > 0)
                     .ToList();
-                foreach (var node in nodes)
+
+                // 并行探测：单轮耗时 ≈ 最慢一个节点（约 3 秒），不再随节点数线性放大，
+                // 保证 tickSeconds=3 时大拓扑（几十节点）也不拖慢调度周期
+                var results = await Task.WhenAll(nodes.Select(n => ProbeNodeAsync(n, ct))).ConfigureAwait(false);
+                foreach (var (node, alive, rtt) in results)
                 {
-                    if (ct.IsCancellationRequested) break;
-                    double rtt = -1;
-                    bool alive = false;
-                    try
-                    {
-                        var reply = await ping.SendPingAsync(node.Ip, 1500).ConfigureAwait(false);
-                        if (reply.Status == IPStatus.Success)
-                        {
-                            rtt = reply.RoundtripTime;
-                            alive = true;
-                        }
-                    }
-                    catch { }
-                    if (node.Type == "server" && node.ProbePort > 0)
-                    {
-                        var sw = Stopwatch.StartNew();
-                        bool tcpOk = await ProbeTcpAsync(node.Ip, node.ProbePort, ct).ConfigureAwait(false);
-                        sw.Stop();
-                        if (tcpOk)
-                        {
-                            alive = true;
-                            rtt = rtt < 0 ? sw.Elapsed.TotalMilliseconds : Math.Max(rtt, sw.Elapsed.TotalMilliseconds);
-                        }
-                    }
                     PressureProbe probe;
                     lock (_sync)
                     {
@@ -363,6 +342,7 @@ public sealed class GalaMaster
                 }
 
                 await DispatchPassAsync(ct).ConfigureAwait(false);
+                CleanupStaleSessions();
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex) { Event($"探测/调度循环异常：{ex.Message}"); }
@@ -370,6 +350,54 @@ public sealed class GalaMaster
             try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _cfg.Settings.TickSeconds)), ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    /// <summary>单节点探测：ICMP Ping +（服务器可选）TCP 端口握手，取较优 RTT。Ping 实例不可并发复用，故每任务独立创建。</summary>
+    private static async Task<(GalaNodeConfig Node, bool Alive, double RttMs)> ProbeNodeAsync(GalaNodeConfig node, CancellationToken ct)
+    {
+        double rtt = -1;
+        bool alive = false;
+        try
+        {
+            using var ping = new Ping();
+            var reply = await ping.SendPingAsync(node.Ip, 1500).ConfigureAwait(false);
+            if (reply.Status == IPStatus.Success)
+            {
+                rtt = reply.RoundtripTime;
+                alive = true;
+            }
+        }
+        catch { }
+        if (node.Type == "server" && node.ProbePort > 0)
+        {
+            var sw = Stopwatch.StartNew();
+            bool tcpOk = await ProbeTcpAsync(node.Ip, node.ProbePort, ct).ConfigureAwait(false);
+            sw.Stop();
+            if (tcpOk)
+            {
+                alive = true;
+                rtt = rtt < 0 ? sw.Elapsed.TotalMilliseconds : Math.Max(rtt, sw.Elapsed.TotalMilliseconds);
+            }
+        }
+        return (node, alive, rtt);
+    }
+
+    /// <summary>
+    /// 清理离线超过 30 分钟的会话（重连保分配的语义保留 30 分钟，防现场临时终端无限积累）。
+    /// </summary>
+    private void CleanupStaleSessions()
+    {
+        List<string> gone = new();
+        lock (_sync)
+        {
+            var cutoff = DateTime.UtcNow.AddMinutes(-30);
+            foreach (var kv in _sessions)
+            {
+                if (!kv.Value.Alive && kv.Value.LastSeenUtc < cutoff) gone.Add(kv.Key);
+            }
+            foreach (var id in gone) _sessions.Remove(id);
+        }
+        if (gone.Count > 0) Event($"已清理离线超 30 分钟的会话：{string.Join("、", gone)}");
     }
 
     private static async Task<bool> ProbeTcpAsync(string ip, int port, CancellationToken ct)
@@ -547,6 +575,30 @@ public sealed class GalaMaster
                 Event($"已请求 {clientId} 即时上报指标");
             }
             catch (Exception ex) { Event($"即时上报请求失败（{clientId}）：{ex.Message}"); }
+        });
+        return true;
+    }
+
+    /// <summary>远程限速标记：0 = 解除。客户端落盘 assignment.json 供本机执行器消费。</summary>
+    public bool TrySetThrottle(string clientId, int kbps)
+    {
+        var session = FindAlive(clientId);
+        if (session == null) return false;
+        kbps = Math.Max(0, kbps);
+        var cmd = new CommandMsg
+        {
+            CmdId = $"th-{DateTime.Now:HHmmss}-{Guid.NewGuid().ToString("N")[..6]}",
+            Action = "throttle", Value = kbps
+        };
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await SendAsync(session, GalaFrame.Encode(cmd), CancellationToken.None).ConfigureAwait(false);
+                session.ThrottleKbps = kbps;
+                Event($"限速标记 {clientId} → {(kbps > 0 ? kbps + " kbps" : "解除")}");
+            }
+            catch (Exception ex) { Event($"限速标记失败（{clientId}）：{ex.Message}"); }
         });
         return true;
     }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -71,6 +72,38 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
             }
         });
 
+        context.RegisterQuickAction("导出事件日志", _ =>
+        {
+            try
+            {
+                var folder = context.DataFolder;
+                Directory.CreateDirectory(folder);
+                var path = Path.Combine(folder, $"gala-events-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+                var lines = new List<string>();
+                try
+                {
+                    var m = EnsureMaster().Snapshot();
+                    lines.Add($"===== 主控端事件（监听中：{(m.Running ? "是" : "否")}）=====");
+                    lines.AddRange(m.Events);
+                }
+                catch (Exception ex) { lines.Add($"主控事件读取失败：{ex.Message}"); }
+                lines.Add("");
+                try
+                {
+                    var a = EnsureAgent().Snapshot();
+                    lines.Add($"===== 客户端事件（运行中：{(a.Running ? "是" : "否")}）=====");
+                    lines.AddRange(a.Events);
+                }
+                catch (Exception ex) { lines.Add($"客户端事件读取失败：{ex.Message}"); }
+                File.WriteAllLines(path, lines);
+                return Task.FromResult<string?>($"已导出事件日志：{path}（共 {lines.Count} 行）");
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<string?>($"导出失败：{ex.Message}");
+            }
+        });
+
         await Task.CompletedTask;
     }
 
@@ -128,7 +161,7 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
             if (_agent == null)
             {
                 var ctx = _ctx ?? throw new InvalidOperationException("插件上下文未就绪（插件未加载或已卸载）");
-                _agent = new GalaAgent(Config, msg => ctx.Log("info", msg), ctx.DataFolder);
+                _agent = new GalaAgent(msg => ctx.Log("info", msg), ctx.DataFolder);
             }
             return _agent;
         }
@@ -146,7 +179,8 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
         lock (_gate) { _cfg = cfg; }
         _ctx?.Log("info", $"拓扑配置已重载：节点 {cfg.Nodes.Count} · 路由规则 {cfg.Routes.Count}");
 
-        // 主控端在运行 → 按新配置重启（客户端连接参数由面板界面持有，无需重启）
+        // 主控端在运行 → 按新配置重启。旧 GalaMaster 实例持有的是旧配置快照，
+        // 必须先停旧实例、摘除引用后再重建（否则 EnsureMaster 返回旧实例，重启等于没换配置）
         GalaMaster? master;
         bool wasRunning;
         lock (_gate) { master = _master; wasRunning = master?.IsRunning == true; }
@@ -157,8 +191,13 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
                 try
                 {
                     await master.StopAsync().ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        if (ReferenceEquals(_master, master)) _master = null;
+                    }
                     var fresh = EnsureMaster();
                     fresh.Start();
+                    _ctx?.Log("info", "主控端已按新拓扑配置重启");
                 }
                 catch (Exception ex) { _ctx?.Log("warn", $"按新配置重启主控失败：{ex.Message}"); }
             });

@@ -41,6 +41,7 @@ public sealed class GalaPanelView : UserControl
     private readonly ListView _clientList;
     private readonly ComboBox _routeBox;
     private readonly ComboBox _prioBox;
+    private readonly TextBox _throttleBox;
     private readonly TextBlock _eventText;
     private readonly TextBlock _agentAssignText;
     private readonly TextBlock _agentMetricsText;
@@ -169,6 +170,9 @@ public sealed class GalaPanelView : UserControl
         assignBtn.Click += (_, _) => OnAssignClick();
         var prioBtn = new Button { Content = "设优先级", Padding = new Thickness(12, 4, 12, 4) };
         prioBtn.Click += (_, _) => OnPriorityClick();
+        _throttleBox = new TextBox { PlaceholderText = "kbps（空/0解除）", Width = 130 };
+        var throttleBtn = new Button { Content = "限速标记", Padding = new Thickness(12, 4, 12, 4) };
+        throttleBtn.Click += (_, _) => OnThrottleClick();
         var pingBtn = new Button { Content = "即时采集", Padding = new Thickness(12, 4, 12, 4) };
         pingBtn.Click += (_, _) => OnPingNowClick();
 
@@ -177,6 +181,8 @@ public sealed class GalaPanelView : UserControl
         opsRow.Children.Add(assignBtn);
         opsRow.Children.Add(_prioBox);
         opsRow.Children.Add(prioBtn);
+        opsRow.Children.Add(_throttleBox);
+        opsRow.Children.Add(throttleBtn);
         opsRow.Children.Add(pingBtn);
 
         _eventText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Foreground = SecondaryBrush() };
@@ -355,6 +361,29 @@ public sealed class GalaPanelView : UserControl
         catch (Exception ex) { _statusText.Text = $"即时采集失败：{ex.Message}"; }
     }
 
+    private void OnThrottleClick()
+    {
+        try
+        {
+            var master = _owner.EnsureMaster();
+            if (_selectedClientId.Length == 0) { _statusText.Text = "请先在列表中选中一个客户端。"; return; }
+            var raw = _throttleBox.Text.Trim();
+            int kbps = 0;
+            if (raw.Length > 0 && (!int.TryParse(raw, out kbps) || kbps < 0))
+            {
+                _statusText.Text = "限速值需为非负整数 kbps（留空或 0 = 解除限速）。";
+                return;
+            }
+            bool ok = master.TrySetThrottle(_selectedClientId, kbps);
+            _statusText.Text = ok
+                ? (kbps > 0
+                    ? $"限速标记已下发：{_selectedClientId} → {kbps} kbps（客户端落盘 assignment.json 供执行器消费）。"
+                    : $"限速解除指令已下发：{_selectedClientId}。")
+                : "下发失败：客户端不在线或已断开。";
+        }
+        catch (Exception ex) { _statusText.Text = $"限速标记失败：{ex.Message}"; }
+    }
+
     // ================= 定时刷新 =================
 
     private void RefreshAll()
@@ -435,6 +464,7 @@ public sealed class GalaPanelView : UserControl
             _clientList.Items.Add(
                 $"{(c.Online ? "●" : "○")} {c.Hostname} · {c.Ip} · → {OrDash(c.ServerId)}（经 {OrDash(c.RouterId)}）"
                 + $" · {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}优先"
+                + (c.ThrottleKbps > 0 ? $" · 限速 {c.ThrottleKbps} kbps" : "")
                 + (c.Online ? $" · RTT {FmtMs(c.RttMasterMs)} · ↑{c.TxKbps:F0} ↓{c.RxKbps:F0} kbps" : " · 离线"));
         }
         _clientList.SelectedIndex = restore;

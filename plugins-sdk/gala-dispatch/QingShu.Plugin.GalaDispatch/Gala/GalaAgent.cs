@@ -40,7 +40,6 @@ public sealed class AgentSnapshot
 /// </summary>
 public sealed class GalaAgent
 {
-    private readonly GalaTopologyConfig _cfg;
     private readonly Action<string> _log;
     private readonly string _dataFolder;
     private readonly object _sync = new();
@@ -69,9 +68,8 @@ public sealed class GalaAgent
     public bool IsConnected => _connected;
     public string AssignmentFile { get; }
 
-    public GalaAgent(GalaTopologyConfig cfg, Action<string> log, string dataFolder)
+    public GalaAgent(Action<string> log, string dataFolder)
     {
-        _cfg = cfg;
         _log = log;
         _dataFolder = dataFolder;
         AssignmentFile = Path.Combine(dataFolder, "assignment.json");
@@ -134,6 +132,7 @@ public sealed class GalaAgent
                 await tcp.ConnectAsync(_masterHost, _port, connectCts.Token).ConfigureAwait(false);
                 var stream = tcp.GetStream();
                 lock (_sync) { _tcp = tcp; _connected = true; _failStreak = 0; }
+                lock (_pingWindow) { _pingWindow.Clear(); } // 新连接重开丢包窗口，旧连接样本不作数
                 Event($"已连接主控 {_masterHost}:{_port}");
 
                 var hello = new HelloMsg
