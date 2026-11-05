@@ -86,6 +86,9 @@
                 <NavigationViewItem Tag="usb" Content="U盘工具">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="MapDrive" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Tag="plugins" Content="插件管理">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="AllApps" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Tag="logs" Content="日志查看">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Clock" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

@@ -11,6 +11,7 @@ using QingShu.Toolkit.Services.Cleanup;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Network;
 using QingShu.Toolkit.Services.Optimize;
+using QingShu.Toolkit.Services.Plugins;
 using QingShu.Toolkit.Services.Power;
 using QingShu.Toolkit.Services.Popup;
 using QingShu.Toolkit.Services.Reporting;
@@ -69,6 +70,8 @@ public partial class App : Application
         Services.GetRequiredService<IPowerService>().Start();
         Services.GetRequiredService<IPopupBlockerService>().Start();
         _ = Services.GetRequiredService<IUpdateService>().AutoCheckOnStartupAsync();
+        // 插件：自动加载全部「已启用且验签通过」项（逐个隔离失败，绝不拖垮启动）
+        _ = Services.GetRequiredService<PluginManager>().AutoLoadEnabledAsync();
 
         MainWindow = new MainWindow();
         MainWindow.Activate();
@@ -106,6 +109,11 @@ public partial class App : Application
         services.AddSingleton<IUsbScanService, UsbScanService>();
         services.AddSingleton<IUsbRepairService, UsbRepairService>();
 
+        // 插件（官方签名加载/卸载 + 仓库 Release 访问）
+        services.AddSingleton<PluginReleaseAccess>();
+        services.AddSingleton<PluginManager>();
+        services.AddSingleton<IPluginManager>(sp => sp.GetRequiredService<PluginManager>());
+
         // 优化
         services.AddSingleton<IMemoryOptimizeService, MemoryOptimizeService>();
         services.AddSingleton<IStartupListService, StartupListService>();
@@ -119,6 +127,7 @@ public partial class App : Application
         services.AddTransient<UsbToolViewModel>();
         services.AddTransient<LogsViewModel>();
         services.AddTransient<SettingsViewModel>();
+        services.AddTransient<PluginsViewModel>();
     }
 
     /// <summary>跨页导航入口（供各页面快捷跳转）。</summary>

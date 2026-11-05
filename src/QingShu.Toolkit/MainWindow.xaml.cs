@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Services;
+using QingShu.Toolkit.Services.Plugins;
 using QingShu.Toolkit.Services.Power;
 using QingShu.Toolkit.Services.Popup;
 using QingShu.Toolkit.Services.Update;
@@ -34,6 +35,7 @@ public sealed partial class MainWindow : Window
         ["optimize"] = typeof(OptimizePage),
         ["popupguard"] = typeof(PopupGuardPage),
         ["usb"] = typeof(UsbToolPage),
+        ["plugins"] = typeof(PluginsPage),
         ["logs"] = typeof(LogsPage),
         ["settings"] = typeof(SettingsPage)
     };
@@ -82,6 +84,9 @@ public sealed partial class MainWindow : Window
         _navSyncing = true;
         SelectNavItem("dashboard");
         _navSyncing = false;
+
+        // 插件收尾：窗口关闭 → 逐个通知 OnUnloadedAsync 并卸载 ALC（尽力而为，不阻塞退出）
+        Closed += (_, _) => App.Services.GetRequiredService<PluginManager>().BeginShutdown();
     }
 
     /// <summary>

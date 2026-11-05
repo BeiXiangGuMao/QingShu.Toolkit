@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>QingShu.Plugin.Sample</AssemblyName>
+    <RootNamespace>QingShu.Plugin.Sample</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。
+      优先读环境变量 QINGSHU_HOME；没有则在 dotnet build 时传 -p:QingshuHome=... 或改这里。
+      插件契约（IQToolkitPlugin / IPluginContext ...）由宿主程序集提供，运行期类型同一。
+    -->
+    <QingshuHome Condition="'$(QingshuHome)' == ''">C:\Tools\QingShu.Toolkit</QingshuHome>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="QingShu.Toolkit">
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

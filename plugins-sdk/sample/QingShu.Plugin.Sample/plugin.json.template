@@ -1,0 +1,11 @@
+{
+  "id": "qingshu.sample",
+  "name": "示例插件（Release 查询）",
+  "version": "1.0.0",
+  "author": "BeiXiangGuMao",
+  "description": "演示 IQToolkitPlugin 契约：注册快捷动作、读取仓库 Release 列表、使用插件数据目录。",
+  "mainAssembly": "QingShu.Plugin.Sample.dll",
+  "entryType": "QingShu.Plugin.Sample.SamplePlugin",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "releases", "storage" ]
+}
