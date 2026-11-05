@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Microsoft.UI.Xaml;
 
 namespace QingShu.Toolkit.Services.Plugins;
 
@@ -20,6 +21,25 @@ public interface IQToolkitPlugin
 
     /// <summary>卸载回调：插件在此释放句柄/停任务/落盘状态；返回后宿主立即卸载 ALC。</summary>
     Task OnUnloadedAsync();
+}
+
+/// <summary>
+/// 可选能力：插件自绘 UI 面板（挂载在「插件管理」页的面板区）。
+/// 实现 = 插件程序集引用 Microsoft.WindowsAppSDK（与宿主同版本）并实现本接口；
+/// 未实现的插件不受影响（可选接口）。Microsoft.UI.Xaml.* 在默认加载上下文中共享，
+/// 跨 ALC 类型同一，宿主可直接把返回元素放进视觉树。
+/// </summary>
+public interface IQToolkitUiProvider
+{
+    /// <summary>面板标题（显示在面板头部，如「元旦晚会智能分流 · 主控台」）。</summary>
+    string PanelTitle { get; }
+
+    /// <summary>
+    /// 创建面板视图（宿主 UI 线程调用；每次打开面板调用一次，旧视图由宿主替换丢弃）。
+    /// 插件应在元素从视觉树移除（Unloaded）后自行停掉界面定时器等纯 UI 资源；
+    /// 后台服务（网络监听等）由 OnUnloadedAsync 统一收尾，与面板开关无关。
+    /// </summary>
+    FrameworkElement CreatePanelView();
 }
 
 /// <summary>宿主提供给插件的运行环境。权限由 manifest.permissions 声明、宿主强制执行。</summary>

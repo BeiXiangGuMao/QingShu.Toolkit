@@ -20,6 +20,8 @@ public sealed class PluginEntry
     public string VerifyError { get; init; } = "";
     public bool Enabled { get; init; }
     public bool Loaded { get; init; }
+    /// <summary>运行中且实现了 IQToolkitUiProvider（可在插件页打开自绘面板）。</summary>
+    public bool HasUiPanel { get; init; }
     public IReadOnlyList<PluginQuickAction> QuickActions { get; init; } = Array.Empty<PluginQuickAction>();
 }
 
@@ -102,7 +104,7 @@ public sealed class PluginManager : IPluginManager
                 var name = Path.GetFileName(dir);
                 if (name.Length == 0 || name.StartsWith(".")) continue;
                 var verify = PluginSigning.VerifyFolderCore(dir);
-                bool loaded = _runtime.ContainsKey(name);
+                bool loaded = _runtime.TryGetValue(name, out var rt);
                 bool enabled = !_enabled.TryGetValue(name, out var en) || en;
                 list.Add(new PluginEntry
                 {
@@ -113,7 +115,8 @@ public sealed class PluginManager : IPluginManager
                     VerifyError = verify.ErrorText,
                     Enabled = enabled,
                     Loaded = loaded,
-                    QuickActions = loaded && _runtime.TryGetValue(name, out var rt)
+                    HasUiPanel = rt?.Instance is IQToolkitUiProvider,
+                    QuickActions = loaded && rt != null
                         ? rt.Context.ActionsSnapshot()
                         : Array.Empty<PluginQuickAction>()
                 });
@@ -240,6 +243,28 @@ public sealed class PluginManager : IPluginManager
             return asm.GetExportedTypes().FirstOrDefault(t => !t.IsAbstract && typeof(IQToolkitPlugin).IsAssignableFrom(t));
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// 创建插件自绘 UI 面板（必须在 UI 线程调用）。插件未运行 / 未实现 IQToolkitUiProvider /
+    /// 视图创建抛异常时返回 null（异常已记日志）。
+    /// </summary>
+    public Microsoft.UI.Xaml.FrameworkElement? CreatePanelView(string folderName)
+    {
+        lock (_sync)
+        {
+            if (!_runtime.TryGetValue(folderName, out var rt)) return null;
+            if (rt.Instance is not IQToolkitUiProvider ui) return null;
+            try
+            {
+                return ui.CreatePanelView();
+            }
+            catch (Exception ex)
+            {
+                _log.App(LogLevel.Error, "plugin", $"插件 {folderName} 创建面板失败：{ex.Message}");
+                return null;
+            }
+        }
     }
 
     // ================= 卸载 =================

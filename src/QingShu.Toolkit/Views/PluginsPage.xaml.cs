@@ -26,4 +26,11 @@ public sealed partial class PluginsPage : Page
         if (Vm.Plugins.Count == 0 && !Vm.IsBusy)
             _ = Vm.ScanCommand.ExecuteAsync(null);
     }
+
+    /// <summary>收起当前插件面板（按钮直连；自带兜底，异常不外抛）。</summary>
+    private void ClosePanelClick(object sender, RoutedEventArgs e)
+    {
+        try { Vm.ClosePanelFromUi(); }
+        catch { } // UI 回调不外抛（全局异常约束）
+    }
 }

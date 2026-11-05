@@ -110,6 +110,30 @@ var path = await access.DownloadAssetAsync("v1.2.0", "QingShu.Toolkit-v1.2.0.zip
 
 网络行为与本机自动更新完全一致：多线路自动回退、`Token` 只随直连 GitHub 请求发送（绝不发给加速镜像）、私库必须在「设置」里填过 GitHub Token。404 时先检查 Token 是否覆盖该仓库。
 
+### 3.5 插件 UI 面板（可选能力 IQToolkitUiProvider）
+
+快捷动作只适合"点一下出文本"的场景；需要富交互（拓扑图 / 列表 / 操控台）的插件实现可选接口
+`IQToolkitUiProvider`，面板就会挂载在「插件管理」页的面板区：
+
+```csharp
+public sealed class MyPlugin : IQToolkitPlugin, IQToolkitUiProvider
+{
+    public string PanelTitle => "我的面板";
+    public FrameworkElement CreatePanelView() => new MyPanelView(this); // 宿主 UI 线程调用
+}
+```
+
+要点：
+
+- 插件工程需 `UseWinUI=true` + 与宿主**同版本**的 `Microsoft.WindowsAppSDK`（参见
+  `gala-dispatch/QingShu.Plugin.GalaDispatch.csproj`，含 `WindowsSdkPackageVersion` 对齐说明）。
+  `Microsoft.UI.Xaml.*` 在默认加载上下文共享，跨 ALC 类型同一，宿主可直接把返回元素放进视觉树。
+- 面板元素建议纯代码构建（不写 .xaml，免去插件工程的 XAML 编译配置），范例见 GalaPanelView。
+- 生命周期：同一时刻宿主只挂载一个面板；「卸载插件」前宿主自动收起面板（视图引用会阻止 ALC
+  回收）；面板关闭（Unloaded）≠ 插件停止——插件应在视图 Unloaded 里停纯 UI 资源（定时器），
+  后台服务由 `OnUnloadedAsync` 统一收尾。
+- 未实现该接口的插件完全不受影响；旧宿主加载带面板的插件只是没有「面板」按钮。
+
 ## 4. 签名与安装（官方流程）
 
 ```powershell

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 与宿主完全一致的 TFM / SDK 投影 / MinVersion，保证跨 ALC 类型同一 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <WindowsSdkPackageVersion>10.0.26100.86</WindowsSdkPackageVersion>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>QingShu.Plugin.GalaDispatch</AssemblyName>
+    <RootNamespace>QingShu.Plugin.GalaDispatch</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!--
+      宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。
+      优先读环境变量 QINGSHU_HOME；没有则在 dotnet build 时传 -p:QingshuHome=... 或改这里。
+      契约（IQToolkitPlugin / IQToolkitUiProvider / IPluginContext）由宿主程序集提供，运行期类型同一。
+    -->
+    <QingshuHome Condition="'$(QingshuHome)' == ''">C:\Tools\QingShu.Toolkit</QingshuHome>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 版本必须与宿主一致：Microsoft.UI.Xaml.* 在默认加载上下文共享，跨 ALC 类型同一 -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <Reference Include="QingShu.Toolkit">
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

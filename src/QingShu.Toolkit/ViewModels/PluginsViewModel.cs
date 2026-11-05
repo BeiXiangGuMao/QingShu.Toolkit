@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Xaml;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Plugins;
 
@@ -24,6 +25,14 @@ public partial class PluginsViewModel : ObservableObject
 
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusText = "正在初始化…";
+
+    // 插件自绘面板（IQToolkitUiProvider）：同一时刻最多挂载一个
+    [ObservableProperty] private bool _panelOpen;
+    [ObservableProperty] private string _panelTitle = "";
+    [ObservableProperty] private FrameworkElement? _panelContent;
+    private string? _openPanelFolder;
+
+    public bool PanelOpenVis => PanelOpen;
 
     public string PluginsRoot => _manager.PluginsRoot;
     public string KeyFingerprint => _manager.KeyFingerprint;
@@ -75,6 +84,78 @@ public partial class PluginsViewModel : ObservableObject
             Plugins.Add(row);
         }
         OnPropertyChanged(nameof(EmptyVis));
+        // 已打开面板的插件若不再运行（被卸载/目录移除/验签失效），同步收起面板
+        if (_openPanelFolder is { } open
+            && !entries.Any(e => e.FolderName.Equals(open, StringComparison.OrdinalIgnoreCase) && e.Loaded))
+        {
+            ClosePanel();
+            StatusText = "面板所属插件已不在运行，面板已收起。";
+        }
+    }
+
+    // ================= 插件面板 =================
+
+    /// <summary>打开/收起指定插件的自绘面板（已开同一插件时再次点击即收起）。</summary>
+    internal void TogglePanel(PluginItemVm row)
+    {
+        try
+        {
+            if (PanelOpen && string.Equals(_openPanelFolder, row.FolderName, StringComparison.OrdinalIgnoreCase))
+            {
+                ClosePanel();
+                StatusText = $"已收起「{row.DisplayName}」面板。";
+                return;
+            }
+            var view = _manager.CreatePanelView(row.FolderName);
+            if (view == null)
+            {
+                StatusText = $"「{row.DisplayName}」无法提供面板（未运行、无面板能力或创建失败，详见应用日志）。";
+                return;
+            }
+            PanelContent = view;
+            PanelTitle = $"{row.DisplayName} · 面板";
+            _openPanelFolder = row.FolderName;
+            PanelOpen = true;
+            StatusText = $"已打开「{row.DisplayName}」面板（面板关闭不影响插件后台运行）。";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"打开插件面板失败：{ex.Message}";
+            _log.App(LogLevel.Error, "plugins", "打开插件面板异常", new { id = row.FolderName, ex = ex.ToString() });
+        }
+    }
+
+    /// <summary>收起当前面板（卸载插件前必须调用：视图引用会阻止 ALC 完整回收）。</summary>
+    internal void ClosePanelFor(PluginItemVm row)
+    {
+        if (_openPanelFolder != null
+            && _openPanelFolder.Equals(row.FolderName, StringComparison.OrdinalIgnoreCase))
+        {
+            ClosePanel();
+        }
+    }
+
+    private void ClosePanel()
+    {
+        PanelContent = null;
+        PanelTitle = "";
+        _openPanelFolder = null;
+        PanelOpen = false;
+    }
+
+    /// <summary>页面「收起面板」按钮入口（UI 线程调用）。</summary>
+    public void ClosePanelFromUi()
+    {
+        try
+        {
+            if (!PanelOpen) return;
+            ClosePanel();
+            StatusText = "已收起插件面板。";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"收起面板失败：{ex.Message}";
+        }
     }
 
     // ================= 批量加载 =================
@@ -180,6 +261,7 @@ public sealed partial class PluginItemVm : ObservableObject
     public string PermissionsText { get; }
     public bool VerifyOk { get; }
     public string VerifyText { get; }
+    public bool HasPanel { get; }
     public ObservableCollection<QuickActionVm> QuickActions { get; } = new();
 
     [ObservableProperty] private bool _isEnabled;
@@ -226,6 +308,7 @@ public sealed partial class PluginItemVm : ObservableObject
             : "权限：无（仅基础生命周期）";
         VerifyOk = e.VerifyState == PluginVerifyState.Ok;
         VerifyText = VerifyOk ? "官方签名 · 验签通过" : e.VerifyError;
+        HasPanel = e.HasUiPanel;
         _suspendToggle = true;
         IsEnabled = e.Enabled;
         _suspendToggle = false;
@@ -269,6 +352,9 @@ public sealed partial class PluginItemVm : ObservableObject
     }
 
     [RelayCommand]
+    private void Panel() => _parent.TogglePanel(this);
+
+    [RelayCommand]
     private async Task LoadAsync()
     {
         if (!CanLoad) return;
@@ -290,6 +376,7 @@ public sealed partial class PluginItemVm : ObservableObject
     private async Task UnloadAsync()
     {
         if (!CanUnload) return;
+        _parent.ClosePanelFor(this); // 面板视图持有插件对象引用，卸载前必须摘除
         try
         {
             var msg = await _parent.ManagerUnloadAsync(this).ConfigureAwait(true);

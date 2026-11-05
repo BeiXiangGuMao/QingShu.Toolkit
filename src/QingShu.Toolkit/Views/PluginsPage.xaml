@@ -13,6 +13,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -70,8 +71,30 @@
             </Grid>
         </Border>
 
+        <!-- 插件自绘面板挂载区 -->
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14"
+                Visibility="{x:Bind Vm.PanelOpenVis, Mode=OneWay}">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="{x:Bind Vm.PanelTitle, Mode=OneWay}" Style="{StaticResource SectionTitleTextBlock}" />
+                    <TextBlock Text="关闭面板不影响插件后台运行；卸载插件前面板会自动收起。"
+                               Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource TextSecondaryBrush}"
+                               VerticalAlignment="Center" />
+                    <Button Content="收起面板" Click="ClosePanelClick" Padding="12,4" VerticalAlignment="Center" />
+                </StackPanel>
+                <ContentControl Grid.Row="1" Content="{x:Bind Vm.PanelContent, Mode=OneWay}"
+                                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                MinHeight="480" />
+            </Grid>
+        </Border>
+
         <!-- 插件列表 -->
-        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14">
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="14">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -162,6 +185,8 @@
                                     <Button Content="加载" Command="{x:Bind LoadCommand}" Padding="14,5" MinWidth="86"
                                             Style="{StaticResource AccentButtonStyle}"
                                             Visibility="{x:Bind CanLoad, Mode=OneWay}" />
+                                    <Button Content="面板" Command="{x:Bind PanelCommand}" Padding="14,5" MinWidth="86"
+                                            Visibility="{x:Bind HasPanel, Mode=OneWay}" />
                                     <Button Content="卸载" Command="{x:Bind UnloadCommand}" Padding="14,5" MinWidth="86"
                                             Visibility="{x:Bind CanUnload, Mode=OneWay}" />
                                 </StackPanel>
