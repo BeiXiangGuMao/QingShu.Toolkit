@@ -167,6 +167,39 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
         }
     }
 
+    /// <summary>
+    /// 面板内直接调整调度参数（周期/阈值/冷却/满载基数）：修改的是内存中同一配置实例——
+    /// 主控调度循环每 tick 都重新读取，下一轮自然生效（零重启、客户端零掉线）；同时写回
+    /// gala-topology.json 持久化。监听端口/准入段/拓扑结构等结构性变更仍走「重载拓扑配置」。
+    /// </summary>
+    internal string UpdateRuntimeSettings(int tickSeconds, double threshold, int cooldownSeconds, int clientsFull)
+    {
+        var folder = _ctx?.DataFolder ?? throw new InvalidOperationException("插件上下文未就绪");
+        GalaTopologyConfig cfg;
+        lock (_gate) { cfg = _cfg ?? throw new InvalidOperationException("拓扑配置未就绪"); }
+
+        cfg.Settings.TickSeconds = Math.Max(1, tickSeconds);
+        cfg.Settings.SwitchThreshold = threshold > 0 ? threshold : cfg.Settings.SwitchThreshold;
+        cfg.Settings.SwitchCooldownSeconds = Math.Max(0, cooldownSeconds);
+        cfg.Settings.ClientsPerNodeFull = Math.Max(1, clientsFull);
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, ConfigFileName),
+                JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            _ctx?.Log("warn", $"调度参数写回配置文件失败（内存中仍生效）：{ex.Message}");
+        }
+
+        var summary = $"周期 {cfg.Settings.TickSeconds}s · 阈值 {cfg.Settings.SwitchThreshold:F0} · " +
+                      $"冷却 {cfg.Settings.SwitchCooldownSeconds}s · 满载 {cfg.Settings.ClientsPerNodeFull} 台";
+        _ctx?.Log("info", $"调度参数已热更新并落盘：{summary}");
+        return $"{summary}（下一探测周期自动生效，无需重启主控）";
+    }
+
     internal void ReloadConfig()
     {
         var folder = _ctx?.DataFolder ?? throw new InvalidOperationException("插件上下文未就绪");

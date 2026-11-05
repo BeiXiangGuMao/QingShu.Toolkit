@@ -49,6 +49,8 @@ public sealed class MasterSnapshot
     public List<NodeSnap> Nodes { get; init; } = new();
     public List<ClientSnap> Clients { get; init; } = new();
     public List<string> Events { get; init; } = new();
+    /// <summary>各压力节点（router/server）的近期压力历史（旧→新，最多 90 点），供面板趋势线。</summary>
+    public Dictionary<string, List<double>> PressureHistory { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -64,6 +66,7 @@ public sealed class GalaMaster
     private readonly Dictionary<string, ClientSession> _sessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PressureProbe> _probes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _scores = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Queue<double>> _history = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _events = new();
 
     private CancellationTokenSource? _cts;
@@ -437,6 +440,7 @@ public sealed class GalaMaster
             }
             foreach (var kv in scores) _scores[kv.Key] = kv.Value;
         }
+        RecordHistory(scores);
 
         foreach (var s in sessions)
         {
@@ -471,6 +475,20 @@ public sealed class GalaMaster
             catch (Exception ex)
             {
                 Event($"下发切换失败（{s.ClientId}）：{ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>记录本轮各节点压力到环形历史（最多 90 点 ≈ 近 5 分钟 @3s tick），供面板趋势线。</summary>
+    private void RecordHistory(IReadOnlyDictionary<string, double> scores)
+    {
+        lock (_sync)
+        {
+            foreach (var kv in scores)
+            {
+                if (!_history.TryGetValue(kv.Key, out var q)) _history[kv.Key] = q = new Queue<double>();
+                q.Enqueue(kv.Value);
+                while (q.Count > 90) q.Dequeue();
             }
         }
     }
@@ -665,6 +683,10 @@ public sealed class GalaMaster
                 });
             }
             snap.Clients.Sort((a, b) => string.Compare(a.ClientId, b.ClientId, StringComparison.Ordinal));
+            foreach (var kv in _history)
+            {
+                snap.PressureHistory[kv.Key] = new List<double>(kv.Value);
+            }
             var evFrom = Math.Max(0, _events.Count - 120);
             snap.Events.AddRange(_events.GetRange(evFrom, _events.Count - evFrom));
         }

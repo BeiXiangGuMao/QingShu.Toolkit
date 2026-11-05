@@ -41,15 +41,24 @@ public static class ProcessRunner
                 if (!p.WaitForExit(timeoutMs))
                 {
                     try { p.Kill(); } catch { }
-                    return new CmdResult(-1, "", "", true, "命令执行超时");
+                    // 超时也尽量带回已产出的部分输出（诊断挂死命令时有用）；读取任务最多再等 2 秒
+                    return new CmdResult(-1, ReadDrained(outTask, 2000), ReadDrained(errTask, 2000), true, "命令执行超时");
                 }
-                return new CmdResult(p.ExitCode, outTask.Result ?? "", errTask.Result ?? "", false, "");
+                // 进程已退出、管道必然 EOF；等待上限兜底防异常场景卡死
+                return new CmdResult(p.ExitCode, ReadDrained(outTask, 5000), ReadDrained(errTask, 5000), false, "");
             }
             catch (Exception ex)
             {
                 return new CmdResult(-1, "", "", false, ex.Message);
             }
         });
+    }
+
+    /// <summary>在时限内等读取任务完成并取全部输出；未完成/失败返回空串（不无限阻塞）。</summary>
+    private static string ReadDrained(Task<string> readTask, int waitMs)
+    {
+        try { return readTask.Wait(waitMs) ? (readTask.Result ?? "") : ""; }
+        catch { return ""; }
     }
 
     public static Task<CmdResult> RunNetshAsync(string args, int timeoutMs = 30_000) => RunAsync($"netsh {args}", timeoutMs);

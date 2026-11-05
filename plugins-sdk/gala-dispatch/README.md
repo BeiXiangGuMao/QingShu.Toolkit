@@ -64,6 +64,10 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qdir
 改完在插件卡片点快捷动作「重载拓扑配置」即时生效（运行中的主控自动按新配置重启）。
 客户端不进 `nodes`——上线自动注册，归属按其 IP 段匹配 `routes`。
 
+**调度手感（周期/阈值/冷却/满载基数）不用改文件**：主控面板「调度参数」区直接改，
+点「保存并生效」后下一探测周期自动生效（同一份运行配置热更新，主控不重启、客户端不掉线），
+同时写回本文件持久化。本文件的 `settings` 四项只作初始值/手工备份用途。
+
 ## 3. 综合调控算法
 
 1. **节点压力（0~100，每 tick 重算）**
@@ -75,6 +79,8 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qdir
 2. **路径分** = `路由压力 × 50% + 服务器压力 × 50%`；候选 = 该终端 IP 段匹配的 `(router, server)` 全组合，取最优。
 3. **滞回切换**：`当前路径分 − 最优路径分 ≥ 阈值` 且冷却已过才下发切换；**高优先级终端阈值减半、冷却减半**（压力起来先保舞台/直播这类关键终端）。
 4. 全部决策写入事件日志（含数字理由），面板可见「为什么切」。
+5. **压力趋势**：主控面板节点压力列表右侧带迷你趋势线（近 90 个探测周期 ≈ 5 分钟），
+   压力是否在爬坡一眼可辨，比单点数字更适合现场决策。
 
 ## 4. 现场部署清单
 
@@ -96,6 +102,20 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qdir
 | 即时采集 | 命令终端立即上报一轮指标 |
 
 离线超过 30 分钟的终端会话自动清理（重连保分配的语义保留 30 分钟，防临时终端无限积累，清理有事件留痕）。
+
+## 4.2 限速标记的消费端（示例执行器）
+
+`tools/assign-executor.ps1` 是 assignment.json 的最小可运行消费端示例：
+
+```powershell
+# 仅展示模式：轮询打印当前分配（服务器/路由/优先级/限速标记）
+powershell -ExecutionPolicy Bypass -File plugins-sdk\gala-dispatch\tools\assign-executor.ps1
+
+# 应用模式：把限速标记转成本机 Windows QoS 策略（需管理员；标记 0 自动解除）
+powershell -ExecutionPolicy Bypass -File plugins-sdk\gala-dispatch\tools\assign-executor.ps1 -Apply
+```
+
+真实消费端（路由器 API / 代理切换 / 专用限速工具）参照其「读文件 → 差异化执行」骨架替换执行段即可。
 
 ## 5. 边界说明
 

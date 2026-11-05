@@ -42,6 +42,10 @@ public sealed class GalaPanelView : UserControl
     private readonly ComboBox _routeBox;
     private readonly ComboBox _prioBox;
     private readonly TextBox _throttleBox;
+    private readonly TextBox _paramTick;
+    private readonly TextBox _paramThreshold;
+    private readonly TextBox _paramCooldown;
+    private readonly TextBox _paramFull;
     private readonly TextBlock _eventText;
     private readonly TextBlock _agentAssignText;
     private readonly TextBlock _agentMetricsText;
@@ -144,6 +148,32 @@ public sealed class GalaPanelView : UserControl
 
         _serverPanel = new StackPanel { Spacing = 4 };
 
+        // ---- 调度参数区（面板内热调，免手编 JSON）----
+        var s0 = _owner.Config.Settings;
+        _paramTick = new TextBox { Text = s0.TickSeconds.ToString(), Width = 56 };
+        _paramThreshold = new TextBox { Text = s0.SwitchThreshold.ToString("F0"), Width = 56 };
+        _paramCooldown = new TextBox { Text = s0.SwitchCooldownSeconds.ToString(), Width = 56 };
+        _paramFull = new TextBox { Text = s0.ClientsPerNodeFull.ToString(), Width = 56 };
+        var saveParamBtn = new Button { Content = "保存并生效", Padding = new Thickness(12, 4, 12, 4) };
+        saveParamBtn.Click += (_, _) => OnSaveParamsClick();
+        var paramRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        paramRow.Children.Add(new TextBlock { Text = "周期s", VerticalAlignment = VerticalAlignment.Center, FontSize = 11.5, Foreground = SecondaryBrush() });
+        paramRow.Children.Add(_paramTick);
+        paramRow.Children.Add(new TextBlock { Text = "阈值", VerticalAlignment = VerticalAlignment.Center, FontSize = 11.5, Foreground = SecondaryBrush() });
+        paramRow.Children.Add(_paramThreshold);
+        paramRow.Children.Add(new TextBlock { Text = "冷却s", VerticalAlignment = VerticalAlignment.Center, FontSize = 11.5, Foreground = SecondaryBrush() });
+        paramRow.Children.Add(_paramCooldown);
+        paramRow.Children.Add(new TextBlock { Text = "满载台", VerticalAlignment = VerticalAlignment.Center, FontSize = 11.5, Foreground = SecondaryBrush() });
+        paramRow.Children.Add(_paramFull);
+        paramRow.Children.Add(saveParamBtn);
+        var paramNote = new TextBlock
+        {
+            Text = "改的是同一份运行配置：下一探测周期自动生效，无需重启主控、客户端不掉线；同时写回 gala-topology.json。",
+            FontSize = 11,
+            Foreground = SecondaryBrush(),
+            TextWrapping = TextWrapping.Wrap
+        };
+
         _clientList = new ListView { Height = 170, SelectionMode = SelectionMode.Single };
         _clientList.SelectionChanged += (_, _) =>
         {
@@ -194,8 +224,11 @@ public sealed class GalaPanelView : UserControl
         };
 
         var rightCol = new StackPanel { Spacing = 8 };
-        rightCol.Children.Add(new TextBlock { Text = "节点压力（探测 + 并发 + 带宽加权）", FontSize = 12.5 });
+        rightCol.Children.Add(new TextBlock { Text = "节点压力（探测 + 并发 + 带宽加权，右侧为近期趋势）", FontSize = 12.5 });
         rightCol.Children.Add(_serverPanel);
+        rightCol.Children.Add(new TextBlock { Text = "调度参数（现场手感在这里调）", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
+        rightCol.Children.Add(paramRow);
+        rightCol.Children.Add(paramNote);
         rightCol.Children.Add(new TextBlock { Text = "客户端（点击选中后可远程操控）", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
         rightCol.Children.Add(_clientList);
         rightCol.Children.Add(new TextBlock { Text = "远程操控", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
@@ -361,6 +394,24 @@ public sealed class GalaPanelView : UserControl
         catch (Exception ex) { _statusText.Text = $"即时采集失败：{ex.Message}"; }
     }
 
+    private void OnSaveParamsClick()
+    {
+        try
+        {
+            if (!int.TryParse(_paramTick.Text.Trim(), out int tick) || tick < 1)
+                throw new InvalidOperationException("探测周期需为正整数（秒）");
+            if (!double.TryParse(_paramThreshold.Text.Trim(), out double th) || th <= 0)
+                throw new InvalidOperationException("切换阈值需为正数（路径分差）");
+            if (!int.TryParse(_paramCooldown.Text.Trim(), out int cd) || cd < 0)
+                throw new InvalidOperationException("冷却需为非负整数（秒）");
+            if (!int.TryParse(_paramFull.Text.Trim(), out int full) || full < 1)
+                throw new InvalidOperationException("满载基数需为正整数（台）");
+            string msg = _owner.UpdateRuntimeSettings(tick, th, cd, full);
+            _statusText.Text = $"调度参数已保存：{msg}";
+        }
+        catch (Exception ex) { _statusText.Text = $"保存调度参数失败：{ex.Message}"; }
+    }
+
     private void OnThrottleClick()
     {
         try
@@ -430,26 +481,67 @@ public sealed class GalaPanelView : UserControl
         _serverPanel.Children.Clear();
         foreach (var n in snap.Nodes.Where(n => n.Type is "router" or "server").OrderBy(n => n.Type).ThenBy(n => n.Id))
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            row.Children.Add(new Ellipse
+            var row = new Grid { ColumnSpacing = 6 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var dot = new Ellipse
             {
                 Width = 10,
                 Height = 10,
                 Fill = new SolidColorBrush(n.Down ? Color.FromArgb(255, 130, 130, 130) : PressureColor(n.Pressure)),
                 VerticalAlignment = VerticalAlignment.Center
-            });
-            row.Children.Add(new TextBlock
+            };
+            row.Children.Add(dot);
+            Grid.SetColumn(dot, 0);
+
+            var info = new TextBlock
             {
                 FontSize = 11.5,
                 TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
                 Text = n.Down
                     ? $"{n.Label} · {n.Ip} · 失联（压力按打满计）"
                     : $"{n.Label} · {n.Ip} · 压力 {n.Pressure:F0} · RTT {FmtMs(n.RttMs)} · 丢包 {n.LossPct:F0}% · 服务 {n.ServedClients} 台"
-            });
+            };
+            row.Children.Add(info);
+            Grid.SetColumn(info, 1);
+
+            var trend = BuildTrendLine(snap.PressureHistory, n.Id);
+            if (trend != null)
+            {
+                row.Children.Add(trend);
+                Grid.SetColumn(trend, 2);
+            }
             _serverPanel.Children.Add(row);
         }
         if (_serverPanel.Children.Count == 0)
             _serverPanel.Children.Add(new TextBlock { Text = "gala-topology.json 中还没有 router/server 节点。", FontSize = 11.5, Foreground = SecondaryBrush() });
+    }
+
+    /// <summary>节点压力迷你趋势线（旧→新，横向 72px 纵向 0~100 满刻度）；样本不足两点时不画。</summary>
+    private static Polyline? BuildTrendLine(IReadOnlyDictionary<string, List<double>> history, string nodeId)
+    {
+        if (!history.TryGetValue(nodeId, out var hist) || hist.Count < 2) return null;
+        const double w = 72, h = 18;
+        var pc = new PointCollection();
+        int cnt = hist.Count;
+        for (int i = 0; i < cnt; i++)
+        {
+            double x = i * w / (cnt - 1);
+            double y = h - Math.Clamp(hist[i], 0, 100) / 100.0 * h;
+            pc.Add(new Windows.Foundation.Point(x, y));
+        }
+        return new Polyline
+        {
+            Points = pc,
+            Width = w,
+            Height = h,
+            StrokeThickness = 1.2,
+            Stroke = new SolidColorBrush(Color.FromArgb(255, 120, 144, 156)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
     }
 
     private void RenderClients(MasterSnapshot snap)
