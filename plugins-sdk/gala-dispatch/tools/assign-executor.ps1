@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 $policyName = "QSTK-GalaThrottle"
 
 if (-not $AssignmentPath) {
-    $AssignmentPath = Join-Path $env:LOCALAPPDATA "QingShu.Toolkit\plugins-data\qingshu.galadispatch\assignment.json"
+    $AssignmentPath = Join-Path $env:LOCALAPPDATA "QingShu.Toolkit\plugins-data\qingshu.galaagent\assignment.json"
 }
 
 function Show-Assignment([object]$rec) {

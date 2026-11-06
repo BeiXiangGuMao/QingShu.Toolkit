@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace QingShu.Plugin.GalaDispatch.Gala;
+namespace QingShu.Gala;
 
 // ================= 拓扑配置（gala-topology.json，插件数据目录） =================
 

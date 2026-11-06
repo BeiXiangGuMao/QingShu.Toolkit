@@ -7,35 +7,26 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
+using QingShu.Gala;
 
-namespace QingShu.Plugin.GalaDispatch.Gala;
+namespace QingShu.Plugin.GalaMaster;
 
 /// <summary>
-/// 元旦晚会智能分流面板（纯代码构建，零 XAML 编译依赖）：
-/// 主控端 = 拓扑实时画布（节点压力着色 / 链路流量）+ 节点压力列表 + 客户端列表 + 远程操控 + 事件日志；
-/// 客户端 = 主控地址/配对码 → 连接，显示当前分配、本地指标与指令记录。
-/// 面板关闭（Unloaded）只停界面定时器；后台服务由插件 OnUnloadedAsync 统一收尾。
+/// 主控端面板（纯代码构建，零 XAML 编译依赖）：
+/// 拓扑实时画布（节点压力着色 / 链路流量）+ 节点压力列表（含迷你趋势线）+ 客户端列表
+/// + 远程操控（切换线路/优先级/限速标记/即时采集）+ 调度参数热调 + 事件日志。
+/// 面板关闭（Unloaded）只停界面定时器；后台监听由插件 OnUnloadedAsync 统一收尾。
 /// </summary>
-public sealed class GalaPanelView : UserControl
+public sealed class GalaMasterPanelView : UserControl
 {
     private const double TopologyWidth = 780;
     private const double TopologyHeight = 540;
 
-    private readonly GalaDispatchPlugin _owner;
+    private readonly GalaMasterPlugin _owner;
     private readonly DispatcherQueueTimer _timer;
 
-    private readonly RadioButton _modeMaster;
-    private readonly RadioButton _modeClient;
     private readonly ToggleSwitch _masterSwitch;
-    private readonly ToggleSwitch _clientSwitch;
-    private readonly TextBox _masterIpBox;
-    private readonly TextBox _portBox;
-    private readonly TextBox _pairingBox;
     private readonly TextBlock _statusText;
-    private readonly StackPanel _masterOps;
-    private readonly StackPanel _clientOps;
-    private readonly Grid _masterPane;
-    private readonly StackPanel _clientPane;
     private readonly Canvas _topology;
     private readonly StackPanel _serverPanel;
     private readonly ListView _clientList;
@@ -47,9 +38,6 @@ public sealed class GalaPanelView : UserControl
     private readonly TextBox _paramCooldown;
     private readonly TextBox _paramFull;
     private readonly TextBlock _eventText;
-    private readonly TextBlock _agentAssignText;
-    private readonly TextBlock _agentMetricsText;
-    private readonly TextBlock _agentEventText;
 
     private readonly List<ClientSnap> _clientRows = new();
     private readonly List<string> _serverIds = new();
@@ -57,7 +45,7 @@ public sealed class GalaPanelView : UserControl
     private string _routeSignature = "";
     private bool _suspendSwitch;
 
-    public GalaPanelView(GalaDispatchPlugin owner)
+    public GalaMasterPanelView(GalaMasterPlugin owner)
     {
         _owner = owner;
         var dq = DispatcherQueue.GetForCurrentThread();
@@ -67,39 +55,20 @@ public sealed class GalaPanelView : UserControl
         Loaded += (_, _) => _timer.Start();
         Unloaded += (_, _) => _timer.Stop();
 
-        // ---------- 顶部：角色 + 操作 ----------
-        _modeMaster = new RadioButton { Content = "主控端（礼堂控制台）", GroupName = "galaMode", IsChecked = true, MinWidth = 0 };
-        _modeClient = new RadioButton { Content = "客户端（舞台/投票/直播终端）", GroupName = "galaMode", MinWidth = 0 };
-        _modeMaster.Checked += (_, _) => SwitchMode(true);
-        _modeClient.Checked += (_, _) => SwitchMode(false);
-
-        _masterSwitch = new ToggleSwitch { OnContent = "主控运行中", OffContent = "启动主控端", IsOn = false, Margin = new Thickness(16, 0, 0, 0) };
+        // ---------- 顶部：主控开关 + 状态行 ----------
+        _masterSwitch = new ToggleSwitch { OnContent = "主控运行中", OffContent = "启动主控端", IsOn = false, Margin = new Thickness(0, 0, 16, 0) };
         _masterSwitch.Toggled += async (_, _) =>
         {
             if (_suspendSwitch) return; // 状态同步触发，非用户操作
             await OnMasterToggledAsync();
         };
 
-        _masterIpBox = new TextBox { PlaceholderText = "主控 IP，如 10.10.0.1", Width = 150 };
-        _portBox = new TextBox { PlaceholderText = "端口", Text = "47816", Width = 72 };
-        _pairingBox = new TextBox { PlaceholderText = "配对码（可空）", Width = 120, Margin = new Thickness(8, 0, 0, 0) };
-        _clientSwitch = new ToggleSwitch { OnContent = "已连接/连接中", OffContent = "连接主控端", IsOn = false, Margin = new Thickness(16, 0, 0, 0) };
-        _clientSwitch.Toggled += async (_, _) =>
+        var opsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        opsRow.Children.Add(new TextBlock { Text = "主控端（礼堂控制台）", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
+        opsRow.Children.Add(_masterSwitch);
+        opsRow.Children.Add(new TextBlock
         {
-            if (_suspendSwitch) return;
-            await OnClientToggledAsync();
-        };
-
-        var roleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
-        roleRow.Children.Add(new TextBlock { Text = "角色", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-        roleRow.Children.Add(_modeMaster);
-        roleRow.Children.Add(_modeClient);
-
-        _masterOps = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        _masterOps.Children.Add(_masterSwitch);
-        _masterOps.Children.Add(new TextBlock
-        {
-            Text = "监听端口/准入段/配对码在 gala-topology.json 配置（插件快捷动作可打开）",
+            Text = "监听端口/准入段/配对码在 gala-topology.json 配置（插件快捷动作可打开）。被控终端装服务端插件或独立 QingShu.GalaAgent 程序接入。",
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 11.5,
             Foreground = SecondaryBrush(),
@@ -107,29 +76,15 @@ public sealed class GalaPanelView : UserControl
             MaxWidth = 380
         });
 
-        _clientOps = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        _clientOps.Children.Add(_masterIpBox);
-        _clientOps.Children.Add(_portBox);
-        _clientOps.Children.Add(_pairingBox);
-        _clientOps.Children.Add(_clientSwitch);
-
         _statusText = new TextBlock
         {
-            Text = "就绪。主控端在本机启动监听；客户端填主控 IP 后连接。仅限城域网内网使用。",
+            Text = "就绪。点「启动主控端」开始监听；各 IP 段终端可通，仅限城域网内网。",
             FontSize = 12,
             Foreground = SecondaryBrush(),
             TextWrapping = TextWrapping.Wrap
         };
 
-        var topGrid = new Grid { ColumnSpacing = 12, RowSpacing = 6 };
-        topGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        topGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        topGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        topGrid.Children.Add(roleRow, 0, 0);
-        topGrid.Children.Add(_masterOps, 0, 1);
-        topGrid.Children.Add(_clientOps, 0, 2);
-
-        // ---------- 主控面板 ----------
+        // ---------- 主控区 ----------
         _topology = new Canvas { Width = TopologyWidth, Height = TopologyHeight };
         var topologyScroll = new ScrollViewer
         {
@@ -168,7 +123,7 @@ public sealed class GalaPanelView : UserControl
         paramRow.Children.Add(saveParamBtn);
         var paramNote = new TextBlock
         {
-            Text = "改的是同一份运行配置：下一探测周期自动生效，无需重启主控、客户端不掉线；同时写回 gala-topology.json。",
+            Text = "改的是同一份运行配置：下一探测周期自动生效，无需重启主控、终端不掉线；同时写回 gala-topology.json。",
             FontSize = 11,
             Foreground = SecondaryBrush(),
             TextWrapping = TextWrapping.Wrap
@@ -206,14 +161,14 @@ public sealed class GalaPanelView : UserControl
         var pingBtn = new Button { Content = "即时采集", Padding = new Thickness(12, 4, 12, 4) };
         pingBtn.Click += (_, _) => OnPingNowClick();
 
-        var opsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        opsRow.Children.Add(_routeBox);
-        opsRow.Children.Add(assignBtn);
-        opsRow.Children.Add(_prioBox);
-        opsRow.Children.Add(prioBtn);
-        opsRow.Children.Add(_throttleBox);
-        opsRow.Children.Add(throttleBtn);
-        opsRow.Children.Add(pingBtn);
+        var controlRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        controlRow.Children.Add(_routeBox);
+        controlRow.Children.Add(assignBtn);
+        controlRow.Children.Add(_prioBox);
+        controlRow.Children.Add(prioBtn);
+        controlRow.Children.Add(_throttleBox);
+        controlRow.Children.Add(throttleBtn);
+        controlRow.Children.Add(pingBtn);
 
         _eventText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Foreground = SecondaryBrush() };
         var eventScroll = new ScrollViewer
@@ -232,7 +187,7 @@ public sealed class GalaPanelView : UserControl
         rightCol.Children.Add(new TextBlock { Text = "客户端（点击选中后可远程操控）", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
         rightCol.Children.Add(_clientList);
         rightCol.Children.Add(new TextBlock { Text = "远程操控", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
-        rightCol.Children.Add(opsRow);
+        rightCol.Children.Add(controlRow);
         rightCol.Children.Add(new TextBlock { Text = "调度与操控事件", FontSize = 12.5, Margin = new Thickness(0, 4, 0, 0) });
         rightCol.Children.Add(eventScroll);
 
@@ -245,51 +200,20 @@ public sealed class GalaPanelView : UserControl
         masterGrid.Children.Add(leftCol, 0, 0);
         masterGrid.Children.Add(rightCol, 1, 0);
 
-        _masterPane = new Grid { Children = { masterGrid } };
-
-        // ---------- 客户端面板 ----------
-        _agentAssignText = BodyText("当前分配：—");
-        _agentMetricsText = BodyText("本地指标：—");
-        _agentEventText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Foreground = SecondaryBrush() };
-        var agentEventScroll = new ScrollViewer { Content = _agentEventText, Height = 150, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        _clientPane = new StackPanel { Spacing = 8 };
-        _clientPane.Children.Add(_agentAssignText);
-        _agentMetricsText.FontSize = 12.5;
-        _clientPane.Children.Add(_agentMetricsText);
-        _clientPane.Children.Add(new TextBlock
-        {
-            Text = "当前分配会落盘 assignment.json（路径见下方），供本机其它执行器（路由/限速脚本）读取消费；真正的线路切换由校园网策略在路由侧生效。",
-            FontSize = 11.5,
-            Foreground = SecondaryBrush(),
-            TextWrapping = TextWrapping.Wrap
-        });
-        _clientPane.Children.Add(agentEventScroll);
-
-        // ---------- 组装 ----------
+        // ---------- 组装（状态行独立成行，操作结果全程可见） ----------
         var root = new Grid { RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.Children.Add(topGrid, 0, 0);
-        root.Children.Add(_masterPane, 0, 1);
-        root.Children.Add(_clientPane, 0, 1);
+        root.Children.Add(opsRow, 0, 0);
+        root.Children.Add(_statusText, 1, 0);
+        root.Children.Add(masterGrid, 2, 0);
 
         Content = root;
-        SwitchMode(true);
         RefreshAll();
     }
 
-    // ================= 角色/服务开关 =================
-
-    private void SwitchMode(bool master)
-    {
-        _masterPane.Visibility = master ? Visibility.Visible : Visibility.Collapsed;
-        _clientPane.Visibility = master ? Visibility.Collapsed : Visibility.Visible;
-        _masterOps.Visibility = master ? Visibility.Visible : Visibility.Collapsed;
-        _clientOps.Visibility = master ? Visibility.Collapsed : Visibility.Visible;
-        _statusText.Text = master
-            ? "主控端：点「启动主控端」开始监听（端口/准入段在 gala-topology.json）。各 IP 段客户端可通，仅限城域网。"
-            : "客户端：填主控 IP（同网可达）后打开「连接主控端」。";
-    }
+    // ================= 主控开关 =================
 
     private async System.Threading.Tasks.Task OnMasterToggledAsync()
     {
@@ -299,7 +223,7 @@ public sealed class GalaPanelView : UserControl
             {
                 var master = _owner.EnsureMaster();
                 master.Start(); // 端口占用等异常抛出 → 下方 catch 显示
-                _statusText.Text = $"主控端监听中：0.0.0.0:{master.Port}。等待客户端接入…";
+                _statusText.Text = $"主控端监听中：0.0.0.0:{master.Port}。等待服务端接入…";
             }
             else
             {
@@ -315,36 +239,6 @@ public sealed class GalaPanelView : UserControl
         {
             _masterSwitch.IsOn = false;
             _statusText.Text = $"启动主控失败：{ex.Message}（常见：端口被占用，改 gala-topology.json 的 listenPort）";
-        }
-        await System.Threading.Tasks.Task.CompletedTask;
-    }
-
-    private async System.Threading.Tasks.Task OnClientToggledAsync()
-    {
-        try
-        {
-            if (_clientSwitch.IsOn)
-            {
-                var ip = _masterIpBox.Text.Trim();
-                if (ip.Length == 0) throw new InvalidOperationException("请先填写主控 IP");
-                int port = int.TryParse(_portBox.Text.Trim(), out var p) ? p : 47816;
-                var agent = _owner.EnsureAgent();
-                agent.Start(ip, port, _pairingBox.Text.Trim());
-                _statusText.Text = $"客户端已启动：目标 {_masterIpBox.Text.Trim()}:{port}，连接中…";
-            }
-            else
-            {
-                _statusText.Text = "客户端已断开。";
-                _ = System.Threading.Tasks.Task.Run(async () =>
-                {
-                    try { await _owner.EnsureAgent().StopAsync(); } catch { }
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            _clientSwitch.IsOn = false;
-            _statusText.Text = $"启动客户端失败：{ex.Message}";
         }
         await System.Threading.Tasks.Task.CompletedTask;
     }
@@ -449,29 +343,6 @@ public sealed class GalaPanelView : UserControl
             RenderClients(snap);
             _eventText.Text = snap.Events.Count > 0 ? string.Join("\n", snap.Events) : "暂无事件。";
             DrawTopology(snap);
-        }
-        catch { }
-
-        try
-        {
-            var agent = _owner.EnsureAgent();
-            var a = agent.Snapshot();
-            if (a.Running)
-            {
-                _agentAssignText.Text = $"当前分配：服务器 {OrDash(a.ServerId)}（{OrDash(a.ServerIp)}）· 经 {OrDash(a.RouterId)}"
-                    + $" · 优先级 {GalaDispatcher.PriorityNames[Math.Clamp(a.Priority, 0, 2)]}"
-                    + (a.ThrottleKbps > 0 ? $" · 限速标记 {a.ThrottleKbps} kbps" : "");
-                _agentMetricsText.Text = a.Connected
-                    ? $"已连接主控 {a.MasterHost}:{a.Port} · 到主控 RTT {FmtMs(a.RttMasterMs)} · 丢包 {a.LossPct:F0}% · 到服务器 RTT {FmtMs(a.RttServerMs)}"
-                      + $" · 收 {a.RxKbps:F0} kbps · 发 {a.TxKbps:F0} kbps · 本进程 CPU {a.AppCpu:F0}%"
-                    : $"未连接主控 {a.MasterHost}:{a.Port}（自动重连中）";
-                _agentEventText.Text = a.Events.Count > 0 ? string.Join("\n", a.Events.TakeLast(60)) : "暂无事件。";
-            }
-            else
-            {
-                _agentAssignText.Text = "当前分配：—（客户端未启动）";
-                _agentMetricsText.Text = "本地指标：—";
-            }
         }
         catch { }
     }
@@ -765,17 +636,6 @@ public sealed class GalaPanelView : UserControl
             }
         }
         catch { }
-        try
-        {
-            var agent = _owner.EnsureAgent();
-            if (agent.IsRunning != _clientSwitch.IsOn)
-            {
-                _suspendSwitch = true;
-                _clientSwitch.IsOn = agent.IsRunning;
-                _suspendSwitch = false;
-            }
-        }
-        catch { }
     }
 
     private static string OrDash(string s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
@@ -791,17 +651,10 @@ public sealed class GalaPanelView : UserControl
     };
 
     private static Brush SecondaryBrush() => new SolidColorBrush(Color.FromArgb(255, 110, 118, 128));
-
-    private static TextBlock BodyText(string text) => new()
-    {
-        Text = text,
-        FontSize = 13,
-        TextWrapping = TextWrapping.Wrap
-    };
 }
 
 /// <summary>Grid.Children.Add 扩展（带行/列定位），减少样板。</summary>
-internal static class GalaPanelViewExtensions
+internal static class GalaMasterPanelExtensions
 {
     public static void Add(this UIElementCollection children, UIElement element, int row, int col)
     {

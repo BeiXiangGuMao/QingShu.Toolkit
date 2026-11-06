@@ -1,40 +1,39 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
-using QingShu.Plugin.GalaDispatch.Gala;
+using QingShu.Gala;
 using QingShu.Toolkit.Services.Plugins;
 
-namespace QingShu.Plugin.GalaDispatch;
+namespace QingShu.Plugin.GalaMaster;
 
 /// <summary>
-/// 元旦晚会智能分流插件：
-/// 主控端（礼堂控制台）监听内网端口，汇聚各客户端（舞台/投票/直播终端）上报的链路指标，
-/// 对「路由压力 × 服务器压力」做综合评分并按滞回策略远程切换线路；
-/// 主控面板实时绘制拓扑（节点压力着色 + 链路流量），支持远程操控（切换线路/优先级/即时采集）。
+/// 元旦晚会智能分流 · 主控端插件（礼堂控制机）：
+/// 监听内网端口，汇聚各被控终端上报的链路指标，对「路由压力 × 服务器压力」做综合评分
+/// 并按滞回策略远程切换线路；面板实时绘制拓扑（节点压力着色 + 链路流量），支持远程操控
+/// （切换线路/优先级/限速标记/即时采集）与调度参数热调。
 /// 仅限城域网内网使用：准入按 IP 段前缀白名单校验，可选配对码。
+/// 被控终端安装 qingshu.galaagent 服务端插件（或独立 QingShu.GalaAgent 程序）接入。
 /// </summary>
-public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
+public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
 {
     private const string ConfigFileName = "gala-topology.json";
 
     private IPluginContext? _ctx;
     private GalaTopologyConfig? _cfg;
     private GalaMaster? _master;
-    private GalaAgent? _agent;
     private readonly object _gate = new();
 
-    public string DisplayName => "元旦晚会智能分流";
+    public string DisplayName => "元旦晚会智能分流 · 主控端";
 
-    public string PanelTitle => "元旦晚会智能分流 · 主控台 / 客户端";
+    public string PanelTitle => "元旦晚会智能分流 · 主控台";
 
     public async Task OnLoadedAsync(IPluginContext context, CancellationToken ct)
     {
         _ctx = context;
-        context.Log("info", "元旦晚会智能分流插件加载");
+        context.Log("info", "元旦晚会智能分流 · 主控端插件加载");
 
         // 拓扑配置：首次运行生成占位模板（真实拓扑资料到位后由用户编辑覆盖）
         LoadOrCreateConfig();
@@ -58,6 +57,39 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
             }
         });
 
+        context.RegisterQuickAction("启动主控端", _ =>
+        {
+            try
+            {
+                var master = EnsureMaster();
+                if (master.IsRunning) return Task.FromResult<string?>("主控端已在监听中，无需重复启动。");
+                master.Start(); // 端口占用等异常抛出 → 下方 catch 显示
+                return Task.FromResult<string?>($"主控端监听中：0.0.0.0:{master.Port}。等待服务端接入…");
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<string?>($"启动主控失败：{ex.Message}（常见：端口被占用，改 gala-topology.json 的 listenPort）");
+            }
+        });
+
+        context.RegisterQuickAction("停止主控端", _ =>
+        {
+            try
+            {
+                var master = EnsureMaster();
+                if (!master.IsRunning) return Task.FromResult<string?>("主控端未在运行。");
+                _ = Task.Run(async () =>
+                {
+                    try { await master.StopAsync().ConfigureAwait(false); } catch { }
+                });
+                return Task.FromResult<string?>("主控端停止指令已发出（监听将在后台 1~2 秒内关闭）。");
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<string?>($"停止主控失败：{ex.Message}");
+            }
+        });
+
         context.RegisterQuickAction("重载拓扑配置", _ =>
         {
             try
@@ -72,31 +104,21 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
             }
         });
 
-        context.RegisterQuickAction("导出事件日志", _ =>
+        context.RegisterQuickAction("导出主控事件日志", _ =>
         {
             try
             {
                 var folder = context.DataFolder;
                 Directory.CreateDirectory(folder);
-                var path = Path.Combine(folder, $"gala-events-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-                var lines = new List<string>();
-                try
+                var path = Path.Combine(folder, $"gala-master-events-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+                var master = EnsureMaster().Snapshot();
+                var lines = new List<string>
                 {
-                    var m = EnsureMaster().Snapshot();
-                    lines.Add($"===== 主控端事件（监听中：{(m.Running ? "是" : "否")}）=====");
-                    lines.AddRange(m.Events);
-                }
-                catch (Exception ex) { lines.Add($"主控事件读取失败：{ex.Message}"); }
-                lines.Add("");
-                try
-                {
-                    var a = EnsureAgent().Snapshot();
-                    lines.Add($"===== 客户端事件（运行中：{(a.Running ? "是" : "否")}）=====");
-                    lines.AddRange(a.Events);
-                }
-                catch (Exception ex) { lines.Add($"客户端事件读取失败：{ex.Message}"); }
+                    $"===== 主控端事件（监听中：{(master.Running ? "是" : "否")}）====="
+                };
+                lines.AddRange(master.Events);
                 File.WriteAllLines(path, lines);
-                return Task.FromResult<string?>($"已导出事件日志：{path}（共 {lines.Count} 行）");
+                return Task.FromResult<string?>($"已导出主控事件日志：{path}（共 {lines.Count} 行）");
             }
             catch (Exception ex)
             {
@@ -114,15 +136,9 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
             if (_master != null) await _master.StopAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         }
         catch { } // 卸载收尾尽力而为（宿主 5s 兜底）
-        try
-        {
-            if (_agent != null) await _agent.StopAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-        }
-        catch { }
         _master = null;
-        _agent = null;
         _cfg = null;
-        _ctx?.Log("info", "元旦晚会智能分流插件已停止全部服务");
+        _ctx?.Log("info", "主控端插件已停止监听服务");
         _ctx = null;
     }
 
@@ -131,7 +147,7 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
     public FrameworkElement CreatePanelView()
     {
         if (_cfg == null) LoadOrCreateConfig();
-        return new GalaPanelView(this);
+        return new GalaMasterPanelView(this);
     }
 
     // ================= 面板/调度共用状态访问（线程安全） =================
@@ -154,22 +170,9 @@ public sealed class GalaDispatchPlugin : IQToolkitPlugin, IQToolkitUiProvider
         }
     }
 
-    internal GalaAgent EnsureAgent()
-    {
-        lock (_gate)
-        {
-            if (_agent == null)
-            {
-                var ctx = _ctx ?? throw new InvalidOperationException("插件上下文未就绪（插件未加载或已卸载）");
-                _agent = new GalaAgent(msg => ctx.Log("info", msg), ctx.DataFolder);
-            }
-            return _agent;
-        }
-    }
-
     /// <summary>
     /// 面板内直接调整调度参数（周期/阈值/冷却/满载基数）：修改的是内存中同一配置实例——
-    /// 主控调度循环每 tick 都重新读取，下一轮自然生效（零重启、客户端零掉线）；同时写回
+    /// 主控调度循环每 tick 都重新读取，下一轮自然生效（零重启、终端零掉线）；同时写回
     /// gala-topology.json 持久化。监听端口/准入段/拓扑结构等结构性变更仍走「重载拓扑配置」。
     /// </summary>
     internal string UpdateRuntimeSettings(int tickSeconds, double threshold, int cooldownSeconds, int clientsFull)

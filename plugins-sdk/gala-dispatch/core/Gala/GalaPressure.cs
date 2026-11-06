@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace QingShu.Plugin.GalaDispatch.Gala;
+namespace QingShu.Gala;
 
 // ================= 压力模型（纯函数，主控循环与 UI 共用） =================
 

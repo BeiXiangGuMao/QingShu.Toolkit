@@ -8,7 +8,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace QingShu.Plugin.GalaDispatch.Gala;
+namespace QingShu.Gala;
 
 // ================= 快照模型（主控 → 面板 UI，只读拷贝） =================
 

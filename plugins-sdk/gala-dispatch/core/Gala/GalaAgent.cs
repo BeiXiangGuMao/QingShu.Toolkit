@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace QingShu.Plugin.GalaDispatch.Gala;
+namespace QingShu.Gala;
 
 public sealed class AgentSnapshot
 {

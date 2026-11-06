@@ -1,7 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 与宿主完全一致的 TFM / SDK 投影 / MinVersion，保证跨 ALC 类型同一 -->
+    <!--
+      元旦晚会智能分流 · 主控端插件（礼堂控制机用）。
+      与宿主完全一致的 TFM / SDK 投影 / MinVersion，保证跨 ALC 类型同一。
+      Gala 核心（主控逻辑 + 模型/协议帧 + 压力模型）以 Compile 链接 ../core/Gala 共享源码（单一事实源）。
+    -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
@@ -9,8 +13,8 @@
     <UseWinUI>true</UseWinUI>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>QingShu.Plugin.GalaDispatch</AssemblyName>
-    <RootNamespace>QingShu.Plugin.GalaDispatch</RootNamespace>
+    <AssemblyName>QingShu.Plugin.GalaMaster</AssemblyName>
+    <RootNamespace>QingShu.Plugin.GalaMaster</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
@@ -29,6 +33,13 @@
     <Reference Include="QingShu.Toolkit">
       <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 共享核心（与独立主控端/服务端程序同一份源码）：主控逻辑 + 拓扑模型/协议帧 + 压力模型 -->
+    <Compile Include="..\core\Gala\GalaMaster.cs" />
+    <Compile Include="..\core\Gala\GalaModels.cs" />
+    <Compile Include="..\core\Gala\GalaPressure.cs" />
   </ItemGroup>
 
 </Project>

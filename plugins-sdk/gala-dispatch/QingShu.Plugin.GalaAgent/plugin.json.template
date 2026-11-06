@@ -1,0 +1,11 @@
+{
+  "id": "qingshu.galaagent",
+  "name": "元旦晚会智能分流 · 服务端",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "元旦晚会智能分流服务端（被控终端）：常驻连接主控端，自动重连并周期上报 RTT/丢包/收发速率/进程 CPU，执行主控指令（切换线路/优先级/限速标记/即时采集），当前分配落盘 assignment.json 供本机执行器消费。主控机请安装 qingshu.galamaster 主控端插件或独立 QingShu.GalaMaster 程序。",
+  "mainAssembly": "QingShu.Plugin.GalaAgent.dll",
+  "entryType": "QingShu.Plugin.GalaAgent.GalaAgentPlugin",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}
