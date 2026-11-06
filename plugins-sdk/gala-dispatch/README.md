@@ -95,12 +95,20 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
 }
 ```
 
-改完在主控插件卡片点快捷动作「重载拓扑配置」即时生效（运行中的主控自动按新配置重启）。
-服务端不进 `nodes`——上线自动注册，归属按其 IP 段匹配 `routes`。
+改完在主控插件卡片点快捷动作「重载拓扑配置」即时生效（运行中的主控自动按新配置重启；
+校验告警写插件日志）。服务端不进 `nodes`——上线自动注册，归属按其 IP 段匹配 `routes`。
+
+**配置健康检查**：每次加载/重载自动校验并用人话告警报出填错处（重复 id/重复 IP/非法 IP/
+probePort 越界/规则无服务器/规则指向非 router/无调度规则/无准入段/未设配对码）——
+告警写插件日志与控制台启动输出，空列表静默；只报不改，剔错仍由规范化负责。
 
 **探测降级（禁 ICMP 网段）**：任一节点（不限类型）配了 `probePort` 即加 TCP 端口握手探测——
 Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网段给路由配管理口（如 80/443）、
 服务器配业务口即可，RTT/丢包/压力评分照常工作。
+
+**即时预检（填完拓扑先验一遍）**：主控插件快捷动作「立即探测一轮」（独立主控台 `probe`
+命令）立即探测全部 router/server 节点，逐节点报可达（RTT）/不可达；不写调度状态、不触发
+切换，主控未监听时同样可用。探测不到 = IP 写错或网段不通（禁 ICMP 网段记得配 probePort）。
 
 **心跳超时（半开连接治理）**：终端拔电/网线故障时 TCP 可能收不到断开信号（半开连接），
 主控超过 `clientIdleTimeoutSeconds`（默认 20 秒）未收到该终端任何帧即按离线断开；
@@ -223,7 +231,8 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 - 拓扑配置：exe 同目录 `gala-topology.json`，格式与主控插件数据目录完全一致，可互相拷贝；
   首次运行自动生成模板并退出，填好真实网络资料后再启动。`--config 路径` 可指定其他位置。
 - 交互命令：`status / nodes / clients / events`（全景与事件）、`assign / unpin / priority / throttle / ping / kick`
-  （与面板同语义的远程操控，assign = 手动切换并锁定，unpin = 恢复自动调度，kick = 剔除会话）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
+  （与面板同语义的远程操控，assign = 手动切换并锁定，unpin = 恢复自动调度，kick = 剔除会话）、
+  `probe`（立即探测一轮节点可达性，验证拓扑）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
   `watch on|off`（每 10 秒一行态势摘要）、`quit`。
 - 无人值守：`--watch` 启动即开态势摘要；输出重定向（计划任务）时自动跳过交互输入，
   持续常驻，Ctrl+C 或结束进程优雅退出。

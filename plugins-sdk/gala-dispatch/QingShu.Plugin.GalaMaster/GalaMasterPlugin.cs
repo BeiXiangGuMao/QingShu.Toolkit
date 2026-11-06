@@ -96,11 +96,25 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
             {
                 ReloadConfig();
                 return Task.FromResult<string?>(
-                    $"已重载：节点 {_cfg!.Nodes.Count} · 链路 {_cfg.Links.Count} · 路由规则 {_cfg.Routes.Count} · 监听端口 {_cfg.Settings.ListenPort}。运行中的主控端将按新配置重启。");
+                    $"已重载：节点 {_cfg!.Nodes.Count} · 链路 {_cfg.Links.Count} · 路由规则 {_cfg.Routes.Count} · 监听端口 {_cfg.Settings.ListenPort}。运行中的主控端将按新配置重启（校验告警见插件日志）。");
             }
             catch (Exception ex)
             {
-                return Task.FromResult<string?>($"重载失败：{ex.Message}");
+                return Task.FromResult<string?>("重载失败：" + ex.Message);
+            }
+        });
+
+        context.RegisterQuickAction("立即探测一轮", async _ =>
+        {
+            try
+            {
+                // 即时预检：填完拓扑后马上验证各节点 IP 可达性；主控未启动也能探测，
+                // 不写调度状态不触发切换（结果同时写入事件日志留痕）
+                return await EnsureMaster().ProbeOnceReportAsync();
+            }
+            catch (Exception ex)
+            {
+                return $"预检失败：{ex.Message}";
             }
         });
 
@@ -238,6 +252,7 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
         GalaTopologyConfig.Normalize(cfg);
         lock (_gate) { _cfg = cfg; }
         _ctx?.Log("info", $"拓扑配置已重载：节点 {cfg.Nodes.Count} · 路由规则 {cfg.Routes.Count}");
+        LogValidateWarnings(cfg);
 
         // 主控端在运行 → 按新配置重启。旧 GalaMaster 实例持有的是旧配置快照，
         // 必须先停旧实例、摘除引用后再重建（否则 EnsureMaster 返回旧实例，重启等于没换配置）
@@ -279,6 +294,7 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
                     GalaTopologyConfig.Normalize(cfg);
                     lock (_gate) { _cfg = cfg; }
                     _ctx?.Log("info", $"拓扑配置已载入：节点 {cfg.Nodes.Count} · 路由规则 {cfg.Routes.Count}");
+                    LogValidateWarnings(cfg);
                     return;
                 }
             }
@@ -295,5 +311,12 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
             lock (_gate) { _cfg = GalaTopologyConfig.CreateTemplate(); }
             _ctx?.Log("warn", $"拓扑配置读取失败（使用内置占位模板）：{ex.Message}");
         }
+    }
+
+    /// <summary>拓扑配置健康检查告警写入插件日志（填错拓扑第一眼可见，空列表静默）。</summary>
+    private void LogValidateWarnings(GalaTopologyConfig cfg)
+    {
+        foreach (var w in GalaTopologyConfig.Validate(cfg))
+            _ctx?.Log("warn", $"拓扑配置：{w}");
     }
 }

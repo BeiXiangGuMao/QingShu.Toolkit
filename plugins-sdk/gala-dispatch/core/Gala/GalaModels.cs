@@ -85,6 +85,54 @@ public sealed class GalaTopologyConfig
         return Nodes.FirstOrDefault(n => n.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// 配置健康检查（Normalize 之后调用）：返回人话告警列表（空列表 = 未发现问题）。
+    /// 只报不改——剔错仍由 Normalize 负责，这里负责让填错拓扑的人第一眼看到错在哪；
+    /// 主控插件在加载/重载时写日志，独立主控台启动时打印。
+    /// </summary>
+    public static List<string> Validate(GalaTopologyConfig cfg)
+    {
+        var warns = new List<string>();
+
+        // 节点层：重复 id / 重复 IP / 非法 IP / 缺 IP / probePort 越界
+        foreach (var id in cfg.Nodes.GroupBy(n => n.Id, StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Count() > 1).Select(g => g.Key))
+            warns.Add($"节点 id 重复：{id}（探测与路由匹配只会命中第一个）");
+        foreach (var ip in cfg.Nodes.Where(n => n.Ip.Length > 0)
+                     .GroupBy(n => n.Ip, StringComparer.Ordinal)
+                     .Where(g => g.Count() > 1).Select(g => g.Key))
+            warns.Add($"多个节点共用 IP：{ip}");
+        foreach (var n in cfg.Nodes)
+        {
+            if (n.Ip.Length > 0 && !IPAddress.TryParse(n.Ip, out _))
+                warns.Add($"节点 {n.Id} 的 IP 不是合法地址：{n.Ip}");
+            if ((n.Type == "router" || n.Type == "server") && n.Ip.Length == 0)
+                warns.Add($"节点 {n.Id}（{n.Type}）未填 IP，不参与探测与压力评估");
+            if (n.ProbePort is < 0 or > 65535)
+                warns.Add($"节点 {n.Id} 的 probePort 越界（0~65535）：{n.ProbePort}");
+        }
+
+        // 路由层：空服务器规则 / viaRouter 类型错误 / 整体无规则
+        foreach (var r in cfg.Routes)
+        {
+            if (r.Servers.Count == 0)
+                warns.Add($"路由规则 {r.SegmentPrefix} → {r.ViaRouter} 没有可用服务器（该段终端不会得到分配）");
+            var via = cfg.FindNode(r.ViaRouter);
+            if (via != null && via.Type != "router")
+                warns.Add($"路由规则 {r.SegmentPrefix} 的 viaRouter={r.ViaRouter} 不是 router 类型（当前 {via.Type}）");
+        }
+        if (cfg.Routes.Count == 0)
+            warns.Add("没有任何调度规则（routes 为空）：客户端将仅监控不调度");
+
+        // 准入与配对
+        if (cfg.Settings.AllowedPrefixes.Count == 0)
+            warns.Add("allowedPrefixes 为空：除本机回环外将拒绝一切接入");
+        if (cfg.Settings.PairingCode.Length == 0)
+            warns.Add("未设配对码：内网任何终端都可接入，现场建议设置");
+
+        return warns;
+    }
+
     /// <summary>客户端 IP → 候选路径（段前缀最长匹配优先，八点界匹配防 10.1 误吞 10.10.x）。</summary>
     public GalaRouteConfig? MatchRoute(string clientIp)
     {

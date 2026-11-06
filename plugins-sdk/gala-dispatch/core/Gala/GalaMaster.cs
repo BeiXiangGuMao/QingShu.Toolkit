@@ -425,6 +425,30 @@ public sealed class GalaMaster
         if (gone.Count > 0) Event($"已清理离线超 30 分钟的会话：{string.Join("、", gone)}");
     }
 
+    /// <summary>
+    /// 即时预检：立即探测一轮全部 router/server 节点并返回一行摘要（每节点可达=RTT / 不可达）。
+    /// 与周期探测管线完全独立——不喂压力探针、不触发调度切换，主控未监听时同样可用；
+    /// 用于填完拓扑后马上验证 IP 可达性（探测不到 = IP 写错或网段不通）。总耗时上限 15 秒。
+    /// </summary>
+    public async Task<string> ProbeOnceReportAsync()
+    {
+        var nodes = _cfg.Nodes
+            .Where(n => (n.Type == "router" || n.Type == "server") && n.Ip.Length > 0)
+            .ToList();
+        if (nodes.Count == 0)
+            return "拓扑中没有可探测的 router/server 节点（检查 gala-topology.json 的 type/ip 字段）。";
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var results = await Task.WhenAll(nodes.Select(n => ProbeNodeAsync(n, cts.Token))).ConfigureAwait(false);
+        int ok = results.Count(r => r.Alive);
+        var detail = string.Join(" · ", results.Select(r =>
+            $"{r.Node.Id}({r.Node.Ip}) " + (r.Alive ? (r.RttMs >= 0 ? $"{r.RttMs:F0}ms ✓" : "✓") : "✗ 不可达")));
+        string summary = $"预检 {ok}/{results.Length} 节点可达：{detail}"
+                         + (ok < results.Length ? "——不可达节点请核对 IP 是否写错、网段是否可达/禁 ICMP 是否需配 probePort" : "");
+        Event(summary);
+        return summary;
+    }
+
     private static async Task<bool> ProbeTcpAsync(string ip, int port, CancellationToken ct)
     {
         try

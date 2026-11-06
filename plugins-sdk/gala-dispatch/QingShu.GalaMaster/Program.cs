@@ -88,6 +88,8 @@ internal static class Program
 
         Console.WriteLine($"配置文件：{_configPath}");
         Console.WriteLine($"拓扑规模：节点 {_cfg.Nodes.Count} · 链路 {_cfg.Links.Count} · 路由规则 {_cfg.Routes.Count}");
+        foreach (var w in GalaTopologyConfig.Validate(_cfg))
+            Console.WriteLine($"[警告] 拓扑配置：{w}"); // 填错拓扑第一眼可见（空列表不输出）
         Console.WriteLine($"监听端口：{_cfg.Settings.ListenPort} · 调度周期 {_cfg.Settings.TickSeconds}s" +
                           $" · 准入段 {string.Join(" / ", _cfg.Settings.AllowedPrefixes)}" +
                           (_cfg.Settings.PairingCode.Length > 0 ? " · 配对码已启用" : " · 未设配对码"));
@@ -168,6 +170,7 @@ internal static class Program
                 Console.WriteLine("priority <客户端> <0|1|2>    调整优先级（0 高 / 1 中 / 2 低）");
                 Console.WriteLine("throttle <客户端> <kbps>     限速标记（0 = 解除，落盘 assignment.json）");
                 Console.WriteLine("ping <客户端>                请求该客户端即时上报指标");
+                Console.WriteLine("probe                       立即探测一轮 router/server（验证拓扑 IP 可达性，不改调度状态）");
                 Console.WriteLine("kick <客户端>                剔除会话（断开并移除，重连按新终端重新分配）");
                 Console.WriteLine("params                      查看调度参数（周期/阈值/冷却/满载）");
                 Console.WriteLine("setparam tick|threshold|cooldown|full <值>");
@@ -224,6 +227,12 @@ internal static class Program
                 if (parts.Length < 2) { Console.WriteLine("用法：ping <客户端>"); break; }
                 Console.WriteLine(TryCmd(parts[1], () => _master.TryPingNow(parts[1]),
                     $"已请求 {parts[1]} 即时上报指标"));
+                break;
+
+            case "probe":
+                Console.WriteLine("正在探测全部 router/server 节点（最多 15 秒）…");
+                // 控制台后台线程无同步上下文，同步等待安全；结果同时写入事件留痕
+                Console.WriteLine(_master.ProbeOnceReportAsync().GetAwaiter().GetResult());
                 break;
 
             case "kick":
