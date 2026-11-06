@@ -85,16 +85,31 @@ public sealed class GalaTopologyConfig
         return Nodes.FirstOrDefault(n => n.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>客户端 IP → 候选路径（段前缀最长匹配优先）。</summary>
+    /// <summary>客户端 IP → 候选路径（段前缀最长匹配优先，八点界匹配防 10.1 误吞 10.10.x）。</summary>
     public GalaRouteConfig? MatchRoute(string clientIp)
     {
         GalaRouteConfig? best = null;
         foreach (var r in Routes)
         {
-            if (r.SegmentPrefix.Length == 0 || !clientIp.StartsWith(r.SegmentPrefix, StringComparison.Ordinal)) continue;
+            if (r.SegmentPrefix.Length == 0 || !GalaNet.MatchesPrefix(clientIp, r.SegmentPrefix)) continue;
             if (best == null || r.SegmentPrefix.Length > best.SegmentPrefix.Length) best = r;
         }
         return best;
+    }
+}
+
+/// <summary>
+/// IP 段前缀匹配（八点界）：准入白名单与调度路由共用。
+/// 裸 StartsWith 有越界风险——前缀 "192.168.1" 会误匹配 "192.168.11.5"、"10.1" 会误吞
+/// "10.10.x.x"；本方法要求前缀以点结尾，或 IP 在前缀长度处恰为点/恰好结束（同段语义）。
+/// </summary>
+public static class GalaNet
+{
+    public static bool MatchesPrefix(string ip, string prefix)
+    {
+        if (string.IsNullOrEmpty(ip) || string.IsNullOrEmpty(prefix)) return false;
+        if (!ip.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        return prefix[^1] == '.' || ip.Length == prefix.Length || ip[prefix.Length] == '.';
     }
 }
 
@@ -107,7 +122,7 @@ public sealed class GalaSettings
     /// <summary>探测/调度周期（秒）。3~5 秒适合晚会现场。</summary>
     [JsonPropertyName("tickSeconds")] public int TickSeconds { get; set; } = 3;
 
-    /// <summary>会话准入白名单：远端 IP 必须以其中之一开头（限城域网内网，勿放公网段）。</summary>
+    /// <summary>会话准入白名单：远端 IP 必须命中其中之一（八点界匹配，"192.168.1" 只认 192.168.1.x 段；限城域网内网，勿放公网段）。</summary>
     [JsonPropertyName("allowedPrefixes")] public List<string> AllowedPrefixes { get; set; } = new() { "10.", "172.16.", "192.168.", "100.64." };
 
     /// <summary>配对码（可空=不校验）。现场防误连建议设置，客户端面板填同一串即可。</summary>
@@ -125,6 +140,9 @@ public sealed class GalaSettings
     /// <summary>单节点并发满载客户端数（负载分 = 在线服务数 / 该值 × 100）。</summary>
     [JsonPropertyName("clientsPerNodeFull")] public int ClientsPerNodeFull { get; set; } = 10;
 
+    /// <summary>客户端心跳空闲超时（秒）：超过该时长未收到任何帧按离线断开（终端拔电等半开连接不再虚占并发压力分）。须大于客户端上报周期数倍。</summary>
+    [JsonPropertyName("clientIdleTimeoutSeconds")] public int ClientIdleTimeoutSeconds { get; set; } = 20;
+
     /// <summary>压力权重：响应 / 丢包 / 并发 / 带宽（建议和为 1）。</summary>
     [JsonPropertyName("weightRtt")] public double WeightRtt { get; set; } = 0.35;
     [JsonPropertyName("weightLoss")] public double WeightLoss { get; set; } = 0.25;
@@ -138,6 +156,7 @@ public sealed class GalaSettings
         if (SwitchThreshold <= 0) SwitchThreshold = 12;
         if (SwitchCooldownSeconds < 0) SwitchCooldownSeconds = 30;
         if (ClientsPerNodeFull < 1) ClientsPerNodeFull = 10;
+        if (ClientIdleTimeoutSeconds < 10) ClientIdleTimeoutSeconds = 20;
         if (WeightRtt < 0) WeightRtt = 0;
         if (WeightLoss < 0) WeightLoss = 0;
         if (WeightLoad < 0) WeightLoad = 0;

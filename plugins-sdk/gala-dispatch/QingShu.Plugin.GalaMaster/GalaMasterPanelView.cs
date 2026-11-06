@@ -162,6 +162,8 @@ public sealed class GalaMasterPanelView : UserControl
         pingBtn.Click += (_, _) => OnPingNowClick();
         var kickBtn = new Button { Content = "剔除会话", Padding = new Thickness(12, 4, 12, 4) };
         kickBtn.Click += (_, _) => OnKickClick();
+        var unpinBtn = new Button { Content = "恢复自动", Padding = new Thickness(12, 4, 12, 4) };
+        unpinBtn.Click += (_, _) => OnUnpinClick();
 
         var controlRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         controlRow.Children.Add(_routeBox);
@@ -172,6 +174,7 @@ public sealed class GalaMasterPanelView : UserControl
         controlRow.Children.Add(throttleBtn);
         controlRow.Children.Add(pingBtn);
         controlRow.Children.Add(kickBtn);
+        controlRow.Children.Add(unpinBtn);
 
         _eventText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Foreground = SecondaryBrush() };
         var eventScroll = new ScrollViewer
@@ -258,7 +261,7 @@ public sealed class GalaMasterPanelView : UserControl
             if (idx < 0 || idx >= _serverIds.Count) { _statusText.Text = "请选择目标服务器。"; return; }
             bool ok = master.TryAssignServer(_selectedClientId, _serverIds[idx]);
             _statusText.Text = ok
-                ? $"切换指令已下发：{_selectedClientId} → {_serverIds[idx]}。"
+                ? $"切换指令已下发：{_selectedClientId} → {_serverIds[idx]}（已锁定，自动调度不再覆盖；点「恢复自动」解除）。"
                 : "下发失败：客户端不在线或已断开。";
         }
         catch (Exception ex) { _statusText.Text = $"切换线路失败：{ex.Message}"; }
@@ -303,6 +306,20 @@ public sealed class GalaMasterPanelView : UserControl
                 : "剔除失败：会话不存在（可能已被清理）。";
         }
         catch (Exception ex) { _statusText.Text = $"剔除失败：{ex.Message}"; }
+    }
+
+    private void OnUnpinClick()
+    {
+        try
+        {
+            var master = _owner.EnsureMaster();
+            if (_selectedClientId.Length == 0) { _statusText.Text = "请先在列表中选中一个客户端。"; return; }
+            bool ok = master.TryUnpin(_selectedClientId);
+            _statusText.Text = ok
+                ? $"已恢复自动调度：{_selectedClientId}（下一探测周期重新参与综合调度）。"
+                : "操作失败：客户端不在线或已断开。";
+        }
+        catch (Exception ex) { _statusText.Text = $"恢复自动调度失败：{ex.Message}"; }
     }
 
     private void OnSaveParamsClick()
@@ -444,6 +461,7 @@ public sealed class GalaMasterPanelView : UserControl
             _clientList.Items.Add(
                 $"{(c.Online ? "●" : "○")} {c.Hostname} · {c.Ip} · → {OrDash(c.ServerId)}（经 {OrDash(c.RouterId)}）"
                 + $" · {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}优先"
+                + (c.Pinned ? " · 手动锁定" : "")
                 + (c.ThrottleKbps > 0 ? $" · 限速 {c.ThrottleKbps} kbps" : "")
                 + (c.Online ? $" · RTT {FmtMs(c.RttMasterMs)} · ↑{c.TxKbps:F0} ↓{c.RxKbps:F0} kbps" : " · 离线"));
         }

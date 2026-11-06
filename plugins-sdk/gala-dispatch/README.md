@@ -70,11 +70,12 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
     "listenPort": 47816,            // 主控 TCP 监听端口（改了要同步改服务端）
     "tickSeconds": 3,               // 探测/调度周期（秒）
     "autoStartMaster": true,        // 随插件加载自动启动监听（无人值守；false = 手动启动）
-    "allowedPrefixes": ["10.", "172.16.", "192.168.", "100.64."],  // 内网准入段
-    "pairingCode": "",              // 配对码，空 = 不校验；现场建议设置
+    "allowedPrefixes": ["10.", "172.16.", "192.168.", "100.64."],  // 内网准入段（八点界匹配："192.168.1" 只认 192.168.1.x，不会误放 192.168.11.x）
+    "pairingCode": "",              // 配对码，空 = 不校验；现场建议设置（连续错配自动加 1.5s 延迟防爆破）
     "switchThreshold": 12,          // 切换阈值（路径分差），防抖动
     "switchCooldownSeconds": 30,    // 同一终端两次切换最小间隔
     "clientsPerNodeFull": 10,       // 并发满载基数（负载分）
+    "clientIdleTimeoutSeconds": 20, // 心跳空闲超时：超过该秒数未收到终端任何帧按离线断开（半开连接不虚占并发压力分）
     "weightRtt": 0.35, "weightLoss": 0.25, "weightLoad": 0.20, "weightBandwidth": 0.20
   },
   "nodes": [                        // 固定设施：master / router / server / switch
@@ -87,7 +88,8 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
   "links": [                        // 链路容量（带宽压力分用）
     { "from": "r1", "to": "s1", "capacityMbps": 1000 }
   ],
-  "routes": [                       // 调度规则：某 IP 段经哪台路由、可落哪些服务器
+  "routes": [                       // 调度规则：某 IP 段经哪台路由、可落哪些服务器（同样八点界匹配，
+                                    // 写 "10.1" 只匹配 10.1.x.x，不会误吞 10.10.x.x；最长前缀优先）
     { "segmentPrefix": "10.10.", "viaRouter": "r1", "servers": ["s1", "s2"] }
   ]
 }
@@ -99,6 +101,11 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
 **探测降级（禁 ICMP 网段）**：任一节点（不限类型）配了 `probePort` 即加 TCP 端口握手探测——
 Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网段给路由配管理口（如 80/443）、
 服务器配业务口即可，RTT/丢包/压力评分照常工作。
+
+**心跳超时（半开连接治理）**：终端拔电/网线故障时 TCP 可能收不到断开信号（半开连接），
+主控超过 `clientIdleTimeoutSeconds`（默认 20 秒）未收到该终端任何帧即按离线断开；
+并发压力分同时改用「15 秒内有心跳」口径统计，半开终端不再虚增负载分导致调度失真。
+终端重连后 30 分钟内仍保分配不变。
 
 **无人值守（autoStartMaster，默认开）**：主控插件随加载自动启动监听——控制机重启工具箱即
 恢复监听，无需人工点面板；「停止主控端」只停本次会话。不希望自动启动改为 `false`。
@@ -129,7 +136,8 @@ Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网
 
 | 操控 | 说明 |
 | --- | --- |
-| 切换线路 | 选中终端 → 选目标服务器 → 下发 switch 指令，终端探测新服务器并更新本地分配 |
+| 切换线路 | 选中终端 → 选目标服务器 → 下发 switch 指令，终端探测新服务器并更新本地分配；**同时锁定该终端**（Pinned），自动调度不再覆盖操作员意图，锁标签在客户端列表可见 |
+| 恢复自动 | 解除手动锁定，下一探测周期起该终端重新参与综合调度（独立主控台命令为 `unpin`） |
 | 设优先级 | 高（阈值/冷却减半，压力起来先保）/ 中 / 低；影响自动调度手感 |
 | 限速标记 | 下发 kbps 值，终端落盘 assignment.json 供本机限速执行器消费；空/0 = 解除 |
 | 即时采集 | 命令终端立即上报一轮指标 |
@@ -214,8 +222,8 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 
 - 拓扑配置：exe 同目录 `gala-topology.json`，格式与主控插件数据目录完全一致，可互相拷贝；
   首次运行自动生成模板并退出，填好真实网络资料后再启动。`--config 路径` 可指定其他位置。
-- 交互命令：`status / nodes / clients / events`（全景与事件）、`assign / priority / throttle / ping / kick`
-  （与面板同语义的远程操控，kick = 剔除会话）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
+- 交互命令：`status / nodes / clients / events`（全景与事件）、`assign / unpin / priority / throttle / ping / kick`
+  （与面板同语义的远程操控，assign = 手动切换并锁定，unpin = 恢复自动调度，kick = 剔除会话）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
   `watch on|off`（每 10 秒一行态势摘要）、`quit`。
 - 无人值守：`--watch` 启动即开态势摘要；输出重定向（计划任务）时自动跳过交互输入，
   持续常驻，Ctrl+C 或结束进程优雅退出。

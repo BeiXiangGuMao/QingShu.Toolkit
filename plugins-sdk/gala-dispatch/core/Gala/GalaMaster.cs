@@ -35,6 +35,8 @@ public sealed class ClientSnap
     public string ServerId { get; init; } = "";
     public int Priority { get; init; } = 1;
     public int ThrottleKbps { get; init; }
+    /// <summary>手动锁定（操作员手动切换后置位，自动调度跳过，恢复自动后清除）。</summary>
+    public bool Pinned { get; init; }
     public bool Online { get; init; }
     public double RttMasterMs { get; init; } = -1;
     public double RxKbps { get; init; }
@@ -68,6 +70,7 @@ public sealed class GalaMaster
     private readonly Dictionary<string, double> _scores = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Queue<double>> _history = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _events = new();
+    private int _pairFails; // 配对码连续失败计数（防内网脚本爆破）
 
     private CancellationTokenSource? _cts;
     private TcpListener? _listener;
@@ -176,10 +179,15 @@ public sealed class GalaMaster
             var pairing = _cfg.Settings.PairingCode;
             if (pairing.Length > 0 && !string.Equals(hello.Pairing, pairing, StringComparison.Ordinal))
             {
-                Event($"拒绝 {hello.Hostname}@{remote}：配对码不符");
+                int fails;
+                lock (_sync) { fails = ++_pairFails; }
+                if (fails == 1 || fails % 5 == 0)
+                    Event($"拒绝 {hello.Hostname}@{remote}：配对码不符（连续第 {fails} 次，已加 1.5 秒延迟防爆破）");
+                try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { }
                 tcp.Close();
                 return;
             }
+            lock (_sync) { _pairFails = 0; } // 配对成功即重置爆破计数
 
             string ip = GalaFrame.PickBestIp(hello.Ips, LocalIpv4s());
             if (ip.Length == 0) ip = remote;
@@ -231,10 +239,21 @@ public sealed class GalaMaster
             var sess = session!; // lock 块内已必赋值；局部非空别名消除可空警告
             await SendWelcomeAsync(sess).ConfigureAwait(false);
 
+            TimeSpan idleTimeout = TimeSpan.FromSeconds(Math.Max(10, _cfg.Settings.ClientIdleTimeoutSeconds));
             while (!ct.IsCancellationRequested)
             {
                 byte[]? frame;
-                try { frame = await GalaFrame.ReadFrameAsync(stream, ct).ConfigureAwait(false); }
+                try
+                {
+                    // 心跳空闲超时：终端拔电/网线故障等半开连接（无 FIN/RST）不再永久占用会话，
+                    // 超时按离线断开，避免虚占并发压力分导致调度失真
+                    frame = await GalaFrame.ReadFrameAsync(stream, ct).WaitAsync(idleTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    Event($"心跳超时：{sess.ClientId} 超过 {idleTimeout.TotalSeconds:F0} 秒未上报，按离线断开");
+                    break;
+                }
                 catch (OperationCanceledException) { break; }
                 catch { break; }
                 if (frame == null) break;
@@ -423,7 +442,7 @@ public sealed class GalaMaster
         List<ClientSession> sessions;
         lock (_sync) { sessions = _sessions.Values.ToList(); }
 
-        var served = CountServed(sessions);
+        var served = CountServed(sessions, DateTime.UtcNow);
         var scores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         lock (_sync)
         {
@@ -449,6 +468,7 @@ public sealed class GalaMaster
         {
             if (ct.IsCancellationRequested) break;
             if (!s.Alive || s.Ip.Length == 0) continue;
+            if (s.Pinned) continue; // 手动锁定：操作员指定线路，不参与自动调度（恢复自动后重新参与）
             TimeSpan sinceLast = s.LastSwitchUtc == DateTime.MinValue
                 ? TimeSpan.Zero
                 : DateTime.UtcNow - s.LastSwitchUtc;
@@ -496,12 +516,12 @@ public sealed class GalaMaster
         }
     }
 
-    private static Dictionary<string, (int Count, double Kbps)> CountServed(List<ClientSession> sessions)
+    private static Dictionary<string, (int Count, double Kbps)> CountServed(List<ClientSession> sessions, DateTime nowUtc)
     {
         var map = new Dictionary<string, (int, double)>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sessions)
         {
-            if (!s.Alive) continue;
+            if (!IsOnline(s, nowUtc)) continue; // 与界面在线口径一致：心跳新颗才算数，半开僵尸不虚增负载分
             double kbps = (s.LastMetrics?.RxKbps ?? 0) + (s.LastMetrics?.TxKbps ?? 0);
             foreach (var nodeId in new[] { s.RouterId, s.ServerId })
             {
@@ -548,8 +568,14 @@ public sealed class GalaMaster
             try
             {
                 await SendAsync(session, GalaFrame.Encode(cmd), CancellationToken.None).ConfigureAwait(false);
-                lock (_sync) { session.RouterId = routerId; session.ServerId = serverId; session.LastSwitchUtc = DateTime.UtcNow; }
-                Event($"手动切换 {clientId} → {serverId}（经 {routerId}）");
+                lock (_sync)
+                {
+                    session.RouterId = routerId;
+                    session.ServerId = serverId;
+                    session.LastSwitchUtc = DateTime.UtcNow;
+                    session.Pinned = true; // 手动切换即锁定：自动调度不再覆盖操作员意图
+                }
+                Event($"手动切换 {clientId} → {serverId}（经 {routerId}），已锁定不参与自动调度（恢复自动用 TryUnpin/面板按钮）");
             }
             catch (Exception ex) { Event($"手动切换失败（{clientId}）：{ex.Message}"); }
         });
@@ -644,6 +670,22 @@ public sealed class GalaMaster
         return true;
     }
 
+    /// <summary>
+    /// 解除手动锁定：恢复自动调度（下一探测周期起该客户端重新参与综合调度）。
+    /// 手动切换（TryAssignServer）会置锁定；本方法还原为全自动。
+    /// </summary>
+    public bool TryUnpin(string clientId)
+    {
+        var session = FindAlive(clientId);
+        if (session == null) return false;
+        bool was;
+        lock (_sync) { was = session.Pinned; session.Pinned = false; }
+        Event(was
+            ? $"已恢复自动调度：{clientId}（解除手动锁定，下一探测周期重新参与）"
+            : $"{clientId} 本就未锁定（处于自动调度）");
+        return true;
+    }
+
     private ClientSession? FindAlive(string clientId)
     {
         lock (_sync)
@@ -669,7 +711,8 @@ public sealed class GalaMaster
             foreach (var node in _cfg.Nodes)
             {
                 _probes.TryGetValue(node.Id, out var probe);
-                double served = _sessions.Values.Count(c => c.Alive
+                var nowUtc = DateTime.UtcNow;
+                double served = _sessions.Values.Count(c => IsOnline(c, nowUtc)
                     && (string.Equals(c.RouterId, node.Id, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(c.ServerId, node.Id, StringComparison.OrdinalIgnoreCase)));
                 bool pressureNode = node.Type == "router" || node.Type == "server";
@@ -698,7 +741,8 @@ public sealed class GalaMaster
                     ServerId = s.ServerId,
                     Priority = s.Priority,
                     ThrottleKbps = s.ThrottleKbps,
-                    Online = s.Alive && now - s.LastSeenUtc < TimeSpan.FromSeconds(15),
+                    Pinned = s.Pinned,
+                    Online = IsOnline(s, now),
                     RttMasterMs = s.LastMetrics?.RttMasterMs ?? -1,
                     RxKbps = s.LastMetrics?.RxKbps ?? 0,
                     TxKbps = s.LastMetrics?.TxKbps ?? 0,
@@ -718,11 +762,15 @@ public sealed class GalaMaster
 
     // ================= 内部部件 =================
 
+    /// <summary>会话是否在线（Alive 且 15 秒内有心跳）：调度计压与界面展示统一口径。</summary>
+    private static bool IsOnline(ClientSession s, DateTime nowUtc)
+        => s.Alive && nowUtc - s.LastSeenUtc < TimeSpan.FromSeconds(15);
+
     private bool IsAllowedIp(string ip)
     {
         if (string.IsNullOrEmpty(ip)) return false;
         if (IPAddress.TryParse(ip, out var addr) && IPAddress.IsLoopback(addr)) return true; // 本机自测
-        return _cfg.Settings.AllowedPrefixes.Any(p => ip.StartsWith(p, StringComparison.Ordinal));
+        return _cfg.Settings.AllowedPrefixes.Any(p => GalaNet.MatchesPrefix(ip, p));
     }
 
     private static List<string> LocalIpv4s()
@@ -783,6 +831,7 @@ public sealed class GalaMaster
         public string ServerId = "";
         public int Priority = 1;
         public int ThrottleKbps;
+        public bool Pinned; // 手动锁定：跳过自动调度，直到 TryUnpin/面板「恢复自动」
         public volatile bool Alive;
         public DateTime LastSwitchUtc = DateTime.MinValue;
     }

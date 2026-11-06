@@ -98,7 +98,7 @@ public static class GalaDispatcher
         var candidates = new List<(string RouterId, string ServerId, double Score)>();
         foreach (var r in routes)
         {
-            if (r.SegmentPrefix.Length == 0 || !clientIp.StartsWith(r.SegmentPrefix, StringComparison.Ordinal)) continue;
+            if (r.SegmentPrefix.Length == 0 || !GalaNet.MatchesPrefix(clientIp, r.SegmentPrefix)) continue;
             if (!nodeScores.TryGetValue(r.ViaRouter, out var rScore)) continue;
             foreach (var sid in r.Servers)
             {

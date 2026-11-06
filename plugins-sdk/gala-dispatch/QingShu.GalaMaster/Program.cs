@@ -163,7 +163,8 @@ internal static class Program
                 Console.WriteLine("nodes | clients             只看节点 / 只看客户端");
                 Console.WriteLine("events                      查看最近主控事件");
                 Console.WriteLine("watch on|off                每 10 秒输出一行态势摘要（默认 off）");
-                Console.WriteLine("assign <客户端> <服务器>     手动切换某客户端线路");
+                Console.WriteLine("assign <客户端> <服务器>     手动切换某客户端线路（同时锁定，不再自动调度）");
+                Console.WriteLine("unpin <客户端>                解除手动锁定，恢复自动调度");
                 Console.WriteLine("priority <客户端> <0|1|2>    调整优先级（0 高 / 1 中 / 2 低）");
                 Console.WriteLine("throttle <客户端> <kbps>     限速标记（0 = 解除，落盘 assignment.json）");
                 Console.WriteLine("ping <客户端>                请求该客户端即时上报指标");
@@ -194,9 +195,15 @@ internal static class Program
                 break;
 
             case "assign":
-                if (parts.Length < 3) { Console.WriteLine("用法：assign <客户端> <服务器>"); break; }
+                if (parts.Length < 3) { Console.WriteLine("用法：assign <客户端> <服务器>（同时锁定该客户端，unpin 恢复自动调度）"); break; }
                 Console.WriteLine(TryCmd(parts[1], () => _master.TryAssignServer(parts[1], parts[2]),
-                    $"已下发切换：{parts[1]} → {parts[2]}"));
+                    $"已下发切换：{parts[1]} → {parts[2]}（已锁定不参与自动调度，unpin 恢复）"));
+                break;
+
+            case "unpin":
+                if (parts.Length < 2) { Console.WriteLine("用法：unpin <客户端>（解除 assign 手动锁定，恢复自动调度）"); break; }
+                Console.WriteLine(TryCmd(parts[1], () => _master.TryUnpin(parts[1]),
+                    $"已恢复自动调度：{parts[1]}（下一探测周期重新参与）"));
                 break;
 
             case "priority":
@@ -307,7 +314,7 @@ internal static class Program
         Console.WriteLine($"—— 客户端（在线 {online}/{snap.Clients.Count}）——");
         foreach (var c in snap.Clients)
         {
-            Console.WriteLine($"  {c.ClientId,-16} {(c.Online ? "在线" : "离线")}  {c.Ip,-15} → {c.ServerId,-6}（经 {c.RouterId,-6}）" +
+            Console.WriteLine($"  {c.ClientId,-16} {(c.Online ? "在线" : "离线")}{(c.Pinned ? "〔锁〕" : "")}  {c.Ip,-15} → {c.ServerId,-6}（经 {c.RouterId,-6}）" +
                               $"  优先级 {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}" +
                               $"  限速 {(c.ThrottleKbps > 0 ? c.ThrottleKbps + " kbps" : "-")}" +
                               $"  RTT {FmtMs(c.RttMasterMs)}  收/发 {c.RxKbps,6:F0}/{c.TxKbps,6:F0} kbps  主机 {c.Hostname}");
