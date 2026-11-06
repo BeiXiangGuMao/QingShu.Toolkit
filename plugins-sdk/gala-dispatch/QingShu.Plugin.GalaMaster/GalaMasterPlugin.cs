@@ -126,6 +126,26 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
             }
         });
 
+        // 无人值守：autoStartMaster（默认开）= 随插件加载自动启动主控监听；
+        // 控制机重启工具箱即恢复监听，无需人工点开面板。快捷动作「停止主控端」只停本次会话。
+        if (Config.Settings.AutoStartMaster)
+        {
+            try
+            {
+                var master = EnsureMaster();
+                master.Start(); // 端口占用等异常 → 告警不阻塞加载
+                context.Log("info", $"已随加载自动启动主控监听：0.0.0.0:{master.Port}");
+            }
+            catch (Exception ex)
+            {
+                context.Log("warn", $"自动启动主控监听失败：{ex.Message}（常见：端口被占用，改 listenPort 或稍后面板手动启动）");
+            }
+        }
+        else
+        {
+            context.Log("info", "autoStartMaster=false：主控监听待手动启动（面板开关或「启动主控端」快捷动作）");
+        }
+
         await Task.CompletedTask;
     }
 
@@ -164,7 +184,11 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
             if (_master == null)
             {
                 var ctx = _ctx;
-                _master = new GalaMaster(Config, msg => ctx?.Log("info", msg));
+                _master = new GalaMaster(Config, msg =>
+                {
+                    ctx?.Log("info", msg);
+                    GalaEventLog.Append(ctx?.DataFolder, "gala-master.log", msg); // 事件留痕落盘（1MB 轮转）
+                });
             }
             return _master;
         }

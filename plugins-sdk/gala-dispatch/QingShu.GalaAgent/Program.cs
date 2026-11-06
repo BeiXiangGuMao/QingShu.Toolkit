@@ -35,7 +35,7 @@ internal static class Program
 
         // —— 参数解析（命令行 > 配置文件 > 默认值） ——
         string configPath = DefaultConfigName;
-        string masterArg = "", pairingArg = "", dataArg = "";
+        string masterArg = "", pairingArg = "", dataArg = "", hookArg = "";
         int? portArg = null;
         for (int i = 0; i < args.Length; i++)
         {
@@ -45,6 +45,7 @@ internal static class Program
                      && int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var p)) portArg = p;
             else if ((args[i] == "--pairing" || args[i] == "-k") && i + 1 < args.Length) pairingArg = args[++i];
             else if ((args[i] == "--data" || args[i] == "-d") && i + 1 < args.Length) dataArg = args[++i];
+            else if ((args[i] == "--hook" || args[i] == "-H") && i + 1 < args.Length) hookArg = args[++i];
         }
         configPath = Path.IsPathRooted(configPath)
             ? configPath
@@ -60,6 +61,7 @@ internal static class Program
         int port = portArg ?? 0;
         string pairing = pairingArg;
         string dataFolder = dataArg;
+        string hook = hookArg;
         if (File.Exists(configPath))
         {
             try
@@ -71,6 +73,7 @@ internal static class Program
                     if (port == 0) port = file.Port;
                     if (pairing.Length == 0) pairing = (file.PairingCode ?? "").Trim();
                     if (dataFolder.Length == 0) dataFolder = (file.DataFolder ?? "").Trim();
+                    if (hook.Length == 0) hook = (file.OnAssignmentChange ?? "").Trim();
                 }
             }
             catch (Exception ex)
@@ -117,9 +120,17 @@ internal static class Program
 
         Console.WriteLine($"目标主控：{masterHost}:{port}" + (pairing.Length > 0 ? "（已填配对码）" : "（未填配对码）"));
         Console.WriteLine($"数据目录：{dataFolder}");
+        if (hook.Length > 0) Console.WriteLine($"分配变更钩子：{hook}");
         Console.WriteLine();
 
-        _agent = new GalaAgent(msg => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}"), dataFolder);
+        _agent = new GalaAgent(msg =>
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}");
+            GalaEventLog.Append(dataFolder, "gala-agent.log", msg); // 事件留痕落盘（1MB 轮转，复盘不依赖进程存活）
+        }, dataFolder);
+        // assignment.json 每次落盘 → 触发 --hook / onAssignmentChange 命令（本机执行器事件化对接）
+        _agent.AssignmentChanged = path => GalaHook.Run(hook, path,
+            msg => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}"));
         try
         {
             _agent.Start(masterHost, port, pairing); // 内部含断线 3 秒重连，主控未开时持续重试
@@ -227,5 +238,8 @@ internal static class Program
         [JsonPropertyName("port")] public int Port { get; set; } = 47816;
         [JsonPropertyName("pairingCode")] public string PairingCode { get; set; } = "";
         [JsonPropertyName("dataFolder")] public string DataFolder { get; set; } = "";
+
+        /// <summary>assignment.json 每次变更后执行的本机命令（{assignment} 占位符 = 分配文件路径；空 = 不启用钩子）。</summary>
+        [JsonPropertyName("onAssignmentChange")] public string OnAssignmentChange { get; set; } = "";
     }
 }

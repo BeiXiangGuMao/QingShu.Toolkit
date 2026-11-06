@@ -113,6 +113,9 @@ public sealed class GalaSettings
     /// <summary>配对码（可空=不校验）。现场防误连建议设置，客户端面板填同一串即可。</summary>
     [JsonPropertyName("pairingCode")] public string PairingCode { get; set; } = "";
 
+    /// <summary>主控端随插件加载自动启动监听（无人值守：控制机重启工具箱即恢复监听；false = 手动启动）。</summary>
+    [JsonPropertyName("autoStartMaster")] public bool AutoStartMaster { get; set; } = true;
+
     /// <summary>切换阈值：当前路径比最优差超过该分数才切换（防抖动）。</summary>
     [JsonPropertyName("switchThreshold")] public double SwitchThreshold { get; set; } = 12;
 

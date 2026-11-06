@@ -28,6 +28,7 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
     private string _host = "";
     private int _port = 47816;
     private string _pairing = "";
+    private string _hookCmd = "";
 
     public string DisplayName => "元旦晚会智能分流 · 服务端";
 
@@ -209,7 +210,18 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
             if (_agent == null)
             {
                 var ctx = _ctx ?? throw new InvalidOperationException("插件上下文未就绪（插件未加载或已卸载）");
-                _agent = new GalaAgent(msg => ctx.Log("info", msg), ctx.DataFolder);
+                _agent = new GalaAgent(msg =>
+                {
+                    ctx.Log("info", msg);
+                    GalaEventLog.Append(ctx.DataFolder, "gala-agent.log", msg); // 事件留痕落盘（1MB 轮转）
+                }, ctx.DataFolder);
+                // assignment.json 每次落盘 → 触发 onAssignmentChange 命令（本机执行器从轮询升级为事件化）
+                _agent.AssignmentChanged = path => GalaHook.Run(_hookCmd, path,
+                    msg =>
+                    {
+                        ctx.Log("info", msg);
+                        GalaEventLog.Append(ctx.DataFolder, "gala-agent.log", msg);
+                    });
             }
             return _agent;
         }
@@ -234,6 +246,9 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
         [JsonPropertyName("masterHost")] public string MasterHost { get; set; } = "";
         [JsonPropertyName("port")] public int Port { get; set; } = 47816;
         [JsonPropertyName("pairingCode")] public string PairingCode { get; set; } = "";
+
+        /// <summary>assignment.json 每次变更后执行的本机命令（{assignment} 占位符 = 分配文件路径；空 = 不启用钩子）。</summary>
+        [JsonPropertyName("onAssignmentChange")] public string OnAssignmentChange { get; set; } = "";
     }
 
     private void LoadOrCreateConfig()
@@ -253,9 +268,10 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
                         _host = (cfg.MasterHost ?? "").Trim();
                         _port = cfg.Port is >= 1 and <= 65535 ? cfg.Port : 47816;
                         _pairing = (cfg.PairingCode ?? "").Trim();
+                        _hookCmd = (cfg.OnAssignmentChange ?? "").Trim();
                     }
                     _ctx?.Log("info", _host.Length > 0
-                        ? $"已载入连接配置：主控 {_host}:{_port}"
+                        ? $"已载入连接配置：主控 {_host}:{_port}" + (_hookCmd.Length > 0 ? "（已启用分配变更钩子）" : "")
                         : "连接配置存在但未填主控地址（等待面板/快捷动作配置）");
                     return;
                 }
@@ -277,16 +293,17 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
         if (string.IsNullOrEmpty(folder)) return;
         try
         {
-            string host, pairing;
+            string host, pairing, hook;
             int port;
-            lock (_gate) { host = _host; port = _port; pairing = _pairing; }
+            lock (_gate) { host = _host; port = _port; pairing = _pairing; hook = _hookCmd; }
             Directory.CreateDirectory(folder!);
             File.WriteAllText(Path.Combine(folder!, ConfigFileName),
                 JsonSerializer.Serialize(new AgentPersistConfig
                 {
                     MasterHost = host,
                     Port = port,
-                    PairingCode = pairing
+                    PairingCode = pairing,
+                    OnAssignmentChange = hook // 手工填的钩子命令不能被连接动作冲掉
                 }, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)

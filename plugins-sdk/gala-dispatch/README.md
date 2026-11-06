@@ -69,6 +69,7 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
   "settings": {
     "listenPort": 47816,            // 主控 TCP 监听端口（改了要同步改服务端）
     "tickSeconds": 3,               // 探测/调度周期（秒）
+    "autoStartMaster": true,        // 随插件加载自动启动监听（无人值守；false = 手动启动）
     "allowedPrefixes": ["10.", "172.16.", "192.168.", "100.64."],  // 内网准入段
     "pairingCode": "",              // 配对码，空 = 不校验；现场建议设置
     "switchThreshold": 12,          // 切换阈值（路径分差），防抖动
@@ -77,7 +78,8 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
     "weightRtt": 0.35, "weightLoss": 0.25, "weightLoad": 0.20, "weightBandwidth": 0.20
   },
   "nodes": [                        // 固定设施：master / router / server / switch
-    { "id": "r1", "type": "router", "label": "出口路由A", "ip": "10.10.0.254" },
+    { "id": "r1", "type": "router", "label": "出口路由A", "ip": "10.10.0.254",
+      "probePort": 80 },            // probePort 可选、不限类型：禁 ICMP 网段给路由配管理口即可恢复探测
     { "id": "s1", "type": "server", "label": "流媒体服务器", "ip": "10.20.0.10", "probePort": 8000 },
     { "id": "s2", "type": "server", "label": "互动服务器", "ip": "10.20.0.11",
       "x": 0.7, "y": 0.72 }         // x/y 可选：手工拓扑布局（0~1 归一化），缺省自动分层
@@ -93,6 +95,17 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
 
 改完在主控插件卡片点快捷动作「重载拓扑配置」即时生效（运行中的主控自动按新配置重启）。
 服务端不进 `nodes`——上线自动注册，归属按其 IP 段匹配 `routes`。
+
+**探测降级（禁 ICMP 网段）**：任一节点（不限类型）配了 `probePort` 即加 TCP 端口握手探测——
+Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网段给路由配管理口（如 80/443）、
+服务器配业务口即可，RTT/丢包/压力评分照常工作。
+
+**无人值守（autoStartMaster，默认开）**：主控插件随加载自动启动监听——控制机重启工具箱即
+恢复监听，无需人工点面板；「停止主控端」只停本次会话。不希望自动启动改为 `false`。
+
+**事件留痕**：主控全部事件（调度决策/上下线/操控回执）自动追加写入
+`plugins-data\qingshu.galamaster\gala-master.log`（1MB 自动轮转 .old），复盘不依赖
+内存缓冲或导出时机；服务端侧对应 `gala-agent.log`。
 
 **调度手感（周期/阈值/冷却/满载基数）不用改文件**：主控面板「调度参数」区直接改，
 点「保存并生效」后下一探测周期自动生效（同一份运行配置热更新，主控不重启、终端不掉线），
@@ -120,6 +133,7 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
 | 设优先级 | 高（阈值/冷却减半，压力起来先保）/ 中 / 低；影响自动调度手感 |
 | 限速标记 | 下发 kbps 值，终端落盘 assignment.json 供本机限速执行器消费；空/0 = 解除 |
 | 即时采集 | 命令终端立即上报一轮指标 |
+| 剔除会话 | 断开并立即移除该终端会话（不保留 30 分钟重连保分配），用于误连/故障终端即时清理；重连按新终端重新分配 |
 
 离线超过 30 分钟的终端会话自动清理（重连保分配的语义保留 30 分钟，防临时终端无限积累，清理有事件留痕）。
 
@@ -129,7 +143,30 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
   `plugins-data\qingshu.galaagent\gala-agent.json`，此后**随插件加载自动重连**（常驻语义，
   终端机重启工具箱后无需任何手动操作）；「断开连接」只停本次会话，清空主控 IP 再连一次才撤销自动重连。
 - **行为**：断线 3 秒重连；周期上报 RTT / 丢包 / 收发速率 / 进程 CPU；执行主控指令。
-- **消费**：当前分配落盘 `plugins-data\qingshu.galaagent\assignment.json`，供本机执行器读取。
+- **消费**：当前分配落盘 `plugins-data\qingshu.galaagent\assignment.json`；事件留痕写
+  `plugins-data\qingshu.galaagent\gala-agent.log`（1MB 轮转）。
+
+### 3.1 分配变更钩子（onAssignmentChange，事件化消费）
+
+`gala-agent.json` 里可加一条 `onAssignmentChange` 命令：**assignment.json 每次落盘后自动执行**
+（串行防并发拉起，失败仅留痕），本机执行器从「轮询文件」升级为「变更即执行」：
+
+```jsonc
+{
+  "masterHost": "10.10.0.1",
+  "port": 47816,
+  "pairingCode": "",
+  "onAssignmentChange": "powershell -ExecutionPolicy Bypass -File C:\\gala\apply-route.ps1 -Assignment \"{assignment}\""
+}
+```
+
+- 命令串中 `{assignment}` 占位符 = assignment.json 完整路径（建议加引号防空格断参）；
+  不含占位符时路径会作为最后一个参数追加。
+- 服务端插件：手工编辑 `gala-agent.json` 加入该字段即可（连接动作不会冲掉它）；
+  独立服务端还可用命令行参数 `--hook "命令"` 临时指定。
+- 不启用钩子时，轮询消费照旧可用（§3.2 示例执行器）。
+
+### 3.2 轮询消费（示例执行器）
 
 `tools/assign-executor.ps1` 是 assignment.json 的最小可运行消费端示例（默认路径即服务端插件数据目录）：
 
@@ -141,7 +178,8 @@ powershell -ExecutionPolicy Bypass -File plugins-sdk\gala-dispatch\tools\assign-
 powershell -ExecutionPolicy Bypass -File plugins-sdk\gala-dispatch\tools\assign-executor.ps1 -Apply
 ```
 
-真实消费端（路由器 API / 代理切换 / 专用限速工具）参照其「读文件 → 差异化执行」骨架替换执行段即可。
+真实消费端（路由器 API / 代理切换 / 专用限速工具）参照其「读文件 → 差异化执行」骨架替换执行段即可；
+有路由器 API 后优先改造成 §3.1 的钩子命令，变更即时生效、无轮询延迟。
 
 ## 4. 现场部署清单
 
@@ -176,8 +214,8 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 
 - 拓扑配置：exe 同目录 `gala-topology.json`，格式与主控插件数据目录完全一致，可互相拷贝；
   首次运行自动生成模板并退出，填好真实网络资料后再启动。`--config 路径` 可指定其他位置。
-- 交互命令：`status / nodes / clients / events`（全景与事件）、`assign / priority / throttle / ping`
-  （与面板同语义的远程操控）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
+- 交互命令：`status / nodes / clients / events`（全景与事件）、`assign / priority / throttle / ping / kick`
+  （与面板同语义的远程操控，kick = 剔除会话）、`params / setparam`（调度参数热调，下一探测周期生效并写回配置文件）、
   `watch on|off`（每 10 秒一行态势摘要）、`quit`。
 - 无人值守：`--watch` 启动即开态势摘要；输出重定向（计划任务）时自动跳过交互输入，
   持续常驻，Ctrl+C 或结束进程优雅退出。
@@ -186,10 +224,10 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 ### 5.3 独立服务端（QingShu.GalaAgent）
 
 - 配置：exe 同目录 `gala-agent.json`（首次运行自动生成模板）：`masterHost`（主控机 IP，必填）
-  / `port` / `pairingCode` / `dataFolder`；命令行参数优先：
-  `--master 主控IP[:端口] --port 端口 --pairing 配对码 --data 数据目录`。
+  / `port` / `pairingCode` / `dataFolder` / `onAssignmentChange`（§3.1 变更钩子，可空）；命令行参数优先：
+  `--master 主控IP[:端口] --port 端口 --pairing 配对码 --data 数据目录 --hook "变更钩子命令"`。
 - 行为与服务端插件一致：断线 3 秒重连、周期上报指标、执行主控指令、当前分配落盘
-  `assignment.json`（供 §3 执行器消费）。
+  `assignment.json`（供 §3 消费端使用）+ 事件留痕 `gala-agent.log`。
 - 交互命令：`status / events / quit`；重定向输出时同样保持常驻。
 
 ## 6. 边界说明

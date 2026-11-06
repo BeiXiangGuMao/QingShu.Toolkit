@@ -160,6 +160,8 @@ public sealed class GalaMasterPanelView : UserControl
         throttleBtn.Click += (_, _) => OnThrottleClick();
         var pingBtn = new Button { Content = "即时采集", Padding = new Thickness(12, 4, 12, 4) };
         pingBtn.Click += (_, _) => OnPingNowClick();
+        var kickBtn = new Button { Content = "剔除会话", Padding = new Thickness(12, 4, 12, 4) };
+        kickBtn.Click += (_, _) => OnKickClick();
 
         var controlRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         controlRow.Children.Add(_routeBox);
@@ -169,6 +171,7 @@ public sealed class GalaMasterPanelView : UserControl
         controlRow.Children.Add(_throttleBox);
         controlRow.Children.Add(throttleBtn);
         controlRow.Children.Add(pingBtn);
+        controlRow.Children.Add(kickBtn);
 
         _eventText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Foreground = SecondaryBrush() };
         var eventScroll = new ScrollViewer
@@ -286,6 +289,20 @@ public sealed class GalaMasterPanelView : UserControl
             _statusText.Text = ok ? "即时采集请求已下发。" : "下发失败：客户端不在线或已断开。";
         }
         catch (Exception ex) { _statusText.Text = $"即时采集失败：{ex.Message}"; }
+    }
+
+    private void OnKickClick()
+    {
+        try
+        {
+            var master = _owner.EnsureMaster();
+            if (_selectedClientId.Length == 0) { _statusText.Text = "请先在列表中选中一个客户端。"; return; }
+            bool ok = master.TryKick(_selectedClientId);
+            _statusText.Text = ok
+                ? $"已剔除 {_selectedClientId}：连接断开并移除（重连将按新终端重新分配）。"
+                : "剔除失败：会话不存在（可能已被清理）。";
+        }
+        catch (Exception ex) { _statusText.Text = $"剔除失败：{ex.Message}"; }
     }
 
     private void OnSaveParamsClick()

@@ -63,10 +63,18 @@ public sealed class GalaAgent
     private double _rttMaster = -1, _rttServer = -1, _rxKbps, _txKbps, _appCpu, _lossPct;
     private int _tickSeconds = 3;
     private int _failStreak;
+    private readonly SemaphoreSlim _hookLock = new(1, 1);
 
     public bool IsRunning => _running;
     public bool IsConnected => _connected;
     public string AssignmentFile { get; }
+
+    /// <summary>
+    /// 可选钩子：assignment.json 每次落盘后触发（参数 = 文件完整路径），供本机执行器
+    /// 从「轮询文件」升级为「变更即执行」。内部已串行化（防并发拉起）+ 异常留痕；
+    /// 实现方仍应避免长时间阻塞（钩子在后台线程执行，不影响上报/指令收发）。
+    /// </summary>
+    public Action<string>? AssignmentChanged { get; set; }
 
     public GalaAgent(Action<string> log, string dataFolder)
     {
@@ -340,8 +348,23 @@ public sealed class GalaAgent
             Directory.CreateDirectory(_dataFolder);
             File.WriteAllText(AssignmentFile, JsonSerializer.Serialize(rec,
                 new JsonSerializerOptions { WriteIndented = true }));
+            TriggerAssignmentHook();
         }
         catch (Exception ex) { Event($"分配状态落盘失败：{ex.Message}"); }
+    }
+
+    /// <summary>分配落盘成功后触发变更钩子（串行执行防并发拉起；异常仅留痕不重试）。</summary>
+    private void TriggerAssignmentHook()
+    {
+        var hook = AssignmentChanged;
+        if (hook == null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await _hookLock.WaitAsync().ConfigureAwait(false); } catch { return; }
+            try { hook(AssignmentFile); }
+            catch (Exception ex) { Event($"分配变更钩子执行失败：{ex.Message}"); }
+            finally { try { _hookLock.Release(); } catch { } }
+        });
     }
 
     private void LoadAssignment()

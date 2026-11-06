@@ -93,7 +93,12 @@ internal static class Program
                           (_cfg.Settings.PairingCode.Length > 0 ? " · 配对码已启用" : " · 未设配对码"));
         Console.WriteLine();
 
-        _master = new GalaMaster(_cfg, msg => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}"));
+        var logDir = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
+        _master = new GalaMaster(_cfg, msg =>
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}");
+            GalaEventLog.Append(logDir, "gala-master.log", msg); // 事件留痕落盘（1MB 轮转，复盘不依赖进程存活）
+        });
         try
         {
             _master.Start(); // 端口被占等异常由核心直接抛出，在此可见
@@ -162,6 +167,7 @@ internal static class Program
                 Console.WriteLine("priority <客户端> <0|1|2>    调整优先级（0 高 / 1 中 / 2 低）");
                 Console.WriteLine("throttle <客户端> <kbps>     限速标记（0 = 解除，落盘 assignment.json）");
                 Console.WriteLine("ping <客户端>                请求该客户端即时上报指标");
+                Console.WriteLine("kick <客户端>                剔除会话（断开并移除，重连按新终端重新分配）");
                 Console.WriteLine("params                      查看调度参数（周期/阈值/冷却/满载）");
                 Console.WriteLine("setparam tick|threshold|cooldown|full <值>");
                 Console.WriteLine("                            热调调度参数（下一探测周期生效并写回配置文件）");
@@ -211,6 +217,12 @@ internal static class Program
                 if (parts.Length < 2) { Console.WriteLine("用法：ping <客户端>"); break; }
                 Console.WriteLine(TryCmd(parts[1], () => _master.TryPingNow(parts[1]),
                     $"已请求 {parts[1]} 即时上报指标"));
+                break;
+
+            case "kick":
+                if (parts.Length < 2) { Console.WriteLine("用法：kick <客户端>"); break; }
+                Console.WriteLine(TryCmd(parts[1], () => _master.TryKick(parts[1]),
+                    $"已剔除会话：{parts[1]}（重连将按新终端重新分配）"));
                 break;
 
             case "params":

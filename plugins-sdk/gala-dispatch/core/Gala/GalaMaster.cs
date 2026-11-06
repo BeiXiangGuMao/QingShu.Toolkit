@@ -355,7 +355,10 @@ public sealed class GalaMaster
         }
     }
 
-    /// <summary>单节点探测：ICMP Ping +（服务器可选）TCP 端口握手，取较优 RTT。Ping 实例不可并发复用，故每任务独立创建。</summary>
+    /// <summary>
+    /// 单节点探测：ICMP Ping +（配置 probePort 的节点，不限类型）TCP 端口握手；Ping 失败但 TCP 通即视为存活
+    /// （禁 ICMP 的网段给路由/服务器配 probePort 即可恢复探测，RTT 取 TCP 握手耗时）。Ping 实例不可并发复用，故每任务独立创建。
+    /// </summary>
     private static async Task<(GalaNodeConfig Node, bool Alive, double RttMs)> ProbeNodeAsync(GalaNodeConfig node, CancellationToken ct)
     {
         double rtt = -1;
@@ -371,7 +374,7 @@ public sealed class GalaMaster
             }
         }
         catch { }
-        if (node.Type == "server" && node.ProbePort > 0)
+        if (node.ProbePort > 0)
         {
             var sw = Stopwatch.StartNew();
             bool tcpOk = await ProbeTcpAsync(node.Ip, node.ProbePort, ct).ConfigureAwait(false);
@@ -618,6 +621,26 @@ public sealed class GalaMaster
             }
             catch (Exception ex) { Event($"限速标记失败（{clientId}）：{ex.Message}"); }
         });
+        return true;
+    }
+
+    /// <summary>
+    /// 剔除会话：断开连接并立即移除（不保留 30 分钟重连保分配），用于误连/故障终端的即时清理；
+    /// 终端再重连将按新终端重新分配。
+    /// </summary>
+    public bool TryKick(string clientId)
+    {
+        ClientSession? session;
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(clientId, out session)) return false;
+            _sessions.Remove(clientId);
+        }
+        var tcp = session.Tcp;
+        lock (_sync) { session.Tcp = null; session.Stream = null; } // 摘除连接引用：读循环代际校验判非当前，不再重复报离线
+        session.Alive = false;
+        try { tcp?.Close(); } catch { }
+        Event($"已剔除会话：{clientId}（连接断开并移除，重连将按新终端重新分配）");
         return true;
     }
 
