@@ -30,11 +30,15 @@ plugins-sdk/gala-dispatch/
 ## 1. 构建与签名（两个插件分别执行）
 
 ```powershell
-# 0) 先构建宿主（或直接使用已发布目录，设 QINGSHU_HOME 指向它）
-$env:QINGSHU_HOME = "C:\Tools\QingShu.Toolkit"
-#    未设置也能构建：插件工程会自动回退到仓库内 src/QingShu.Toolkit/bin/x64/Release/
-#    net8.0-windows10.0.19041.0/win-x64/publish/（若已发布宿主）；两处都没有时构建
-#    直接报「找不到宿主程序集」并给出操作指引（不再吞成一串 CS0246/CS0234 级联）。
+# 0) 先构建宿主，再把发布目录设给 QINGSHU_HOME（路径以 dotnet publish 输出「→」后为准；
+#    典型值：$env:QINGSHU_HOME = "$PWD\src\QingShu.Toolkit\bin\publish\win-x64"）
+$env:QINGSHU_HOME = "C:\Tools\QingShu.Toolkit"    # ← 换成你的宿主发布目录
+#    环境变量可能被 MSBuild 节点复用吞掉（设了不生效），最可靠是构建时直接传参：
+#    dotnet build ... -p:QingshuHome="宿主发布目录"。
+#    什么都不做也行：插件工程自动探测仓库内 src/QingShu.Toolkit/bin/publish/win-x64
+#    （make_release.ps1 -o 与新版 SDK dotnet publish 的产物路径；旧式
+#    bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/publish 亦兼容），
+#    都找不到才报「找不到宿主程序集」人话错误（含发布命令与传参示例）。
 
 # 1) 构建两个插件
 dotnet build plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster -c Release
@@ -43,15 +47,17 @@ dotnet build plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent  -c Release
 # 2) 组装主控端插件目录（目录名必须 = plugin.json 的 id）
 $qm = "$env:QINGSHU_HOME\plugins\qingshu.galamaster"
 New-Item -ItemType Directory -Force $qm | Out-Null
-Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster/bin/Release/net8.0-windows10.0.19041.0/QingShu.Plugin.GalaMaster.dll $qm\
-Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster/bin/Release/net8.0-windows10.0.19041.0/QingShu.Plugin.GalaMaster.pdb $qm\   # 可选
+#    dll 路径随 SDK/平台参数在 bin\x64\... 与 bin\... 间有差异，用发现式拷贝最稳
+#    （排除 obj 下的 ref 中间程序集；bin 残留多份旧构建时先清 bin 再建）：
+Get-ChildItem plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster/bin -Recurse -Include QingShu.Plugin.GalaMaster.dll,QingShu.Plugin.GalaMaster.pdb |
+  Where-Object { $_.FullName -notmatch '\\obj\\' } | Copy-Item -Destination $qm -Force
 Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster/plugin.json.template $qm\plugin.json
 
 # 3) 组装服务端插件目录
 $qa = "$env:QINGSHU_HOME\plugins\qingshu.galaagent"
 New-Item -ItemType Directory -Force $qa | Out-Null
-Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/bin/Release/net8.0-windows10.0.19041.0/QingShu.Plugin.GalaAgent.dll $qa\
-Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/bin/Release/net8.0-windows10.0.19041.0/QingShu.Plugin.GalaAgent.pdb $qa\      # 可选
+Get-ChildItem plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/bin -Recurse -Include QingShu.Plugin.GalaAgent.dll,QingShu.Plugin.GalaAgent.pdb |
+  Where-Object { $_.FullName -notmatch '\\obj\\' } | Copy-Item -Destination $qa -Force
 Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/plugin.json.template $qa\plugin.json
 
 # 4) 官方私钥分别签名（tools/plugin-sign.ps1，私钥离线保管，绝不入库）

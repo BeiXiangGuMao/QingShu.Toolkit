@@ -48,9 +48,10 @@ dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 -r win-x64 --self-
 
 ### 2.2 定位与校验输出目录
 
-产物位于 `src/QingShu.Toolkit/bin/` 下的 `publish` 目录
-（不同 SDK 小版本可能在 `bin/x64/Release/net8.0-windows10.0.*/win-x64/publish/`，
-以实际为准）。用以下特征确认目录完整：
+产物位于 `src/QingShu.Toolkit/bin/` 下的 `publish` 目录：
+新版 SDK 与 `scripts/make_release.ps1`（-o 参数）输出在 `bin/publish/win-x64/`；
+旧版 SDK 可能在 `bin/x64/Release/net8.0-windows10.0.*/win-x64/publish/`。
+**路径以 `dotnet publish` 输出「→」后的目录为准**。用以下特征确认目录完整：
 
 - `QingShu.Toolkit.exe`（主程序，约数百 KB）
 - `resources.pri`、`Microsoft.UI.Xaml.dll` 等 WinUI 资源与框架程序集
@@ -64,8 +65,8 @@ dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 -r win-x64 --self-
 ### 2.3 打 ZIP 包
 
 ```powershell
-# 路径按实际 publish 目录调整
-$pub  = "src/QingShu.Toolkit/bin/x64/Release/net8.0-windows10.0.26100.86/win-x64/publish"
+# 路径按实际 publish 目录调整（新版 SDK / make_release.ps1：bin/publish/win-x64）
+$pub  = "src/QingShu.Toolkit/bin/publish/win-x64"
 $zip  = "QingShu.Toolkit-1.2.0-beta-win-x64.zip"
 Compress-Archive -Path "$pub/*" -DestinationPath $zip -CompressionLevel Optimal
 ```
