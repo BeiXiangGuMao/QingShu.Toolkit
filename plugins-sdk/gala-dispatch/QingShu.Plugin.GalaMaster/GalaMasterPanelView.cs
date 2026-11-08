@@ -721,7 +721,7 @@ public sealed class GalaMasterPanelView : UserControl
             StrokeThickness = 2
         };
         ToolTipService.SetToolTip(ellipse,
-            $"{n.Label} · {n.Ip} · {n.Down ? "失联" : $"RTT {FmtMs(n.RttMs)}"}"
+            $"{n.Label} · {n.Ip} · {(n.Down ? "失联" : $"RTT {FmtMs(n.RttMs)}")}"
             + (n.GatewayTotal > 1 ? $"\n网关 {n.GatewayAlive}/{n.GatewayTotal} 可达" : ""));
         _topology.Children.Add(ellipse);
         Canvas.SetLeft(ellipse, x - size / 2);

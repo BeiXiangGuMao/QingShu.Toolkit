@@ -9,6 +9,10 @@ using QingShu.Toolkit.Services.Plugins;
 
 namespace QingShu.Plugin.GalaMaster;
 
+// 裸名 GalaMaster 会命中本命名空间（外层命名空间成员先于编译单元级 using 被解析，CS0118），
+// 必须在命名空间体内用别名指向核心类 QingShu.Gala.GalaMaster
+using GalaMaster = QingShu.Gala.GalaMaster;
+
 /// <summary>
 /// 元旦晚会智能分流 · 主控端插件（礼堂控制机）：
 /// 监听内网端口，汇聚各被控终端上报的链路指标，对「路由压力 × 服务器压力」做综合评分

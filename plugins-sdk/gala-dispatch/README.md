@@ -32,6 +32,9 @@ plugins-sdk/gala-dispatch/
 ```powershell
 # 0) 先构建宿主（或直接使用已发布目录，设 QINGSHU_HOME 指向它）
 $env:QINGSHU_HOME = "C:\Tools\QingShu.Toolkit"
+#    未设置也能构建：插件工程会自动回退到仓库内 src/QingShu.Toolkit/bin/x64/Release/
+#    net8.0-windows10.0.19041.0/win-x64/publish/（若已发布宿主）；两处都没有时构建
+#    直接报「找不到宿主程序集」并给出操作指引（不再吞成一串 CS0246/CS0234 级联）。
 
 # 1) 构建两个插件
 dotnet build plugins-sdk/gala-dispatch/QingShu.Plugin.GalaMaster -c Release

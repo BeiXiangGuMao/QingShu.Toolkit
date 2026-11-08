@@ -10,6 +10,10 @@ using QingShu.Gala;
 
 namespace QingShu.GalaAgent;
 
+// 裸名 GalaAgent 会命中本命名空间（外层命名空间成员先于编译单元级 using 被解析，CS0118），
+// 必须在命名空间体内用别名指向核心类 QingShu.Gala.GalaAgent
+using GalaAgent = QingShu.Gala.GalaAgent;
+
 /// <summary>
 /// 元旦晚会智能分流 · 独立服务端（被控端，控制台常驻）。
 /// 即插件面板中的「客户端」：部署在各节点机（舞台 / 投票 / 直播终端等），向主控端

@@ -159,7 +159,9 @@ powershell -ExecutionPolicy Bypass -File tools\plugin-sign.ps1 -PluginFolder plu
 ## 5. 换钥
 
 1. `plugin-keygen.ps1` 生成新对（脚本拒绝覆盖旧私钥，先备份）；
-2. 把新公钥 XML 替换进 `Services/Plugins/PluginSigning.cs` 的 `OfficialPublicKeyXml` 常量；
+2. `plugin-rotate-publickey.ps1` 自动把新公钥写进 `Services/Plugins/PluginSigning.cs`
+   的 `OfficialPublicKeyXml` 常量（写入前验证公钥可用、自动备份原文件、打印新指纹；
+   也可手工替换该常量）；
 3. 重新发布宿主；存量插件全部用新私钥重签。
 
 ## 6. 边界与已知限制

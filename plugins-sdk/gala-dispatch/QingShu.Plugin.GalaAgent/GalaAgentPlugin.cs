@@ -5,10 +5,15 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.UI.Xaml;
 using QingShu.Gala;
 using QingShu.Toolkit.Services.Plugins;
 
 namespace QingShu.Plugin.GalaAgent;
+
+// 裸名 GalaAgent 会命中本命名空间（外层命名空间成员先于编译单元级 using 被解析，CS0118），
+// 必须在命名空间体内用别名指向核心类 QingShu.Gala.GalaAgent
+using GalaAgent = QingShu.Gala.GalaAgent;
 
 /// <summary>
 /// 元旦晚会智能分流 · 服务端插件（被控终端，常驻）：

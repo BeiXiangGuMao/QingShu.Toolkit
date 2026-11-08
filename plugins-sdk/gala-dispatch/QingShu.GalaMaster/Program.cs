@@ -10,6 +10,10 @@ using QingShu.Gala;
 
 namespace QingShu.GalaMaster;
 
+// 裸名 GalaMaster 会命中本命名空间（外层命名空间成员先于编译单元级 using 被解析，CS0118），
+// 必须在命名空间体内用别名指向核心类 QingShu.Gala.GalaMaster
+using GalaMaster = QingShu.Gala.GalaMaster;
+
 /// <summary>
 /// 元旦晚会智能分流 · 独立主控端（控制台版）。
 /// 与工具箱内插件共用同一份 GalaMaster 核心；适合把主控端放在固定机器上常驻

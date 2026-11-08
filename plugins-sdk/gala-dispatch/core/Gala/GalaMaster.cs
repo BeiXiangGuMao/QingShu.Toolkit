@@ -263,7 +263,7 @@ public sealed class GalaMaster
                     }
                 }
             }
-            Event($"客户端上线：{clientId}（版本 {string.IsNullOrWhiteSpace(hello.Version) ? "未知" : hello.Version}）");
+            Event($"客户端上线：{clientId}（版本 {(string.IsNullOrWhiteSpace(hello.Version) ? "未知" : hello.Version)}）");
 
             var sess = session!; // lock 块内已必赋值；局部非空别名消除可空警告
             await SendWelcomeAsync(sess).ConfigureAwait(false);
