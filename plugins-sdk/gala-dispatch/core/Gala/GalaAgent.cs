@@ -35,7 +35,7 @@ public sealed class AgentSnapshot
 }
 
 /// <summary>
-/// 客户端 Agent：常驻连接主控（断线 3 秒重连），周期上报本地链路指标
+/// 客户端 Agent：常驻连接主控（断线温和退避 3→10 秒重连），周期上报本地链路指标
 /// （主控/分配服务器 RTT、丢包、收发速率、进程 CPU），接收并执行主控指令
 /// （切换线路 / 优先级 / 限速标记 / 即时上报），把当前分配持久化到 assignment.json
 /// 供本机其它执行器（如路由脚本）消费。
@@ -159,14 +159,16 @@ public sealed class GalaAgent
                 await SendFrameAsync(stream, GalaFrame.Encode(hello), ct).ConfigureAwait(false);
 
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var senderTask = SendMetricsLoopAsync(stream, linked.Token);
+                var senderTask = SendMetricsLoopAsync(stream, linked);
                 try
                 {
-                    while (!ct.IsCancellationRequested)
+                    // 读循环用 linked：发送侧发现连接损坏时叫醒读循环立即重连，
+                    // 不再等心跳空闲超时（半开连接恢复从最长 idle 超时缩到写超时 5 秒）
+                    while (!linked.IsCancellationRequested)
                     {
-                        var body = await GalaFrame.ReadFrameAsync(stream, ct).ConfigureAwait(false);
+                        var body = await GalaFrame.ReadFrameAsync(stream, linked.Token).ConfigureAwait(false);
                         if (body == null) break;
-                        HandleInbound(stream, body, ct);
+                        HandleInbound(stream, body, linked.Token);
                     }
                 }
                 finally
@@ -214,8 +216,9 @@ public sealed class GalaAgent
         finally { _sendLock.Release(); }
     }
 
-    private async Task SendMetricsLoopAsync(NetworkStream stream, CancellationToken ct)
+    private async Task SendMetricsLoopAsync(NetworkStream stream, CancellationTokenSource linked)
     {
+        var ct = linked.Token;
         var (lastRx, lastTx) = NetworkBytes();
         double lastCpuSec = ProcessCpuSeconds();
         var lastTs = DateTime.UtcNow;
@@ -258,13 +261,19 @@ public sealed class GalaAgent
                     _rxKbps = rxK; _txKbps = txK; _appCpu = appCpu; _lossPct = loss;
                 }
 
-                var msg = new MetricsMsg
+                // 发送前自钳（与主控侧 GalaSanitize.Metrics 同口径双保险）：异常采样不出本机
+                var msg = GalaSanitize.Metrics(new MetricsMsg
                 {
                     RttMasterMs = rttMaster, RttServerMs = rttServer, LossPct = loss,
                     RxKbps = rxK, TxKbps = txK, AppCpu = appCpu
-                };
+                })!;
                 try { await SendFrameAsync(stream, GalaFrame.Encode(msg), ct).ConfigureAwait(false); }
-                catch { break; }
+                catch
+                {
+                    // 写失败 = 连接已坏：取消 linked 叫醒读循环立即重连，不等心跳空闲超时
+                    try { linked.Cancel(); } catch { }
+                    break;
+                }
             }
 
             try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, tick)), ct).ConfigureAwait(false); }
@@ -382,7 +391,8 @@ public sealed class GalaAgent
         try
         {
             Directory.CreateDirectory(_dataFolder);
-            File.WriteAllText(AssignmentFile, JsonSerializer.Serialize(rec,
+            // 原子写：临时文件 + 替换，替换前自动留 .bak——崩溃/断电不再留半截 assignment.json
+            GalaFile.WriteAtomic(AssignmentFile, JsonSerializer.Serialize(rec,
                 new JsonSerializerOptions { WriteIndented = true }));
             TriggerAssignmentHook();
         }
@@ -407,8 +417,11 @@ public sealed class GalaAgent
     {
         try
         {
-            if (!File.Exists(AssignmentFile)) return;
-            var rec = JsonSerializer.Deserialize<AssignmentRecord>(File.ReadAllText(AssignmentFile));
+            if (!File.Exists(AssignmentFile) && !File.Exists(AssignmentFile + ".bak")) return;
+            // 主文件损坏自动回退 .bak：半写文件不再丢上次分配展示（真实分配仍以主控 welcome 为准）
+            var text = GalaFile.ReadWithBackup(AssignmentFile, msg => Event(msg));
+            if (text == null) return;
+            var rec = JsonSerializer.Deserialize<AssignmentRecord>(text);
             if (rec == null) return;
             lock (_sync)
             {
@@ -541,6 +554,7 @@ public sealed class GalaAgent
 
     private void Event(string text)
     {
+        if (text.Length > 300) text = text[..300] + "…"; // 单条截断：异常消息不再撑爆事件区与日志
         var line = $"[{DateTime.Now:HH:mm:ss}] {text}";
         lock (_sync)
         {

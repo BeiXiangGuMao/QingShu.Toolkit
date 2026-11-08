@@ -258,26 +258,31 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
         try
         {
             var path = Path.Combine(folder!, ConfigFileName);
-            if (File.Exists(path))
+            if (File.Exists(path) || File.Exists(path + ".bak"))
             {
-                var cfg = JsonSerializer.Deserialize<AgentPersistConfig>(File.ReadAllText(path));
-                if (cfg != null)
+                // 主文件损坏自动回退 .bak：连接配置不再因一次写坏而丢自动重连
+                var text = GalaFile.ReadWithBackup(path, msg => _ctx?.Log("warn", msg));
+                if (text != null)
                 {
-                    lock (_gate)
+                    var cfg = JsonSerializer.Deserialize<AgentPersistConfig>(text);
+                    if (cfg != null)
                     {
-                        _host = (cfg.MasterHost ?? "").Trim();
-                        _port = cfg.Port is >= 1 and <= 65535 ? cfg.Port : 47816;
-                        _pairing = (cfg.PairingCode ?? "").Trim();
-                        _hookCmd = (cfg.OnAssignmentChange ?? "").Trim();
+                        lock (_gate)
+                        {
+                            _host = (cfg.MasterHost ?? "").Trim();
+                            _port = cfg.Port is >= 1 and <= 65535 ? cfg.Port : 47816;
+                            _pairing = (cfg.PairingCode ?? "").Trim();
+                            _hookCmd = (cfg.OnAssignmentChange ?? "").Trim();
+                        }
+                        _ctx?.Log("info", _host.Length > 0
+                            ? $"已载入连接配置：主控 {_host}:{_port}" + (_hookCmd.Length > 0 ? "（已启用分配变更钩子）" : "")
+                            : "连接配置存在但未填主控地址（等待面板/快捷动作配置）");
+                        return;
                     }
-                    _ctx?.Log("info", _host.Length > 0
-                        ? $"已载入连接配置：主控 {_host}:{_port}" + (_hookCmd.Length > 0 ? "（已启用分配变更钩子）" : "")
-                        : "连接配置存在但未填主控地址（等待面板/快捷动作配置）");
-                    return;
                 }
             }
             Directory.CreateDirectory(folder!);
-            File.WriteAllText(path, JsonSerializer.Serialize(new AgentPersistConfig(),
+            GalaFile.WriteAtomic(path, JsonSerializer.Serialize(new AgentPersistConfig(),
                 new JsonSerializerOptions { WriteIndented = true }));
             _ctx?.Log("info", $"已生成连接配置模板 {path}（填好 masterHost 后连接一次即可常驻自动重连）");
         }
@@ -297,7 +302,8 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
             int port;
             lock (_gate) { host = _host; port = _port; pairing = _pairing; hook = _hookCmd; }
             Directory.CreateDirectory(folder!);
-            File.WriteAllText(Path.Combine(folder!, ConfigFileName),
+            // 原子写 + 自动 .bak：连接参数写坏不再丢（重装/重启后仍能自动重连）
+            GalaFile.WriteAtomic(Path.Combine(folder!, ConfigFileName),
                 JsonSerializer.Serialize(new AgentPersistConfig
                 {
                     MasterHost = host,

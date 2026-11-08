@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -343,6 +344,45 @@ public sealed class AckMsg
     [JsonPropertyName("detail")] public string Detail { get; set; } = "";
 }
 
+// ================= 上报数据清洗（主控信任边界） =================
+
+/// <summary>
+/// 客户端上报一律钳制到合理区间再入库：NaN/无穷/虚报超限不再污染压力分、画布与事件展示
+/// （虚报 1e9 kbps 曾可直接把带宽分打满触发误切换）；探测失败语义保留（RTT -1 = 未知）。
+/// 客户端发送前同样自钳（双保险），清洗器共用一份口径。
+/// </summary>
+public static class GalaSanitize
+{
+    public static double Metric(double v, double min, double max, double fallback)
+    {
+        if (double.IsNaN(v) || double.IsInfinity(v)) return fallback;
+        return Math.Clamp(v, min, max);
+    }
+
+    public static MetricsMsg? Metrics(MetricsMsg? m)
+    {
+        if (m == null) return null;
+        m.RttMasterMs = Metric(m.RttMasterMs, -1, 600000, -1);
+        m.RttServerMs = Metric(m.RttServerMs, -1, 600000, -1);
+        m.LossPct = Metric(m.LossPct, 0, 100, 0);
+        m.RxKbps = Metric(m.RxKbps, 0, 10_000_000, 0);
+        m.TxKbps = Metric(m.TxKbps, 0, 10_000_000, 0);
+        m.AppCpu = Metric(m.AppCpu, 0, 100, 0);
+        return m;
+    }
+
+    /// <summary>终端身份清洗：剔控制字符/空白、限长 64——超长或恶意 hostname 不再撑爆列表/画布/日志。</summary>
+    public static string Hostname(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        var sb = new StringBuilder(raw.Length);
+        foreach (var ch in raw)
+            if (!char.IsControl(ch) && !char.IsWhiteSpace(ch)) sb.Append(ch);
+        var s = sb.ToString();
+        return s.Length > 64 ? s[..64] : s;
+    }
+}
+
 // ================= 帧编解码（4 字节小端长度 + UTF-8 JSON） =================
 
 public static class GalaFrame
@@ -383,7 +423,15 @@ public static class GalaFrame
 
     public static async Task WriteFrameAsync(NetworkStream stream, byte[] frame, CancellationToken ct)
     {
-        await stream.WriteAsync(frame.AsMemory(0, frame.Length), ct).ConfigureAwait(false);
+        // 循环写完整帧：WriteAsync 不保证一次写完（部分写后连接异常时返回值偏小），
+        // 残包会让对端按非法长度直接断连；返回零字节视为连接失效
+        int off = 0;
+        while (off < frame.Length)
+        {
+            int n = await stream.WriteAsync(frame.AsMemory(off, frame.Length - off), ct).ConfigureAwait(false);
+            if (n <= 0) throw new IOException("流写入零字节（连接已失效）");
+            off += n;
+        }
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
@@ -399,18 +447,34 @@ public static class GalaFrame
         return true;
     }
 
-    /// <summary>从字符串列表里取与参考 IP 同段优先的地址（准入与段匹配用）。</summary>
+    /// <summary>
+    /// 从字符串列表里取与参考 IP 同段优先的地址（准入与段匹配用）。
+    /// 优先级：与参考地址同 /24（前三字节一致，真实同网段可达性最高）→ 同首字节（原口径，
+    /// 防多网卡跨大段）→ 第一个合法 IPv4；无任何合法地址返回空串（调用方回退 socket 远端地址）。
+    /// </summary>
     public static string PickBestIp(string csvIps, IReadOnlyCollection<string> referenceIps)
     {
-        var ips = (csvIps ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (ips.Length == 0) return "";
-        foreach (var ip in ips)
+        var ips = (csvIps ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(ip => IPAddress.TryParse(ip, out var v) && v.AddressFamily == AddressFamily.InterNetwork)
+            .ToList();
+        if (ips.Count == 0) return "";
+        foreach (var ip in ips) // 第一轮：同 /24（同 Vlan 段真实可达性最高）
         {
-            if (!IPAddress.TryParse(ip, out var a)) continue;
+            var a = IPAddress.Parse(ip).GetAddressBytes();
             foreach (var r in referenceIps)
             {
-                if (!IPAddress.TryParse(r, out var b)) continue;
-                if (a.AddressFamily == b.AddressFamily && a.GetAddressBytes()[0] == b.GetAddressBytes()[0]) return ip;
+                if (!IPAddress.TryParse(r, out var b) || b.AddressFamily != AddressFamily.InterNetwork) continue;
+                var rb = b.GetAddressBytes();
+                if (rb[0] == a[0] && rb[1] == a[1] && rb[2] == a[2]) return ip;
+            }
+        }
+        foreach (var ip in ips) // 第二轮：同首字节（原口径，宽松兜底）
+        {
+            var first = IPAddress.Parse(ip).GetAddressBytes()[0];
+            foreach (var r in referenceIps)
+            {
+                if (!IPAddress.TryParse(r, out var b) || b.AddressFamily != AddressFamily.InterNetwork) continue;
+                if (b.GetAddressBytes()[0] == first) return ip;
             }
         }
         return ips[0];

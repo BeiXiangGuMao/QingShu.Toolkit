@@ -138,6 +138,11 @@ public sealed class GalaAgentPanelView : UserControl
                 _clientSwitch.IsOn = agent.IsRunning;
                 _suspendSwitch = false;
             }
+            // 运行中锁定连接参数：会话用的是启动时的参数，改了也不生效——要改先断开，消除“改了没反应”的困惑
+            bool editable = !agent.IsRunning;
+            _masterIpBox.IsEnabled = editable;
+            _portBox.IsEnabled = editable;
+            _pairingBox.IsEnabled = editable;
             var a = agent.Snapshot();
             if (a.Running)
             {

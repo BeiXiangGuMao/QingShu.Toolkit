@@ -55,7 +55,7 @@ internal static class Program
                 var created = GalaTopologyConfig.CreateTemplate();
                 GalaTopologyConfig.Normalize(created);
                 Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
-                File.WriteAllText(_configPath,
+                GalaFile.WriteAtomic(_configPath,
                     JsonSerializer.Serialize(created, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch (Exception ex)
@@ -73,7 +73,10 @@ internal static class Program
 
         try
         {
-            var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(File.ReadAllText(_configPath))
+            // 主文件损坏自动回退 .bak：填好的 48 节点真实拓扑不因一次写坏而整体不可用
+            var text = GalaFile.ReadWithBackup(_configPath, msg => Console.WriteLine($"[警告] {msg}"))
+                       ?? File.ReadAllText(_configPath); // 主/备均不可读时抛出统一指引
+            var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(text)
                       ?? throw new InvalidDataException("配置文件格式不正确（反序列化为空）");
             GalaTopologyConfig.Normalize(cfg);
             _cfg = cfg;
@@ -284,7 +287,8 @@ internal static class Program
         // 与插件面板热调同语义：改内存同一配置实例，调度循环每 tick 重读；写回配置文件持久化
         try
         {
-            File.WriteAllText(_configPath,
+            // 原子写 + 自动 .bak：setparam 写回写坏不再丢拓扑（下次启动可回退上一份）
+            GalaFile.WriteAtomic(_configPath,
                 JsonSerializer.Serialize(_cfg, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine($"调度参数已更新：周期 {_cfg.Settings.TickSeconds}s · 阈值 {_cfg.Settings.SwitchThreshold:F0}" +
                               $" · 冷却 {_cfg.Settings.SwitchCooldownSeconds}s · 满载 {_cfg.Settings.ClientsPerNodeFull} 台" +

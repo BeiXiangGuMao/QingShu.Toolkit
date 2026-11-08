@@ -227,7 +227,8 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
         try
         {
             Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, ConfigFileName),
+            // 原子写 + 自动 .bak：参数写回写坏不再丢失用户手填的整份拓扑（重载可回退上一份）
+            GalaFile.WriteAtomic(Path.Combine(folder, ConfigFileName),
                 JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
@@ -245,9 +246,12 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
     {
         var folder = _ctx?.DataFolder ?? throw new InvalidOperationException("插件上下文未就绪");
         var path = Path.Combine(folder, ConfigFileName);
-        if (!File.Exists(path))
+        if (!File.Exists(path) && !File.Exists(path + ".bak"))
             throw new FileNotFoundException($"配置文件不存在：{path}");
-        var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(File.ReadAllText(path))
+        // 主文件损坏自动回退 .bak：误保存半截 JSON 不再导致整份拓扑不可用
+        var text = GalaFile.ReadWithBackup(path, msg => _ctx?.Log("warn", msg))
+                   ?? throw new InvalidDataException($"配置文件与备份均不可读：{path}");
+        var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(text)
                   ?? throw new InvalidDataException("配置文件格式不正确（反序列化为空）");
         GalaTopologyConfig.Normalize(cfg);
         lock (_gate) { _cfg = cfg; }
@@ -286,22 +290,27 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
         try
         {
             var path = Path.Combine(folder!, ConfigFileName);
-            if (File.Exists(path))
+            if (File.Exists(path) || File.Exists(path + ".bak"))
             {
-                var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(File.ReadAllText(path));
-                if (cfg != null)
+                // 主文件损坏自动回退 .bak：填好的真实拓扑不会因一次写坏而整体丢失
+                var text = GalaFile.ReadWithBackup(path, msg => _ctx?.Log("warn", msg));
+                if (text != null)
                 {
-                    GalaTopologyConfig.Normalize(cfg);
-                    lock (_gate) { _cfg = cfg; }
-                    _ctx?.Log("info", $"拓扑配置已载入：节点 {cfg.Nodes.Count} · 路由规则 {cfg.Routes.Count}");
-                    LogValidateWarnings(cfg);
-                    return;
+                    var cfg = JsonSerializer.Deserialize<GalaTopologyConfig>(text);
+                    if (cfg != null)
+                    {
+                        GalaTopologyConfig.Normalize(cfg);
+                        lock (_gate) { _cfg = cfg; }
+                        _ctx?.Log("info", $"拓扑配置已载入：节点 {cfg.Nodes.Count} · 路由规则 {cfg.Routes.Count}");
+                        LogValidateWarnings(cfg);
+                        return;
+                    }
                 }
             }
             var created = GalaTopologyConfig.CreateTemplate();
             GalaTopologyConfig.Normalize(created);
             Directory.CreateDirectory(folder!);
-            File.WriteAllText(path, JsonSerializer.Serialize(created,
+            GalaFile.WriteAtomic(path, JsonSerializer.Serialize(created,
                 new JsonSerializerOptions { WriteIndented = true }));
             lock (_gate) { _cfg = created; }
             _ctx?.Log("info", $"已生成拓扑占位配置 {path}（请用真实拓扑资料编辑后重载）");

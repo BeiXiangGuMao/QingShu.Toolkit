@@ -89,7 +89,7 @@ internal static class Program
             // 首次运行且未给参数：写模板并退出（双击运行的用户能看到明确指引）
             try
             {
-                File.WriteAllText(configPath, JsonSerializer.Serialize(new AgentFileConfig(),
+                GalaFile.WriteAtomic(configPath, JsonSerializer.Serialize(new AgentFileConfig(),
                     new JsonSerializerOptions { WriteIndented = true }));
             }
             catch (Exception ex)

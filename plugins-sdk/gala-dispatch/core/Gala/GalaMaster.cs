@@ -99,10 +99,22 @@ public sealed class GalaMaster
         lock (_sync)
         {
             if (_running) return;
-            _listener = new TcpListener(IPAddress.Any, _cfg.Settings.ListenPort);
-            _listener.Start(16); // 端口被占等异常直接抛给调用方（面板显示）
-            _cts = new CancellationTokenSource();
-            var ct = _cts.Token;
+            var listener = new TcpListener(IPAddress.Any, _cfg.Settings.ListenPort);
+            var cts = new CancellationTokenSource();
+            try
+            {
+                listener.Start(16); // 端口被占等异常直接抛给调用方（面板显示）
+            }
+            catch
+            {
+                // 启动失败不泄漏监听器/取消源：下一次 Start（如改端口后重试）可干净重来
+                try { listener.Stop(); } catch { }
+                cts.Dispose();
+                throw;
+            }
+            _listener = listener;
+            _cts = cts;
+            var ct = cts.Token;
             _running = true;
             _acceptLoop = Task.Run(() => AcceptLoopAsync(ct));
             _probeLoop = Task.Run(() => ProbeLoopAsync(ct));
@@ -151,7 +163,15 @@ public sealed class GalaMaster
             try { tcp = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
-            catch (Exception ex) { Event($"接受连接异常：{ex.Message}"); continue; }
+            catch (Exception ex)
+            {
+                Event($"接受连接异常：{ex.Message}");
+                // 异常风暴退避：监听器级异常（句柄耗尽等）时紧密循环会瞬间刷爆事件与日志，
+                // 睡 500ms 再继续，给系统自愈留窗口
+                try { await Task.Delay(500, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
             _ = Task.Run(() => HandleClientAsync(tcp, ct), ct);
         }
     }
@@ -181,6 +201,8 @@ public sealed class GalaMaster
                 tcp.Close();
                 return;
             }
+            hello.Hostname = GalaSanitize.Hostname(hello.Hostname); // 身份清洗：剔控制字符/限长，防撑爆列表与日志
+            if (hello.Hostname.Length == 0) hello.Hostname = "unknown";
             var pairing = _cfg.Settings.PairingCode;
             if (pairing.Length > 0 && !string.Equals(hello.Pairing, pairing, StringComparison.Ordinal))
             {
@@ -272,7 +294,7 @@ public sealed class GalaMaster
                     type = probeType?.Type ?? "";
                     if (type == "metrics")
                     {
-                        var m = GalaFrame.Decode<MetricsMsg>(frame);
+                        var m = GalaSanitize.Metrics(GalaFrame.Decode<MetricsMsg>(frame));
                         if (m != null)
                         {
                             lock (_sync) { sess.LastMetrics = m; sess.LastSeenUtc = DateTime.UtcNow; }
@@ -341,12 +363,36 @@ public sealed class GalaMaster
         try
         {
             // 发送超时 5 秒：终端拔电/网线故障后的半开连接，写操作可能挂起分钟级（TCP 重传），
-            // 不加超时会占住 SendLock 让后续所有指令/调度下发全部排队卡死。超时按连接失效处理，
-            // 由读循环的心跳空闲超时或写异常收尾断开。
+            // 不加超时会占住 SendLock 让后续所有指令/调度下发全部排队卡死。
             await GalaFrame.WriteFrameAsync(stream, frame, ct)
                 .WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; } // 正常停机不算连接损坏
+        catch (Exception ex)
+        {
+            // 写失败/写超时 = 连接已坏：立即标记断开并摘除连接，不再等心跳空闲超时——
+            // 会话状态与并发计压最快速度回归真实，终端侧也会立刻重连
+            MarkSessionBroken(s, stream, $"发送失败（{ex.Message}）");
+            throw;
+        }
         finally { s.SendLock.Release(); }
+    }
+
+    /// <summary>
+    /// 会话标记损坏：代际校验——仅当会话仍挂在发起本次发送的那条流上才动（已被重连接管时
+    /// 不碰新连接），断开后读循环自然退出并按离线收尾。
+    /// </summary>
+    private void MarkSessionBroken(ClientSession s, NetworkStream brokenStream, string why)
+    {
+        TcpClient? tcp;
+        lock (_sync)
+        {
+            if (!s.Alive || !ReferenceEquals(s.Stream, brokenStream)) return;
+            s.Alive = false;
+            tcp = s.Tcp;
+        }
+        try { tcp?.Close(); } catch { }
+        Event($"{why}，已断开会话 {s.ClientId}（等终端重连）");
     }
 
     // ================= 探针与综合调度 =================
@@ -897,6 +943,7 @@ public sealed class GalaMaster
 
     private void Event(string text)
     {
+        if (text.Length > 300) text = text[..300] + "…"; // 单条截断：异常帧/超长身份不再撑爆事件区与日志
         var line = $"[{DateTime.Now:HH:mm:ss}] {text}";
         lock (_sync)
         {

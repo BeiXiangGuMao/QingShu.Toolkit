@@ -44,6 +44,9 @@ public sealed class GalaMasterPanelView : UserControl
     private readonly TextBlock _onlineSummary;
     private string _selectedClientId = "";
     private string _routeSignature = "";
+    private string _clientsSignature = "";
+    private string _serversSignature = "";
+    private string _topologySignature = "";
     private bool _suspendSwitch;
 
     public GalaMasterPanelView(GalaMasterPlugin owner)
@@ -398,6 +401,14 @@ public sealed class GalaMasterPanelView : UserControl
 
     private void RenderServers(MasterSnapshot snap)
     {
+        // 签名一致跳过重建（含趋势线末点与点数）：数值没变不重画，减少无谓 UI 抖动
+        var sig = string.Join("\n", snap.Nodes.Where(n => n.Type is "router" or "server").Select(n =>
+            $"{n.Id}|{n.Down}|{n.Pressure:F1}|{n.RttMs:F0}|{n.LossPct:F0}|{n.ServedClients}|{n.GatewayAlive}|{n.GatewayTotal}"))
+            + "||hist:" + string.Join(";", snap.PressureHistory.OrderBy(kv => kv.Key)
+                .Select(kv => $"{kv.Key}:{kv.Value.Count}:{(kv.Value.Count > 0 ? kv.Value[^1].ToString("F1") : "")}"));
+        if (sig == _serversSignature) return;
+        _serversSignature = sig;
+
         _serverPanel.Children.Clear();
         foreach (var n in snap.Nodes.Where(n => n.Type is "router" or "server").OrderBy(n => n.Type).ThenBy(n => n.Id))
         {
@@ -467,6 +478,15 @@ public sealed class GalaMasterPanelView : UserControl
 
     private void RenderClients(MasterSnapshot snap)
     {
+        // 签名一致跳过重建：列表不再每 2 秒闪动/滚动归零/选中被打断（快照没变就别动 UI）；
+        // 心跳年龄只对离线项展示且必须随时间刷新，在线项不计入（否则签名永变，跳过失效）
+        var sig = string.Join("\n", snap.Clients.Select(c =>
+            $"{c.ClientId}|{c.Online}|{c.Link}|{c.ServerId}|{c.RouterId}|{c.Priority}|{c.Pinned}" +
+            $"|{c.ThrottleKbps}|{c.RttMasterMs:F0}|{c.RxKbps:F0}|{c.TxKbps:F0}" +
+            (c.Online ? "" : $"|{c.LastAgeSec:F0}")));
+        if (sig == _clientsSignature) return;
+        _clientsSignature = sig;
+
         _clientRows.Clear();
         _clientList.Items.Clear();
         int restore = -1;
@@ -492,6 +512,14 @@ public sealed class GalaMasterPanelView : UserControl
 
     private void DrawTopology(MasterSnapshot snap)
     {
+        // 签名一致跳过重绘：悬停提示不再每 2 秒被清空重建打断（同一画面稳定展示）
+        var sig = string.Join("\n", snap.Nodes.Select(n => $"{n.Id}|{n.Down}|{n.Pressure:F0}|{n.RttMs:F0}"))
+            + "||cl:" + string.Join(";", snap.Clients.Select(c => $"{c.ClientId}|{c.Online}|{c.Link}|{c.ServerId}"))
+            + "||lk:" + string.Join(";", _owner.Config.Links.Select(l => $"{l.From}>{l.To}:{l.CapacityMbps:F0}"))
+            + "||seg:" + string.Join(";", _owner.Config.Nodes.Select(n => $"{n.Id}:{string.Join(",", n.Segments)}"));
+        if (sig == _topologySignature) return;
+        _topologySignature = sig;
+
         _topology.Children.Clear();
         var nodes = snap.Nodes;
         if (nodes.Count == 0)
