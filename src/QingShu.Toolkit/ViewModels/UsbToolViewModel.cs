@@ -252,7 +252,8 @@ public partial class UsbToolViewModel : ObservableObject
                 .ConfigureAwait(true);
             CheckResults.Add(new UsbCheckRow(new UsbCheckOutcome(
                 "重建分区表", a.Status == "Ok" ? "Pass" : "Fail", a.Output,
-                a.Status == "Ok" ? "" : "可尝试：重新插拔 → 重置设备栈 → 再重建；diskpart 失败多为设备离线或写保护。")));
+                a.Status == "Ok" ? "" : "可尝试：重新插拔 → 重置设备栈 → 再重建；diskpart 失败多为设备离线或写保护。",
+                Array.Empty<string>())));
             Hint = a.Status == "Ok" ? "分区已重建并格式化，请「刷新设备」识别新卷。" : "重建失败，详见检查结果与日志。";
             if (a.Status == "Ok") await RefreshDevicesCoreAsync().ConfigureAwait(true);
         });

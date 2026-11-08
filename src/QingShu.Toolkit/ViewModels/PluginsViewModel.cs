@@ -167,7 +167,7 @@ public partial class PluginsViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var pending = Plugins.Where(p => p.Enabled && p.VerifyOk && !p.IsLoaded).ToList();
+            var pending = Plugins.Where(p => p.IsEnabled && p.VerifyOk && !p.IsLoaded).ToList();
             if (pending.Count == 0) { StatusText = "没有待加载的插件（全部已加载，或未启用/未通过验签）。"; return; }
             int ok = 0, fail = 0;
             foreach (var row in pending)

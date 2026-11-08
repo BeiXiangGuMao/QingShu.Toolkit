@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using QingShu.Toolkit.Interop;
 using QingShu.Toolkit.Services;
+using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Plugins;
 using QingShu.Toolkit.Services.Power;
 using QingShu.Toolkit.Services.Popup;

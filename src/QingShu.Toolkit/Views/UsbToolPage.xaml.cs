@@ -75,7 +75,7 @@ public sealed partial class UsbToolPage : Page
         var rbExfat = new RadioButton { Content = $"exFAT（大容量推荐{(d.Drive.SizeBytes > 32L * 1024 * 1024 * 1024 ? "，FAT32 不支持超 32GB" : "")}）", IsChecked = true };
         var rbFat32 = new RadioButton { Content = "FAT32（兼容性最好，仅 ≤32GB 生效，超出自动转 exFAT）" };
         var rbNtfs = new RadioButton { Content = "NTFS（支持权限与大文件，部分设备/老系统读取慢）" };
-        var chk = new CheckBox { Content = $"我已确认：{d.Drive.Summary} 上的全部数据将被清空" };
+        var chk = new CheckBox { Content = $"我已确认：{d.Summary} 上的全部数据将被清空" };
 
         var dlg = new ContentDialog
         {

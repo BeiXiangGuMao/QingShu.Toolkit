@@ -52,19 +52,19 @@ public sealed class UsbHealthService : IUsbHealthService
         // ---- 表面读扫描（限时）：顺序读全盘，统计坏区/慢区 ----
         progress?.Report("表面读扫描中…");
         var surface = await ScanSurfaceAsync(drive, progress, ct).ConfigureAwait(false);
-        if (surface.ScannedBytes == 0)
+        if (surface.ReadBytes == 0)
             list.Add(UsbCheckOutcome.Skip("表面读扫描", "设备无法打开，跳过（请确认U盘可正常识别）"));
         else if (surface.BadRegions == 0 && surface.SlowRegions == 0)
             list.Add(UsbCheckOutcome.Pass("表面读扫描",
-                $"{FormatHelper.Bytes(surface.ScannedBytes)} 扫描完成 · 读吞吐 {surface.Mbps:0.#} MB/s"));
+                $"{FormatHelper.Bytes(surface.ReadBytes)} 扫描完成 · 读吞吐 {surface.Mbps:0.#} MB/s"));
         else
             list.Add(UsbCheckOutcome.Fail("表面读扫描",
-                $"发现坏区 {surface.BadRegions} 处 / 慢区 {surface.SlowRegions} 处（已扫 {FormatHelper.Bytes(surface.ScannedBytes)}）",
+                $"发现坏区 {surface.BadRegions} 处 / 慢区 {surface.SlowRegions} 处（已扫 {FormatHelper.Bytes(surface.ReadBytes)}）",
                 "存在物理坏块：重要文件请立即转移；若坏块持续增多，该U盘应报废。",
                 surface.Notes.Take(6).ToArray()));
 
         // ---- 读吞吐评估 ----
-        if (surface.ScannedBytes > 0)
+        if (surface.ReadBytes > 0)
         {
             string verdict = surface.Mbps switch
             {

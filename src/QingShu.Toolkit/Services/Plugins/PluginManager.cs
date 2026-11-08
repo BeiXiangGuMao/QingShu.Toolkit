@@ -49,7 +49,8 @@ public sealed class PluginManager : IPluginManager
 {
     private const int InitTimeoutSeconds = 10;
     private const int ShutdownTimeoutSeconds = 5;
-    private const int MaxQuickActions = 8;
+    // internal：PluginContext（同文件独立类）注册快捷动作时引用同一上限，单一事实源
+    internal const int MaxQuickActions = 8;
 
     private readonly ILogService _log;
     private readonly PluginReleaseAccess _releaseAccess;
@@ -509,8 +510,8 @@ internal sealed class PluginContext : IPluginContext
         if (action == null) throw new ArgumentNullException(nameof(action));
         lock (_actionLock)
         {
-            if (_actions.Count >= MaxQuickActions)
-                throw new InvalidOperationException($"快捷操作数量已达上限（{MaxQuickActions}）");
+            if (_actions.Count >= PluginManager.MaxQuickActions)
+                throw new InvalidOperationException($"快捷操作数量已达上限（{PluginManager.MaxQuickActions}）");
             if (_actions.Any(a => a.Name == name))
                 throw new InvalidOperationException($"快捷操作重名：{name}");
             _actions.Add(new PluginQuickAction(name.Trim(), action));

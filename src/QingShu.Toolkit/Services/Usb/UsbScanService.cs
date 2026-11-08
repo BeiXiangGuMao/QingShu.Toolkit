@@ -75,7 +75,9 @@ public sealed class UsbScanService : IUsbScanService
         try
         {
             // ---- 1. autorun.inf：文件形态即自启动入口，指向可执行体判恶意 ----
-            threats.AddRange(CheckAutorun(root));
+            // CheckAutorun 返回单条 UsbThreat?（非集合）：空即无 autorun 项，不得 AddRange
+            var autorun = CheckAutorun(root);
+            if (autorun != null) threats.Add(autorun);
 
             // ---- 2. 递归扫描（限深/限数/限时，跳过重解析点）----
             var stack = new Stack<(string Dir, int Depth)>();
@@ -122,7 +124,8 @@ public sealed class UsbScanService : IUsbScanService
 
     // ---------------- 单文件判定 ----------------
 
-    private UsbThreat? InspectFile(string root, string path, FileAttributes attrs)
+    // static：仅使用静态成员（蠕虫名单/扩展名表/Ansi 解码器），被静态 ScanVolumeCore 调用
+    private static UsbThreat? InspectFile(string root, string path, FileAttributes attrs)
     {
         var name = Path.GetFileName(path);
         var lower = name.ToLowerInvariant();

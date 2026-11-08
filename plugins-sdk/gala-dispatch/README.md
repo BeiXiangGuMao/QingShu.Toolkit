@@ -52,8 +52,8 @@ Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/bin/Release/net8.0-
 Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/plugin.json.template $qa\plugin.json
 
 # 4) 官方私钥分别签名（tools/plugin-sign.ps1，私钥离线保管，绝不入库）
-powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qm
-powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
+powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginFolder $qm
+powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginFolder $qa
 ```
 
 宿主插件页「重新扫描」→ 两张卡片各自出现「官方签名」→ 分别「加载」。**控制机只装主控端
