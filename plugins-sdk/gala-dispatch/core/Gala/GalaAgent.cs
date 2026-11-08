@@ -148,7 +148,8 @@ public sealed class GalaAgent
                     Hostname = Environment.MachineName,
                     Ips = LocalIpv4Csv(),
                     Pairing = _pairing,
-                    Version = GetType().Assembly.GetName().Version?.ToString(3) ?? "1.0.0"
+                    Version = GetType().Assembly.GetName().Version?.ToString(3) ?? "1.0.0",
+                    Link = DetectLinkType() // 网线/直连 WiFi，主控画布按类型配色逐台展示
                 };
                 await SendFrameAsync(stream, GalaFrame.Encode(hello), ct).ConfigureAwait(false);
 
@@ -446,6 +447,29 @@ public sealed class GalaAgent
                 .Where(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
                 .Select(a => a.Address.ToString())
                 .Distinct());
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>
+    /// 接入方式识别：取「Up + 有 IPv4 网关」的网卡（真正在上网的那张），按介质类型判定
+    /// ethernet=网线 / wifi=直连 WiFi；多网卡取首个符合的；识别不了留空（主控按中性色展示）。
+    /// </summary>
+    private static string DetectLinkType()
+    {
+        try
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(n => n.OperationalStatus == OperationalStatus.Up
+                                     && n.NetworkInterfaceType != NetworkInterfaceType.Loopback
+                                     && n.GetIPProperties().GatewayAddresses.Any(g =>
+                                         g.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                                     && n.GetIPProperties().UnicastAddresses.Any(a =>
+                                         a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork));
+            if (nic == null) return "";
+            return nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? "wifi"
+                 : nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? "ethernet"
+                 : "";
         }
         catch { return ""; }
     }

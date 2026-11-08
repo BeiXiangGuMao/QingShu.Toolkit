@@ -94,7 +94,7 @@ public sealed class GalaMasterPanelView : UserControl
         };
         var legend = new TextBlock
         {
-            Text = "节点颜色 = 综合压力（绿 <40 / 黄 40-70 / 红 ≥70，灰 = 失联或非压力节点）；客户端小圆 = 在线终端；拓扑布局与链路来自 gala-topology.json。",
+            Text = "节点颜色 = 综合压力（绿 <40 / 黄 40-70 / 红 ≥70，灰 = 失联或非压力节点）；小圆 = 动态注册的真实终端（蓝=网线 / 紫=直连 WiFi / 灰=离线，悬停看详情），按网段挂在接入交换机下；拓扑与链路来自 gala-topology.json。",
             FontSize = 11,
             Foreground = SecondaryBrush(),
             TextWrapping = TextWrapping.Wrap,
@@ -408,7 +408,8 @@ public sealed class GalaMasterPanelView : UserControl
                 VerticalAlignment = VerticalAlignment.Center,
                 Text = n.Down
                     ? $"{n.Label} · {n.Ip} · 失联（压力按打满计）"
-                    : $"{n.Label} · {n.Ip} · 压力 {n.Pressure:F0} · RTT {FmtMs(n.RttMs)} · 丢包 {n.LossPct:F0}% · 服务 {n.ServedClients} 台"
+                    : $"{n.Label} · {n.Ip}" + (n.GatewayTotal > 1 ? $" · 网关 {n.GatewayAlive}/{n.GatewayTotal}" : "")
+                      + $" · 压力 {n.Pressure:F0} · RTT {FmtMs(n.RttMs)} · 丢包 {n.LossPct:F0}% · 服务 {n.ServedClients} 台"
             };
             row.Children.Add(info);
             Grid.SetColumn(info, 1);
@@ -459,7 +460,9 @@ public sealed class GalaMasterPanelView : UserControl
             _clientRows.Add(c);
             if (string.Equals(c.ClientId, _selectedClientId, StringComparison.Ordinal)) restore = _clientRows.Count - 1;
             _clientList.Items.Add(
-                $"{(c.Online ? "●" : "○")} {c.Hostname} · {c.Ip} · → {OrDash(c.ServerId)}（经 {OrDash(c.RouterId)}）"
+                $"{(c.Online ? "●" : "○")} {c.Hostname} · {c.Ip}"
+                + (c.Link.Length > 0 ? $" · {LinkName(c.Link)}" : "")
+                + $" · → {OrDash(c.ServerId)}（经 {OrDash(c.RouterId)}）"
                 + $" · {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}优先"
                 + (c.Pinned ? " · 手动锁定" : "")
                 + (c.ThrottleKbps > 0 ? $" · 限速 {c.ThrottleKbps} kbps" : "")
@@ -511,12 +514,23 @@ public sealed class GalaMasterPanelView : UserControl
         Place(switches.GetRange(swHalf, switches.Count - swHalf), 0.58);
         Place(servers, 0.76);
 
-        // 客户端小点：挂在所属路由下方
-        var clientsByRouter = snap.Clients
-            .Where(c => c.RouterId.Length > 0)
-            .GroupBy(c => c.RouterId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var looseClients = snap.Clients.Where(c => c.RouterId.Length == 0).ToList();
+        // 客户端小点：真实终端动态挂载——优先按交换机 segments 挂到所属网段接入交换机下，
+        // 段未配交换机时挂其路由节点；都缺则排底部散行。逐台绘制，悬停看详情
+        var mounts = new Dictionary<string, List<ClientSnap>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in snap.Clients)
+        {
+            string mountId = ResolveMount(c);
+            if (mountId.Length == 0 || !nodes.Any(n => n.Id == mountId))
+            {
+                looseClients.Add(c);
+                continue;
+            }
+            if (!mounts.TryGetValue(mountId, out var list)) mounts[mountId] = list = new List<ClientSnap>();
+            list.Add(c);
+        }
+        // 在线优先排前：密集组里离线终端不挡在线终端的视野
+        foreach (var list in mounts.Values)
+            list.Sort((a, b) => (b.Online ? 1 : 0).CompareTo(a.Online ? 1 : 0));
 
         // ---- 链路 ----
         foreach (var link in cfg.Links)
@@ -540,19 +554,24 @@ public sealed class GalaMasterPanelView : UserControl
                 if (!exists) AddLine(mp, rp, PressureColor(r.Pressure), 2);
             }
         }
-        // 路由 → 其客户端（细线，仅在线）
-        foreach (var kv in clientsByRouter)
+        // 挂载点（路由/交换机） → 其动态注册终端：真实 PC 逐台绘制（网线蓝 / 直连 WiFi 紫 /
+        // 离线灰），奇偶错行防密集拓扑（40 台接入交换机）相邻组互相压盖
+        int mountIdx = 0;
+        foreach (var kv in mounts)
         {
-            if (!pos.TryGetValue(kv.Key, out var rp)) continue;
-            int k = kv.Value.Count;
-            for (int j = 0; j < k; j++)
+            if (!pos.TryGetValue(kv.Key, out var mp)) { looseClients.AddRange(kv.Value); continue; }
+            var list = kv.Value;
+            int n = list.Count;
+            double step = n > 1 ? Math.Max(5.0, Math.Min(14.0, 60.0 / (n - 1))) : 14.0;
+            double cy = mp.Y + (mountIdx % 2 == 0 ? 26 : 38);
+            for (int j = 0; j < n; j++)
             {
-                var c = kv.Value[j];
-                double cx = rp.X + (j - (k - 1) / 2.0) * 54;
-                double cy = TopologyHeight * 0.92;
+                var c = list[j];
+                double cx = mp.X - (n - 1) * step / 2.0 + j * step;
                 pos[c.ClientId] = (cx, cy);
-                AddLine(rp, (cx, cy), Color.FromArgb(255, 176, 190, 197), 1);
+                AddLine(mp, (cx, cy), Color.FromArgb(255, 176, 190, 197), 1);
             }
+            mountIdx++;
         }
         for (int j = 0; j < looseClients.Count; j++)
         {
@@ -566,33 +585,67 @@ public sealed class GalaMasterPanelView : UserControl
             if (!pos.TryGetValue(n.Id, out var p)) continue;
             AddNode(p.X, p.Y, n, n.Type == "master" ? 34 : n.Type == "switch" ? 20 : 28);
         }
+        // ---- 动态注册的真实终端（逐台，悬停看主机名/地址/接入方式/线路）----
         foreach (var c in snap.Clients)
         {
             if (!pos.TryGetValue(c.ClientId, out var p)) continue;
+            double size = c.Online ? 9 : 7;
             var dot = new Ellipse
             {
-                Width = 14,
-                Height = 14,
-                Fill = new SolidColorBrush(c.Online
-                    ? Color.FromArgb(255, 66, 165, 245)
-                    : Color.FromArgb(255, 176, 176, 176)),
+                Width = size,
+                Height = size,
+                Fill = new SolidColorBrush(ClientColor(c)),
                 Stroke = new SolidColorBrush(Color.FromArgb(255, 255, 255, 255)),
-                StrokeThickness = 1.5
+                StrokeThickness = 1
             };
+            ToolTipService.SetToolTip(dot,
+                $"{c.Hostname} · {c.Ip}\n{LinkName(c.Link)} · → {OrDash(c.ServerId)} · " +
+                (c.Online ? $"RTT {FmtMs(c.RttMasterMs)}" : "离线"));
             _topology.Children.Add(dot);
-            Canvas.SetLeft(dot, p.X - 7);
-            Canvas.SetTop(dot, p.Y - 7);
-            var tip = new TextBlock
-            {
-                Text = c.Hostname,
-                FontSize = 10,
-                Foreground = SecondaryBrush()
-            };
-            _topology.Children.Add(tip);
-            Canvas.SetLeft(tip, p.X - 20);
-            Canvas.SetTop(tip, p.Y + 8);
+            Canvas.SetLeft(dot, p.X - size / 2);
+            Canvas.SetTop(dot, p.Y - size / 2);
         }
     }
+
+    /// <summary>
+    /// 终端挂载点：所属网段配了接入交换机（segments 八点界命中，最长前缀优先）挂交换机，
+    /// 否则挂其路由节点（viaRouter）；都缺返回空（排底部散行）。
+    /// </summary>
+    private string ResolveMount(ClientSnap c)
+    {
+        try
+        {
+            string bestSeg = "";
+            GalaNodeConfig? bestSw = null;
+            foreach (var n in _owner.Config.Nodes)
+            {
+                if (n.Type != "switch") continue;
+                foreach (var seg in n.Segments)
+                {
+                    if (GalaNet.MatchesPrefix(c.Ip, seg) && seg.Length > bestSeg.Length)
+                    {
+                        bestSeg = seg;
+                        bestSw = n;
+                    }
+                }
+            }
+            return bestSw?.Id ?? c.RouterId;
+        }
+        catch { return c.RouterId; }
+    }
+
+    /// <summary>终端小点配色：离线灰 / 直连 WiFi 紫 / 网线蓝 / 未上报蓝灰。</summary>
+    private static Color ClientColor(ClientSnap c) => !c.Online ? Color.FromArgb(255, 176, 176, 176)
+        : c.Link == "wifi" ? Color.FromArgb(255, 171, 71, 188)
+        : c.Link == "ethernet" ? Color.FromArgb(255, 66, 165, 245)
+        : Color.FromArgb(255, 120, 144, 156);
+
+    private static string LinkName(string link) => link switch
+    {
+        "wifi" => "直连 WiFi",
+        "ethernet" => "网线",
+        _ => "接入方式未上报"
+    };
 
     private void AddLine((double X, double Y) a, (double X, double Y) b, Color color, double thickness)
     {
@@ -621,6 +674,9 @@ public sealed class GalaMasterPanelView : UserControl
             Stroke = new SolidColorBrush(Color.FromArgb(255, 255, 255, 255)),
             StrokeThickness = 2
         };
+        ToolTipService.SetToolTip(ellipse,
+            $"{n.Label} · {n.Ip} · {n.Down ? "失联" : $"RTT {FmtMs(n.RttMs)}"}"
+            + (n.GatewayTotal > 1 ? $"\n网关 {n.GatewayAlive}/{n.GatewayTotal} 可达" : ""));
         _topology.Children.Add(ellipse);
         Canvas.SetLeft(ellipse, x - size / 2);
         Canvas.SetTop(ellipse, y - size / 2);
@@ -635,7 +691,8 @@ public sealed class GalaMasterPanelView : UserControl
         };
         _topology.Children.Add(label);
         Canvas.SetLeft(label, x - 60);
-        Canvas.SetTop(label, y + size / 2 + 2);
+        // switch 标签画在节点上方：下方空间留给动态挂载的真实终端小点
+        Canvas.SetTop(label, n.Type == "switch" ? y - size / 2 - 16 : y + size / 2 + 2);
         label.MinWidth = 120;
         label.TextAlignment = Microsoft.UI.Text.TextAlignment.Center;
     }

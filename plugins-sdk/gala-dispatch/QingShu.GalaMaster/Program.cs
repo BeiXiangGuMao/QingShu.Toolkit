@@ -312,6 +312,7 @@ internal static class Program
         {
             string pressure = n.Down ? "离线" : n.Pressure >= 0 ? $"压力 {n.Pressure,5:F1}" : "不计压力";
             Console.WriteLine($"  [{n.Type,-6}] {n.Id,-8} {n.Label,-10} {n.Ip,-15} {pressure}" +
+                              (n.GatewayTotal > 1 ? $"  网关 {n.GatewayAlive}/{n.GatewayTotal}" : "") +
                               $"  RTT {FmtMs(n.RttMs)}  丢包 {n.LossPct,4:F0}%  服务 {n.ServedClients}");
         }
     }
@@ -323,7 +324,8 @@ internal static class Program
         Console.WriteLine($"—— 客户端（在线 {online}/{snap.Clients.Count}）——");
         foreach (var c in snap.Clients)
         {
-            Console.WriteLine($"  {c.ClientId,-16} {(c.Online ? "在线" : "离线")}{(c.Pinned ? "〔锁〕" : "")}  {c.Ip,-15} → {c.ServerId,-6}（经 {c.RouterId,-6}）" +
+            string link = c.Link == "wifi" ? "〔WiFi〕" : c.Link == "ethernet" ? "〔网线〕" : "";
+            Console.WriteLine($"  {c.ClientId,-16} {(c.Online ? "在线" : "离线")}{(c.Pinned ? "〔锁〕" : "")}{link}  {c.Ip,-15} → {c.ServerId,-6}（经 {c.RouterId,-6}）" +
                               $"  优先级 {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}" +
                               $"  限速 {(c.ThrottleKbps > 0 ? c.ThrottleKbps + " kbps" : "-")}" +
                               $"  RTT {FmtMs(c.RttMasterMs)}  收/发 {c.RxKbps,6:F0}/{c.TxKbps,6:F0} kbps  主机 {c.Hostname}");

@@ -24,6 +24,9 @@ public sealed class NodeSnap
     public double LossPct { get; init; }
     public int ServedClients { get; init; }
     public bool Down { get; init; }
+    /// <summary>多网关节点（如核心 S7706 的 12 个 Vlanif）：最近一轮探测可达网关数 / 总数（单地址节点为 0）。</summary>
+    public int GatewayAlive { get; init; }
+    public int GatewayTotal { get; init; }
 }
 
 public sealed class ClientSnap
@@ -37,6 +40,8 @@ public sealed class ClientSnap
     public int ThrottleKbps { get; init; }
     /// <summary>手动锁定（操作员手动切换后置位，自动调度跳过，恢复自动后清除）。</summary>
     public bool Pinned { get; init; }
+    /// <summary>接入方式：ethernet=网线 / wifi=直连 WiFi / 空=旧版未上报。</summary>
+    public string Link { get; init; } = "";
     public bool Online { get; init; }
     public double RttMasterMs { get; init; } = -1;
     public double RxKbps { get; init; }
@@ -217,6 +222,8 @@ public sealed class GalaMaster
                 session.Stream = stream;
                 session.Alive = true;
                 session.LastSeenUtc = DateTime.UtcNow;
+                // 接入方式随 hello 刷新：终端在网线/直连 WiFi 间切换后画布配色与列表跟着变
+                session.Link = NormalizeLink(hello.Link);
 
                 if (session.ServerId.Length == 0)
                 {
@@ -348,12 +355,13 @@ public sealed class GalaMaster
             {
                 // router/server 参与压力评估；switch 仅观测（留 RTT/丢包与 Down 灰显，不计压力分、不触发调度）
                 var nodes = _cfg.Nodes
-                    .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch") && n.Ip.Length > 0)
+                    .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch")
+                                && (n.Ip.Length > 0 || n.GatewayIps.Count > 0))
                     .ToList();
-                // 并行探测：单轮耗时 ≈ 最慢一个节点（约 3 秒），不再随节点数线性放大，
-                // 保证 tickSeconds=3 时大拓扑（几十节点）也不拖慢调度周期
+                // 并行探测：单轮耗时 ≈ 最慢一个节点（约 3 秒），不再随节点数线性放大；
+                // 多网关节点（如核心 S7706）全部地址一并并行，单轮仍是一次最慢探测的耗时
                 var results = await Task.WhenAll(nodes.Select(n => ProbeNodeAsync(n, ct))).ConfigureAwait(false);
-                foreach (var (node, alive, rtt) in results)
+                foreach (var (node, alive, rtt, gwAlive, gwTotal) in results)
                 {
                     PressureProbe probe;
                     lock (_sync)
@@ -361,6 +369,8 @@ public sealed class GalaMaster
                         if (!_probes.TryGetValue(node.Id, out probe!)) _probes[node.Id] = probe = new PressureProbe();
                     }
                     probe.Feed(!alive, rtt);
+                    probe.GatewayAlive = gwAlive;
+                    probe.GatewayTotal = gwTotal;
                 }
 
                 await DispatchPassAsync(ct).ConfigureAwait(false);
@@ -375,17 +385,32 @@ public sealed class GalaMaster
     }
 
     /// <summary>
-    /// 单节点探测：ICMP Ping +（配置 probePort 的节点，不限类型）TCP 端口握手；Ping 失败但 TCP 通即视为存活
-    /// （禁 ICMP 的网段给路由/服务器配 probePort 即可恢复探测，RTT 取 TCP 握手耗时）。Ping 实例不可并发复用，故每任务独立创建。
+    /// 单节点探测：节点配置的全部地址（主 ip + gatewayIps，如核心 S7706 的 12 个 Vlanif）
+    /// 并行探测，任一可达即存活，RTT 取最优；同时统计「可达网关数/总数」供面板展示。
+    /// 每地址 ICMP Ping +（配置 probePort 的节点）TCP 端口握手；Ping 失败但 TCP 通即视为存活
+    /// （禁 ICMP 的网段给路由/服务器配 probePort 即可恢复探测）。Ping 实例不可并发复用，每任务独立创建。
     /// </summary>
-    private static async Task<(GalaNodeConfig Node, bool Alive, double RttMs)> ProbeNodeAsync(GalaNodeConfig node, CancellationToken ct)
+    private static async Task<(GalaNodeConfig Node, bool Alive, double RttMs, int GatewayAlive, int GatewayTotal)> ProbeNodeAsync(GalaNodeConfig node, CancellationToken ct)
+    {
+        var targets = new List<string>();
+        if (node.Ip.Length > 0) targets.Add(node.Ip);
+        targets.AddRange(node.GatewayIps.Where(g => g.Length > 0 && !string.Equals(g, node.Ip, StringComparison.Ordinal)));
+        targets = targets.Distinct(StringComparer.Ordinal).ToList();
+        var probes = await Task.WhenAll(targets.Select(ip => ProbeOneIpAsync(ip, node.ProbePort, ct))).ConfigureAwait(false);
+        bool alive = probes.Any(p => p.Alive);
+        double rtt = probes.Where(p => p.Alive && p.RttMs >= 0).Select(p => p.RttMs).DefaultIfEmpty(-1).Min();
+        return (node, alive, rtt, probes.Count(p => p.Alive), probes.Count);
+    }
+
+    /// <summary>单地址探测（Ping + 可选 TCP 握手），多网关节点对每个地址各跑一次后聚合。</summary>
+    private static async Task<(bool Alive, double RttMs)> ProbeOneIpAsync(string ip, int probePort, CancellationToken ct)
     {
         double rtt = -1;
         bool alive = false;
         try
         {
             using var ping = new Ping();
-            var reply = await ping.SendPingAsync(node.Ip, 1500).ConfigureAwait(false);
+            var reply = await ping.SendPingAsync(ip, 1500).ConfigureAwait(false);
             if (reply.Status == IPStatus.Success)
             {
                 rtt = reply.RoundtripTime;
@@ -393,10 +418,10 @@ public sealed class GalaMaster
             }
         }
         catch { }
-        if (node.ProbePort > 0)
+        if (probePort > 0)
         {
             var sw = Stopwatch.StartNew();
-            bool tcpOk = await ProbeTcpAsync(node.Ip, node.ProbePort, ct).ConfigureAwait(false);
+            bool tcpOk = await ProbeTcpAsync(ip, probePort, ct).ConfigureAwait(false);
             sw.Stop();
             if (tcpOk)
             {
@@ -404,7 +429,7 @@ public sealed class GalaMaster
                 rtt = rtt < 0 ? sw.Elapsed.TotalMilliseconds : Math.Max(rtt, sw.Elapsed.TotalMilliseconds);
             }
         }
-        return (node, alive, rtt);
+        return (alive, rtt);
     }
 
     /// <summary>
@@ -434,7 +459,8 @@ public sealed class GalaMaster
     public async Task<string> ProbeOnceReportAsync()
     {
         var nodes = _cfg.Nodes
-            .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch") && n.Ip.Length > 0)
+            .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch")
+                        && (n.Ip.Length > 0 || n.GatewayIps.Count > 0))
             .ToList();
         if (nodes.Count == 0)
             return "拓扑中没有可探测的 router/server/switch 节点（检查 gala-topology.json 的 type/ip 字段）。";
@@ -445,7 +471,13 @@ public sealed class GalaMaster
         var core = results.Where(r => r.Node.Type != "switch").ToList();
         var switches = results.Where(r => r.Node.Type == "switch").ToList();
         var detail = string.Join(" · ", core.Select(r =>
-            $"{r.Node.Id}({r.Node.Ip}) " + (r.Alive ? (r.RttMs >= 0 ? $"{r.RttMs:F0}ms ✓" : "✓") : "✗ 不可达")));
+        {
+            string text = $"{r.Node.Id}({r.Node.Ip}) " + (r.Alive ? (r.RttMs >= 0 ? $"{r.RttMs:F0}ms ✓" : "✓") : "✗ 不可达");
+            // 多网关节点（如 S7706）：整体存活外再报「n/m 网关可达」，某个 Vlanif 不通一眼可见
+            if (r.GatewayTotal > 1)
+                text += $"（网关 {r.GatewayAlive}/{r.GatewayTotal} 可达）";
+            return text;
+        }));
         int swOk = switches.Count(r => r.Alive);
         var swBad = string.Join(" · ", switches.Where(r => !r.Alive)
             .Select(r => $"{r.Node.Id}({r.Node.Ip})"));
@@ -761,7 +793,9 @@ public sealed class GalaMaster
                     RttMs = probe?.EmaRtt ?? -1,
                     LossPct = probe?.LossPct ?? 0,
                     ServedClients = (int)served,
-                    Down = watchNode && (probe?.Down ?? false)
+                    Down = watchNode && (probe?.Down ?? false),
+                    GatewayAlive = probe?.GatewayAlive ?? 0,
+                    GatewayTotal = probe?.GatewayTotal ?? 0
                 });
             }
             var now = DateTime.UtcNow;
@@ -777,6 +811,7 @@ public sealed class GalaMaster
                     Priority = s.Priority,
                     ThrottleKbps = s.ThrottleKbps,
                     Pinned = s.Pinned,
+                    Link = s.Link,
                     Online = IsOnline(s, now),
                     RttMasterMs = s.LastMetrics?.RttMasterMs ?? -1,
                     RxKbps = s.LastMetrics?.RxKbps ?? 0,
@@ -800,6 +835,13 @@ public sealed class GalaMaster
     /// <summary>会话是否在线（Alive 且 15 秒内有心跳）：调度计压与界面展示统一口径。</summary>
     private static bool IsOnline(ClientSession s, DateTime nowUtc)
         => s.Alive && nowUtc - s.LastSeenUtc < TimeSpan.FromSeconds(15);
+
+    /// <summary>接入方式归一化：只认 ethernet / wifi，其余（旧版未上报、异常值）记空。</summary>
+    private static string NormalizeLink(string? link)
+    {
+        var v = (link ?? "").Trim().ToLowerInvariant();
+        return v is "ethernet" or "wifi" ? v : "";
+    }
 
     private bool IsAllowedIp(string ip)
     {
@@ -840,6 +882,8 @@ public sealed class GalaMaster
         public double EmaRtt = -1;
         public double LossPct;
         public bool Down;
+        public int GatewayAlive; // 最近一轮多网关探测可达数（单地址节点 1/1，未探测 0/0）
+        public int GatewayTotal;
 
         public void Feed(bool failed, double rttMs)
         {
@@ -867,6 +911,7 @@ public sealed class GalaMaster
         public int Priority = 1;
         public int ThrottleKbps;
         public bool Pinned; // 手动锁定：跳过自动调度，直到 TryUnpin/面板「恢复自动」
+        public string Link = ""; // 接入方式：ethernet=网线 / wifi=直连 WiFi / 空=未上报
         public volatile bool Alive;
         public DateTime LastSwitchUtc = DateTime.MinValue;
     }

@@ -65,6 +65,13 @@ public sealed class GalaTopologyConfig
             n.Type = (n.Type ?? "server").Trim().ToLowerInvariant();
             n.Label = string.IsNullOrWhiteSpace(n.Label) ? n.Id : n.Label.Trim();
             n.Ip = (n.Ip ?? "").Trim();
+            n.GatewayIps = (n.GatewayIps ?? new List<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim())
+                .Where(s => !string.Equals(s, n.Ip, StringComparison.Ordinal)) // 与主 ip 相同的项剔除，避免健康检查误报共用
+                .Distinct(StringComparer.Ordinal).ToList();
+            n.Segments = (n.Segments ?? new List<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim())
+                .Distinct(StringComparer.Ordinal).ToList();
             if (n.Id.Length > 0) nodeIds.Add(n.Id);
         }
         cfg.Nodes.RemoveAll(n => n.Id.Length == 0);
@@ -98,15 +105,21 @@ public sealed class GalaTopologyConfig
         foreach (var id in cfg.Nodes.GroupBy(n => n.Id, StringComparer.OrdinalIgnoreCase)
                      .Where(g => g.Count() > 1).Select(g => g.Key))
             warns.Add($"节点 id 重复：{id}（探测与路由匹配只会命中第一个）");
-        foreach (var ip in cfg.Nodes.Where(n => n.Ip.Length > 0)
-                     .GroupBy(n => n.Ip, StringComparer.Ordinal)
-                     .Where(g => g.Count() > 1).Select(g => g.Key))
-            warns.Add($"多个节点共用 IP：{ip}");
+        // IP 唯一性把主 ip 与 gatewayIps 合并检查：跨节点/网关共用同一地址大概率是填错
+        foreach (var g in cfg.Nodes
+                     .SelectMany(n => n.GatewayIps.Prepend(n.Ip).Where(s => s.Length > 0).Select(ip => (n.Id, ip)))
+                     .GroupBy(x => x.ip, StringComparer.Ordinal)
+                     .Where(g => g.Count() > 1))
+            warns.Add($"IP 被多个节点/网关共用：{g.Key}（{string.Join("、", g.Select(x => x.Item1).Distinct())}）");
         foreach (var n in cfg.Nodes)
         {
             if (n.Ip.Length > 0 && !IPAddress.TryParse(n.Ip, out _))
                 warns.Add($"节点 {n.Id} 的 IP 不是合法地址：{n.Ip}");
-            if ((n.Type == "router" || n.Type == "server") && n.Ip.Length == 0)
+            foreach (var gw in n.GatewayIps.Where(gw => !IPAddress.TryParse(gw, out _)))
+                warns.Add($"节点 {n.Id} 的网关地址不是合法 IP：{gw}");
+            foreach (var seg in n.Segments.Where(seg => !seg.EndsWith('.', StringComparison.Ordinal)))
+                warns.Add($"节点 {n.Id} 的终端段前缀建议以点结尾（八点界，防 10.1 误吞 10.10.x）：{seg}");
+            if ((n.Type == "router" || n.Type == "server") && n.Ip.Length == 0 && n.GatewayIps.Count == 0)
                 warns.Add($"节点 {n.Id}（{n.Type}）未填 IP，不参与探测与压力评估");
             if (n.ProbePort is < 0 or > 65535)
                 warns.Add($"节点 {n.Id} 的 probePort 越界（0~65535）：{n.ProbePort}");
@@ -226,6 +239,17 @@ public sealed class GalaNodeConfig
     [JsonPropertyName("ip")] public string Ip { get; set; } = "";
     /// <summary>服务器 TCP 探测端口（0 = 只用 ICMP Ping 探测）。</summary>
     [JsonPropertyName("probePort")] public int ProbePort { get; set; }
+    /// <summary>
+    /// 附加网关/管理地址（可选）：一台设备承载多个网段网关时全部列出（如核心 S7706 的
+    /// 12 个 Vlanif 地址 10.120.32.254~10.120.43.254）。全部并行探测，任一可达即在线、
+    /// RTT 取最优；面板与预检按「n/m 网关可达」展示。
+    /// </summary>
+    [JsonPropertyName("gatewayIps")] public List<string> GatewayIps { get; set; } = new();
+    /// <summary>
+    /// 该接入交换机服务的终端段（可选，八点界前缀如 "10.120.32."）：画布把动态注册的
+    /// 真实终端逐台挂到所属交换机下；未命中任何交换机时终端挂其路由节点（viaRouter）。
+    /// </summary>
+    [JsonPropertyName("segments")] public List<string> Segments { get; set; } = new();
     /// <summary>可选手工布局（0~1 归一化坐标）；缺省自动分层布局。</summary>
     [JsonPropertyName("x")] public double? X { get; set; }
     [JsonPropertyName("y")] public double? Y { get; set; }
@@ -258,6 +282,8 @@ public sealed class HelloMsg
     [JsonPropertyName("pairing")] public string Pairing { get; set; } = "";
     [JsonPropertyName("version")] public string Version { get; set; } = "";
     [JsonPropertyName("role")] public string Role { get; set; } = "gala-client";
+    /// <summary>接入方式：ethernet=网线 / wifi=直连 WiFi（旧版客户端不上报，留空按中性色展示）。</summary>
+    [JsonPropertyName("link")] public string Link { get; set; } = "";
 }
 
 public sealed class WelcomeMsg
