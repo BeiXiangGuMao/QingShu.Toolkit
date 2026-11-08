@@ -1,0 +1,696 @@
+{
+  "settings": {
+    "listenPort": 47816,
+    "tickSeconds": 3,
+    "autoStartMaster": true,
+    "allowedPrefixes": [
+      "10.120."
+    ],
+    "pairingCode": "",
+    "switchThreshold": 12,
+    "switchCooldownSeconds": 30,
+    "clientsPerNodeFull": 150,
+    "clientIdleTimeoutSeconds": 20,
+    "weightRtt": 0.35,
+    "weightLoss": 0.25,
+    "weightLoad": 0.2,
+    "weightBandwidth": 0.2
+  },
+  "nodes": [
+    {
+      "id": "master",
+      "type": "master",
+      "label": "主控·礼堂控制机",
+      "x": 0.5,
+      "y": 0.05
+    },
+    {
+      "id": "gw-egress",
+      "type": "router",
+      "label": "校园出口/防火墙",
+      "ip": "172.30.1.1",
+      "x": 0.5,
+      "y": 0.17
+    },
+    {
+      "id": "gw-core",
+      "type": "router",
+      "label": "核心 S7706·12 段网关",
+      "ip": "10.120.42.254",
+      "probePort": 80,
+      "x": 0.5,
+      "y": 0.3
+    },
+    {
+      "id": "sw32-12",
+      "type": "switch",
+      "label": "32-12",
+      "ip": "10.120.32.12",
+      "probePort": 80
+    },
+    {
+      "id": "sw32-52",
+      "type": "switch",
+      "label": "32-52",
+      "ip": "10.120.32.52",
+      "probePort": 22
+    },
+    {
+      "id": "sw32-106",
+      "type": "switch",
+      "label": "32-106",
+      "ip": "10.120.32.106",
+      "probePort": 22
+    },
+    {
+      "id": "sw32-144",
+      "type": "switch",
+      "label": "32-144",
+      "ip": "10.120.32.144",
+      "probePort": 22
+    },
+    {
+      "id": "sw32-186",
+      "type": "switch",
+      "label": "32-186",
+      "ip": "10.120.32.186",
+      "probePort": 22
+    },
+    {
+      "id": "sw32-210",
+      "type": "switch",
+      "label": "32-210",
+      "ip": "10.120.32.210",
+      "probePort": 22
+    },
+    {
+      "id": "sw32-233",
+      "type": "switch",
+      "label": "32-233",
+      "ip": "10.120.32.233",
+      "probePort": 80
+    },
+    {
+      "id": "sw32-234",
+      "type": "switch",
+      "label": "32-234",
+      "ip": "10.120.32.234",
+      "probePort": 80
+    },
+    {
+      "id": "sw32-236",
+      "type": "switch",
+      "label": "32-236",
+      "ip": "10.120.32.236",
+      "probePort": 80
+    },
+    {
+      "id": "sw32-237",
+      "type": "switch",
+      "label": "32-237",
+      "ip": "10.120.32.237",
+      "probePort": 80
+    },
+    {
+      "id": "sw33-8",
+      "type": "switch",
+      "label": "33-8",
+      "ip": "10.120.33.8",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-14",
+      "type": "switch",
+      "label": "33-14",
+      "ip": "10.120.33.14",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-71",
+      "type": "switch",
+      "label": "33-71",
+      "ip": "10.120.33.71",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-73",
+      "type": "switch",
+      "label": "33-73",
+      "ip": "10.120.33.73",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-78",
+      "type": "switch",
+      "label": "33-78",
+      "ip": "10.120.33.78",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-102",
+      "type": "switch",
+      "label": "33-102",
+      "ip": "10.120.33.102",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-172",
+      "type": "switch",
+      "label": "33-172",
+      "ip": "10.120.33.172",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-213",
+      "type": "switch",
+      "label": "33-213",
+      "ip": "10.120.33.213",
+      "probePort": 22
+    },
+    {
+      "id": "sw33-242",
+      "type": "switch",
+      "label": "33-242",
+      "ip": "10.120.33.242",
+      "probePort": 22
+    },
+    {
+      "id": "sw35-12",
+      "type": "switch",
+      "label": "35-12",
+      "ip": "10.120.35.12",
+      "probePort": 22
+    },
+    {
+      "id": "sw35-148",
+      "type": "switch",
+      "label": "35-148",
+      "ip": "10.120.35.148",
+      "probePort": 22
+    },
+    {
+      "id": "sw35-211",
+      "type": "switch",
+      "label": "35-211",
+      "ip": "10.120.35.211",
+      "probePort": 22
+    },
+    {
+      "id": "sw35-246",
+      "type": "switch",
+      "label": "35-246",
+      "ip": "10.120.35.246",
+      "probePort": 80
+    },
+    {
+      "id": "sw37-21",
+      "type": "switch",
+      "label": "37-21?",
+      "ip": "10.120.37.21"
+    },
+    {
+      "id": "sw37-56",
+      "type": "switch",
+      "label": "37-56",
+      "ip": "10.120.37.56",
+      "probePort": 22
+    },
+    {
+      "id": "sw37-182",
+      "type": "switch",
+      "label": "37-182",
+      "ip": "10.120.37.182",
+      "probePort": 23
+    },
+    {
+      "id": "sw37-233",
+      "type": "switch",
+      "label": "37-233",
+      "ip": "10.120.37.233",
+      "probePort": 23
+    },
+    {
+      "id": "sw37-235",
+      "type": "switch",
+      "label": "37-235",
+      "ip": "10.120.37.235",
+      "probePort": 23
+    },
+    {
+      "id": "sw39-30",
+      "type": "switch",
+      "label": "39-30",
+      "ip": "10.120.39.30",
+      "probePort": 23
+    },
+    {
+      "id": "sw39-84",
+      "type": "switch",
+      "label": "39-84",
+      "ip": "10.120.39.84",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-85",
+      "type": "switch",
+      "label": "39-85",
+      "ip": "10.120.39.85",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-89",
+      "type": "switch",
+      "label": "39-89",
+      "ip": "10.120.39.89",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-135",
+      "type": "switch",
+      "label": "39-135",
+      "ip": "10.120.39.135",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-170",
+      "type": "switch",
+      "label": "39-170",
+      "ip": "10.120.39.170",
+      "probePort": 23
+    },
+    {
+      "id": "sw39-185",
+      "type": "switch",
+      "label": "39-185",
+      "ip": "10.120.39.185",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-189",
+      "type": "switch",
+      "label": "39-189",
+      "ip": "10.120.39.189",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-218",
+      "type": "switch",
+      "label": "39-218?",
+      "ip": "10.120.39.218"
+    },
+    {
+      "id": "sw39-229",
+      "type": "switch",
+      "label": "39-229",
+      "ip": "10.120.39.229",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-242",
+      "type": "switch",
+      "label": "39-242",
+      "ip": "10.120.39.242",
+      "probePort": 22
+    },
+    {
+      "id": "sw39-245",
+      "type": "switch",
+      "label": "39-245",
+      "ip": "10.120.39.245",
+      "probePort": 23
+    },
+    {
+      "id": "sw39-252",
+      "type": "switch",
+      "label": "39-252",
+      "ip": "10.120.39.252",
+      "probePort": 80
+    },
+    {
+      "id": "sw41-78",
+      "type": "switch",
+      "label": "41-78",
+      "ip": "10.120.41.78",
+      "probePort": 23
+    },
+    {
+      "id": "srv-ava",
+      "type": "server",
+      "label": "直播源·AVA 平台",
+      "ip": "10.120.42.160",
+      "probePort": 80,
+      "x": 0.26,
+      "y": 0.78
+    },
+    {
+      "id": "srv-iis39",
+      "type": "server",
+      "label": "IIS·Win2012R2",
+      "ip": "10.120.39.1",
+      "probePort": 80,
+      "x": 0.5,
+      "y": 0.78
+    },
+    {
+      "id": "srv-iis34",
+      "type": "server",
+      "label": "IIS·Windows",
+      "ip": "10.120.34.121",
+      "probePort": 80,
+      "x": 0.74,
+      "y": 0.78
+    },
+    {
+      "id": "srv-file",
+      "type": "server",
+      "label": "文件服务器·SMB",
+      "ip": "10.120.42.188",
+      "probePort": 445,
+      "x": 0.92,
+      "y": 0.78
+    }
+  ],
+  "links": [
+    {
+      "from": "gw-egress",
+      "to": "gw-core",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-12",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-52",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-106",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-144",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-186",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-210",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-233",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-234",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-236",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw32-237",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-8",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-14",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-71",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-73",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-78",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-102",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-172",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-213",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw33-242",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw35-12",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw35-148",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw35-211",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw35-246",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw37-21",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw37-56",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw37-182",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw37-233",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw37-235",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-30",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-84",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-85",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-89",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-135",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-170",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-185",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-189",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-218",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-229",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-242",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-245",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw39-252",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "sw41-78",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "srv-ava",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "srv-iis39",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "srv-iis34",
+      "capacityMbps": 1000
+    },
+    {
+      "from": "gw-core",
+      "to": "srv-file",
+      "capacityMbps": 1000
+    }
+  ],
+  "routes": [
+    {
+      "segmentPrefix": "10.120.32.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.33.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.34.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.35.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.36.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.37.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.38.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.39.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.40.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.41.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.42.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    },
+    {
+      "segmentPrefix": "10.120.43.",
+      "viaRouter": "gw-core",
+      "servers": [
+        "srv-ava"
+      ]
+    }
+  ]
+}

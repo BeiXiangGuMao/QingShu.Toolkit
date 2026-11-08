@@ -170,7 +170,7 @@ internal static class Program
                 Console.WriteLine("priority <客户端> <0|1|2>    调整优先级（0 高 / 1 中 / 2 低）");
                 Console.WriteLine("throttle <客户端> <kbps>     限速标记（0 = 解除，落盘 assignment.json）");
                 Console.WriteLine("ping <客户端>                请求该客户端即时上报指标");
-                Console.WriteLine("probe                       立即探测一轮 router/server（验证拓扑 IP 可达性，不改调度状态）");
+                Console.WriteLine("probe                       立即探测一轮 router/server/switch（验证拓扑 IP 可达性，不改调度状态）");
                 Console.WriteLine("kick <客户端>                剔除会话（断开并移除，重连按新终端重新分配）");
                 Console.WriteLine("params                      查看调度参数（周期/阈值/冷却/满载）");
                 Console.WriteLine("setparam tick|threshold|cooldown|full <值>");
@@ -230,7 +230,7 @@ internal static class Program
                 break;
 
             case "probe":
-                Console.WriteLine("正在探测全部 router/server 节点（最多 15 秒）…");
+                Console.WriteLine("正在探测全部 router/server/switch 节点（最多 15 秒）…");
                 // 控制台后台线程无同步上下文，同步等待安全；结果同时写入事件留痕
                 Console.WriteLine(_master.ProbeOnceReportAsync().GetAwaiter().GetResult());
                 break;

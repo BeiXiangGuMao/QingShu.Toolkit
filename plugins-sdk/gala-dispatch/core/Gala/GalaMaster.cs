@@ -346,10 +346,10 @@ public sealed class GalaMaster
         {
             try
             {
+                // router/server 参与压力评估；switch 仅观测（留 RTT/丢包与 Down 灰显，不计压力分、不触发调度）
                 var nodes = _cfg.Nodes
-                    .Where(n => (n.Type == "router" || n.Type == "server") && n.Ip.Length > 0)
+                    .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch") && n.Ip.Length > 0)
                     .ToList();
-
                 // 并行探测：单轮耗时 ≈ 最慢一个节点（约 3 秒），不再随节点数线性放大，
                 // 保证 tickSeconds=3 时大拓扑（几十节点）也不拖慢调度周期
                 var results = await Task.WhenAll(nodes.Select(n => ProbeNodeAsync(n, ct))).ConfigureAwait(false);
@@ -426,25 +426,34 @@ public sealed class GalaMaster
     }
 
     /// <summary>
-    /// 即时预检：立即探测一轮全部 router/server 节点并返回一行摘要（每节点可达=RTT / 不可达）。
-    /// 与周期探测管线完全独立——不喂压力探针、不触发调度切换，主控未监听时同样可用；
-    /// 用于填完拓扑后马上验证 IP 可达性（探测不到 = IP 写错或网段不通）。总耗时上限 15 秒。
+    /// 即时预检：立即探测一轮全部 router/server/switch 节点并返回摘要（路由/服务器逐节点报可达 RTT，
+    /// 交换机数量多改报「n/m 可达」+ 不可达清单）。与周期探测管线完全独立——不喂压力探针、
+    /// 不触发调度切换，主控未监听时同样可用；用于填完拓扑后马上验证 IP 可达性
+    /// （探测不到 = IP 写错或网段不通）。总耗时上限 15 秒。
     /// </summary>
     public async Task<string> ProbeOnceReportAsync()
     {
         var nodes = _cfg.Nodes
-            .Where(n => (n.Type == "router" || n.Type == "server") && n.Ip.Length > 0)
+            .Where(n => (n.Type == "router" || n.Type == "server" || n.Type == "switch") && n.Ip.Length > 0)
             .ToList();
         if (nodes.Count == 0)
-            return "拓扑中没有可探测的 router/server 节点（检查 gala-topology.json 的 type/ip 字段）。";
+            return "拓扑中没有可探测的 router/server/switch 节点（检查 gala-topology.json 的 type/ip 字段）。";
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var results = await Task.WhenAll(nodes.Select(n => ProbeNodeAsync(n, cts.Token))).ConfigureAwait(false);
         int ok = results.Count(r => r.Alive);
-        var detail = string.Join(" · ", results.Select(r =>
+        var core = results.Where(r => r.Node.Type != "switch").ToList();
+        var switches = results.Where(r => r.Node.Type == "switch").ToList();
+        var detail = string.Join(" · ", core.Select(r =>
             $"{r.Node.Id}({r.Node.Ip}) " + (r.Alive ? (r.RttMs >= 0 ? $"{r.RttMs:F0}ms ✓" : "✓") : "✗ 不可达")));
-        string summary = $"预检 {ok}/{results.Length} 节点可达：{detail}"
-                         + (ok < results.Length ? "——不可达节点请核对 IP 是否写错、网段是否可达/禁 ICMP 是否需配 probePort" : "");
+        int swOk = switches.Count(r => r.Alive);
+        var swBad = string.Join(" · ", switches.Where(r => !r.Alive)
+            .Select(r => $"{r.Node.Id}({r.Node.Ip})"));
+        string summary = $"预检 {ok}/{results.Length} 节点可达：{detail}";
+        if (switches.Count > 0)
+            summary += $" ｜ 交换机 {swOk}/{switches.Count} 可达" + (swOk < switches.Count ? $"（不可达：{swBad}）" : "");
+        if (ok < results.Length)
+            summary += "——不可达节点请核对 IP 是否写错、网段是否可达/禁 ICMP 是否需配 probePort";
         Event(summary);
         return summary;
     }
@@ -740,6 +749,8 @@ public sealed class GalaMaster
                     && (string.Equals(c.RouterId, node.Id, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(c.ServerId, node.Id, StringComparison.OrdinalIgnoreCase)));
                 bool pressureNode = node.Type == "router" || node.Type == "server";
+                // switch 仅观测：不计压力分，但失联同样灰显（现场一眼看到哪台交换机探不到）
+                bool watchNode = pressureNode || node.Type == "switch";
                 snap.Nodes.Add(new NodeSnap
                 {
                     Id = node.Id,
@@ -750,7 +761,7 @@ public sealed class GalaMaster
                     RttMs = probe?.EmaRtt ?? -1,
                     LossPct = probe?.LossPct ?? 0,
                     ServedClients = (int)served,
-                    Down = pressureNode && (probe?.Down ?? false)
+                    Down = watchNode && (probe?.Down ?? false)
                 });
             }
             var now = DateTime.UtcNow;

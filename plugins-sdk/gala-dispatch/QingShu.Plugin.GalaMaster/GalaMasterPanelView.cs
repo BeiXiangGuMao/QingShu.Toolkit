@@ -486,11 +486,13 @@ public sealed class GalaMasterPanelView : UserControl
         }
 
         // ---- 自动分层布局（配置了 x/y 的节点优先）----
+        // 行序：主控 → 出口/核心路由 → 交换机（两行，大拓扑如 40 台接入） → 服务器 → 终端
         var cfg = _owner.Config;
         var pos = new Dictionary<string, (double X, double Y)>(StringComparer.Ordinal);
         var routers = nodes.Where(n => n.Type == "router").ToList();
         var servers = nodes.Where(n => n.Type == "server").ToList();
         var masters = nodes.Where(n => n.Type == "master").ToList();
+        var switches = nodes.Where(n => n.Type == "switch").ToList();
         void Place(List<NodeSnap> list, double y)
         {
             for (int i = 0; i < list.Count; i++)
@@ -502,9 +504,12 @@ public sealed class GalaMasterPanelView : UserControl
                     : (TopologyWidth * (i + 1) / (list.Count + 1), TopologyHeight * y);
             }
         }
-        Place(masters, 0.10);
-        Place(routers, 0.42);
-        Place(servers, 0.72);
+        Place(masters, 0.08);
+        Place(routers, 0.30);
+        int swHalf = (switches.Count + 1) / 2;
+        Place(switches.GetRange(0, swHalf), 0.48);
+        Place(switches.GetRange(swHalf, switches.Count - swHalf), 0.58);
+        Place(servers, 0.76);
 
         // 客户端小点：挂在所属路由下方
         var clientsByRouter = snap.Clients
@@ -559,7 +564,7 @@ public sealed class GalaMasterPanelView : UserControl
         foreach (var n in nodes)
         {
             if (!pos.TryGetValue(n.Id, out var p)) continue;
-            AddNode(p.X, p.Y, n, n.Type == "master" ? 34 : 28);
+            AddNode(p.X, p.Y, n, n.Type == "master" ? 34 : n.Type == "switch" ? 20 : 28);
         }
         foreach (var c in snap.Clients)
         {
@@ -609,7 +614,10 @@ public sealed class GalaMasterPanelView : UserControl
         {
             Width = size,
             Height = size,
-            Fill = new SolidColorBrush(n.Down ? Color.FromArgb(255, 130, 130, 130) : PressureColor(n.Pressure)),
+            // switch 无压力分（-1），存活时用青绿色与路由/服务器压力色区分；失联同样灰显
+            Fill = new SolidColorBrush(n.Down ? Color.FromArgb(255, 130, 130, 130)
+                : n.Type == "switch" ? Color.FromArgb(255, 77, 182, 172)
+                : PressureColor(n.Pressure)),
             Stroke = new SolidColorBrush(Color.FromArgb(255, 255, 255, 255)),
             StrokeThickness = 2
         };
@@ -622,7 +630,7 @@ public sealed class GalaMasterPanelView : UserControl
             Text = n.Type == "router" || n.Type == "server"
                 ? $"{n.Label} {n.Pressure:F0}"
                 : n.Label,
-            FontSize = 11,
+            FontSize = n.Type == "switch" ? 9 : 11,
             TextWrapping = TextWrapping.NoWrap
         };
         _topology.Children.Add(label);
