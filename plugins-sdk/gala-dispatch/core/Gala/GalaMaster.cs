@@ -340,7 +340,11 @@ public sealed class GalaMaster
         await s.SendLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await GalaFrame.WriteFrameAsync(stream, frame, ct).ConfigureAwait(false);
+            // 发送超时 5 秒：终端拔电/网线故障后的半开连接，写操作可能挂起分钟级（TCP 重传），
+            // 不加超时会占住 SendLock 让后续所有指令/调度下发全部排队卡死。超时按连接失效处理，
+            // 由读循环的心跳空闲超时或写异常收尾断开。
+            await GalaFrame.WriteFrameAsync(stream, frame, ct)
+                .WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
         }
         finally { s.SendLock.Release(); }
     }
@@ -402,7 +406,11 @@ public sealed class GalaMaster
         return (node, alive, rtt, probes.Count(p => p.Alive), probes.Count);
     }
 
-    /// <summary>单地址探测（Ping + 可选 TCP 握手），多网关节点对每个地址各跑一次后聚合。</summary>
+    /// <summary>
+    /// 单地址探测（Ping + 可选 TCP 握手），多网关节点对每个地址各跑一次后聚合。
+    /// RTT 合成：单地址内 Ping/TCP 均通取较大值（保守计压，不因 ICMP 快而漏报链路压力），
+    /// 多地址间由 ProbeNodeAsync 取最优（最小值）。
+    /// </summary>
     private static async Task<(bool Alive, double RttMs)> ProbeOneIpAsync(string ip, int probePort, CancellationToken ct)
     {
         double rtt = -1;
@@ -533,7 +541,9 @@ public sealed class GalaMaster
         {
             if (ct.IsCancellationRequested) break;
             if (!s.Alive || s.Ip.Length == 0) continue;
-            if (s.Pinned) continue; // 手动锁定：操作员指定线路，不参与自动调度（恢复自动后重新参与）
+            bool pinnedNow;
+            lock (_sync) { pinnedNow = s.Pinned; } // 发送前复查：操作员刚手动接管的终端不参与本轮
+            if (pinnedNow) continue;
             TimeSpan sinceLast = s.LastSwitchUtc == DateTime.MinValue
                 ? TimeSpan.Zero
                 : DateTime.UtcNow - s.LastSwitchUtc;
@@ -555,9 +565,18 @@ public sealed class GalaMaster
             try
             {
                 await SendAsync(s, GalaFrame.Encode(cmd), ct).ConfigureAwait(false);
-                s.RouterId = decision.NewRouterId;
-                s.ServerId = decision.NewServerId;
-                s.LastSwitchUtc = DateTime.UtcNow;
+                // 提交前锁内再查 Pinned：若操作员恰在本轮发送期间手动切换+锁定，
+                // 会话状态以手动操作为准，自动调度不得覆盖（命令虽已发出，手动指令
+                // 后发后到仍生效，会话状态与客户端实际保持一致）
+                lock (_sync)
+                {
+                    if (!s.Pinned)
+                    {
+                        s.RouterId = decision.NewRouterId;
+                        s.ServerId = decision.NewServerId;
+                        s.LastSwitchUtc = DateTime.UtcNow;
+                    }
+                }
                 Event($"综合调度 {s.ClientId}：{decision.Reason}");
             }
             catch (Exception ex)
@@ -581,7 +600,7 @@ public sealed class GalaMaster
         }
     }
 
-    private static Dictionary<string, (int Count, double Kbps)> CountServed(List<ClientSession> sessions, DateTime nowUtc)
+    private Dictionary<string, (int Count, double Kbps)> CountServed(List<ClientSession> sessions, DateTime nowUtc)
     {
         var map = new Dictionary<string, (int, double)>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sessions)
@@ -618,6 +637,12 @@ public sealed class GalaMaster
     {
         var session = FindAlive(clientId);
         if (session == null) return false;
+        if (_cfg.FindNode(serverId) == null)
+        {
+            // 防御：切到不存在的节点会让客户端拿到空 ServerIp 探测失准、画布指向悬空
+            Event($"手动切换失败：拓扑中不存在服务器 {serverId}（检查 gala-topology.json 节点 id）");
+            return false;
+        }
         var route = _cfg.MatchRoute(session.Ip);
         string routerId = route != null && route.Servers.Contains(serverId, StringComparer.OrdinalIgnoreCase)
             ? route.ViaRouter
@@ -832,9 +857,15 @@ public sealed class GalaMaster
 
     // ================= 内部部件 =================
 
-    /// <summary>会话是否在线（Alive 且 15 秒内有心跳）：调度计压与界面展示统一口径。</summary>
-    private static bool IsOnline(ClientSession s, DateTime nowUtc)
-        => s.Alive && nowUtc - s.LastSeenUtc < TimeSpan.FromSeconds(15);
+    /// <summary>
+    /// 在线判定窗口：随探测周期派生（max(15, 4×tick)）——tickSeconds 配大（如 10s）时
+    /// 固定 15 秒会把每个正常心跳周期都判成离线，全员虚掉；窗口仍必须小于心跳空闲超时。
+    /// </summary>
+    private TimeSpan OnlineWindow => TimeSpan.FromSeconds(Math.Max(15, 4 * _cfg.Settings.TickSeconds));
+
+    /// <summary>会话是否在线（Alive 且一个在线窗口内有心跳）：调度计压与界面展示统一口径。</summary>
+    private bool IsOnline(ClientSession s, DateTime nowUtc)
+        => s.Alive && nowUtc - s.LastSeenUtc < OnlineWindow;
 
     /// <summary>接入方式归一化：只认 ethernet / wifi，其余（旧版未上报、异常值）记空。</summary>
     private static string NormalizeLink(string? link)

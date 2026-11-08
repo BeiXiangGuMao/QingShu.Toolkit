@@ -328,9 +328,12 @@ internal static class Program
             Console.WriteLine($"  {c.ClientId,-16} {(c.Online ? "在线" : "离线")}{(c.Pinned ? "〔锁〕" : "")}{link}  {c.Ip,-15} → {c.ServerId,-6}（经 {c.RouterId,-6}）" +
                               $"  优先级 {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}" +
                               $"  限速 {(c.ThrottleKbps > 0 ? c.ThrottleKbps + " kbps" : "-")}" +
-                              $"  RTT {FmtMs(c.RttMasterMs)}  收/发 {c.RxKbps,6:F0}/{c.TxKbps,6:F0} kbps  主机 {c.Hostname}");
+                              $"  RTT {FmtMs(c.RttMasterMs)}  收/发 {c.RxKbps,6:F0}/{c.TxKbps,6:F0} kbps  心跳 {FmtAge(c.LastAgeSec)}前  主机 {c.Hostname}");
         }
     }
+
+    /// <summary>心跳年龄人话化：离线终端判断“刚掉还是早掉”。</summary>
+    private static string FmtAge(double sec) => sec < 90 ? $"{Math.Max(0, sec):F0}s" : $"{sec / 60:F0}min";
 
     private static void PrintEvents()
     {

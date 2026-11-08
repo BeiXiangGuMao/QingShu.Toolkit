@@ -143,6 +143,14 @@ public sealed class GalaTopologyConfig
         if (cfg.Settings.PairingCode.Length == 0)
             warns.Add("未设配对码：内网任何终端都可接入，现场建议设置");
 
+        // 心跳链路自洽：客户端按 tickSeconds 周期上报，主控按 max(15, 4×tick) 的窗口判在线、
+        // 按 clientIdleTimeoutSeconds 判空闲断开——空闲超时必须显著大于周期，否则上报正常的
+        // 终端会在线/离线反复横跳，压力分随之失真
+        if (cfg.Settings.ClientIdleTimeoutSeconds < 4 * cfg.Settings.TickSeconds + 5)
+            warns.Add($"心跳空闲超时（{cfg.Settings.ClientIdleTimeoutSeconds}s）相对探测周期（{cfg.Settings.TickSeconds}s）偏紧：" +
+                      "上报正常的终端可能被误判离线，建议 clientIdleTimeoutSeconds ≥ " +
+                      $"{4 * cfg.Settings.TickSeconds + 5}（或调小 tickSeconds）");
+
         return warns;
     }
 

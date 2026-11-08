@@ -214,7 +214,7 @@ internal static class Program
     private static void PrintStatus()
     {
         var s = _agent.Snapshot();
-        Console.WriteLine($"  连接：{(s.Running ? (s.Connected ? "已连接主控" : "等待重连（每 3 秒重试）") : "已停止")}  主控 {s.MasterHost}:{s.Port}");
+        Console.WriteLine($"  连接：{(s.Running ? (s.Connected ? "已连接主控" : $"等待重连（约 {s.ReconnectDelaySeconds} 秒后重试）") : "已停止")}  主控 {s.MasterHost}:{s.Port}");
         Console.WriteLine($"  分配：{s.ServerId}{(s.ServerIp.Length > 0 ? $"（{s.ServerIp}）" : "")}  经 {s.RouterId}" +
                           $"  优先级 {GalaDispatcher.PriorityNames[Math.Clamp(s.Priority, 0, 2)]}" +
                           $"  限速 {(s.ThrottleKbps > 0 ? s.ThrottleKbps + " kbps" : "-")}");

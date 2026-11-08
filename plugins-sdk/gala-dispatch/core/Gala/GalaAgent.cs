@@ -17,6 +17,8 @@ public sealed class AgentSnapshot
     public bool Connected { get; init; }
     public string MasterHost { get; init; } = "";
     public int Port { get; init; }
+    /// <summary>当前重连等待间隔（秒）：未连接时展示“约 N 秒后重试”而非写死 3 秒。</summary>
+    public int ReconnectDelaySeconds { get; init; } = 3;
     public string RouterId { get; init; } = "";
     public string ServerId { get; init; } = "";
     public string ServerIp { get; init; } = "";
@@ -45,6 +47,7 @@ public sealed class GalaAgent
     private readonly object _sync = new();
     private readonly List<string> _events = new();
     private readonly Queue<bool> _pingWindow = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1); // 发送串行化：metrics 上报与指令回执并发写同一流会帧交错
 
     private CancellationTokenSource? _cts;
     private Task? _runLoop;
@@ -63,6 +66,7 @@ public sealed class GalaAgent
     private double _rttMaster = -1, _rttServer = -1, _rxKbps, _txKbps, _appCpu, _lossPct;
     private int _tickSeconds = 3;
     private int _failStreak;
+    private int _reconnectDelay = 3; // 重连退避：连续失败时 3→5→8→10 封顶，连接成功重置
     private readonly SemaphoreSlim _hookLock = new(1, 1);
 
     public bool IsRunning => _running;
@@ -140,6 +144,7 @@ public sealed class GalaAgent
                 await tcp.ConnectAsync(_masterHost, _port, connectCts.Token).ConfigureAwait(false);
                 var stream = tcp.GetStream();
                 lock (_sync) { _tcp = tcp; _connected = true; _failStreak = 0; }
+                _reconnectDelay = 3; // 连接成功：退避重置，下次断线仍秒级重连
                 lock (_pingWindow) { _pingWindow.Clear(); } // 新连接重开丢包窗口，旧连接样本不作数
                 Event($"已连接主控 {_masterHost}:{_port}");
 
@@ -185,9 +190,28 @@ public sealed class GalaAgent
             }
 
             if (ct.IsCancellationRequested) break;
-            try { await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false); }
+            try { await Task.Delay(TimeSpan.FromSeconds(_reconnectDelay), ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
+            // 温和退避：×1.5 封顶 10 秒。主控短暂重启仍能秒级恢复；长时间不可达时不空转刷日志，
+            // 也避免全网终端同步 3 秒一抢重连（惊群）。
+            _reconnectDelay = (int)Math.Min(10, Math.Ceiling(_reconnectDelay * 1.5));
         }
+    }
+
+    /// <summary>
+    /// 发送统一入口：串行化（metrics 上报与指令回执并发写同一 NetworkStream 会帧交错损坏，
+    /// 对端读到非法长度直接断连）+ 5 秒超时（对端半开时写操作可能挂起分钟级，
+    /// 超时按连接失效处理，异常向上传播触发重连）。
+    /// </summary>
+    private async Task SendFrameAsync(NetworkStream stream, byte[] frame, CancellationToken ct)
+    {
+        await _sendLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await GalaFrame.WriteFrameAsync(stream, frame, ct)
+                .WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+        }
+        finally { _sendLock.Release(); }
     }
 
     private async Task SendMetricsLoopAsync(NetworkStream stream, CancellationToken ct)
@@ -196,44 +220,55 @@ public sealed class GalaAgent
         double lastCpuSec = ProcessCpuSeconds();
         var lastTs = DateTime.UtcNow;
 
+        // 连上即首报：短暂让路 welcome（300ms）后立即采集发送一轮，不等第一个心跳周期——
+        // 主控侧立刻看到指标/在线确认，重连后画面秒级恢复
+        try { await Task.Delay(300, ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return; }
+
         while (!ct.IsCancellationRequested)
         {
             int tick;
             lock (_sync) { tick = _tickSeconds; }
-            try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, tick)), ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
 
             var now = DateTime.UtcNow;
             var (rx, tx) = NetworkBytes();
             double cpuSec = ProcessCpuSeconds();
             double dt = (now - lastTs).TotalSeconds;
-            if (dt < 0.2) continue;
-
-            double rxK = Math.Max(0, (rx - lastRx) * 8 / dt / 1000.0);
-            double txK = Math.Max(0, (tx - lastTx) * 8 / dt / 1000.0);
-            lastRx = rx; lastTx = tx; lastTs = now;
-            double appCpu = Math.Max(0, (cpuSec - lastCpuSec) / dt / Math.Max(1, Environment.ProcessorCount) * 100);
-            lastCpuSec = cpuSec;
-
-            double rttMaster = await ProbeRttAsync(_masterHost).ConfigureAwait(false);
-            string serverIp;
-            lock (_sync) { serverIp = _serverIp; }
-            double rttServer = serverIp.Length > 0 ? await ProbeRttAsync(serverIp).ConfigureAwait(false) : -1;
-            double loss = RecordPing(rttMaster >= 0);
-
-            lock (_sync)
+            if (dt >= 0.2) // 首报后正常间隔都远大于 0.2s；保险防同刻重复采样
             {
-                _rttMaster = rttMaster; _rttServer = rttServer;
-                _rxKbps = rxK; _txKbps = txK; _appCpu = appCpu; _lossPct = loss;
+                double rxK = Math.Max(0, (rx - lastRx) * 8 / dt / 1000.0);
+                double txK = Math.Max(0, (tx - lastTx) * 8 / dt / 1000.0);
+                lastRx = rx; lastTx = tx; lastTs = now;
+                double appCpu = Math.Max(0, (cpuSec - lastCpuSec) / dt / Math.Max(1, Environment.ProcessorCount) * 100);
+                lastCpuSec = cpuSec;
+
+                double rttMaster = await ProbeRttAsync(_masterHost).ConfigureAwait(false);
+                string serverIp;
+                lock (_sync) { serverIp = _serverIp; }
+                double rttServer = serverIp.Length > 0 ? await ProbeRttAsync(serverIp).ConfigureAwait(false) : -1;
+                // 丢包样本口径：Ping 通或 TCP 会话仍在都算链路通——禁 ICMP 网段 Ping 永远失败，
+                // 只按 Ping 记会虚报 100% 丢包；会话本身就在收发 metrics，连着即链路通
+                bool linkUp;
+                lock (_sync) { linkUp = _connected; }
+                double loss = RecordPing(rttMaster >= 0 || linkUp);
+
+                lock (_sync)
+                {
+                    _rttMaster = rttMaster; _rttServer = rttServer;
+                    _rxKbps = rxK; _txKbps = txK; _appCpu = appCpu; _lossPct = loss;
+                }
+
+                var msg = new MetricsMsg
+                {
+                    RttMasterMs = rttMaster, RttServerMs = rttServer, LossPct = loss,
+                    RxKbps = rxK, TxKbps = txK, AppCpu = appCpu
+                };
+                try { await SendFrameAsync(stream, GalaFrame.Encode(msg), ct).ConfigureAwait(false); }
+                catch { break; }
             }
 
-            var msg = new MetricsMsg
-            {
-                RttMasterMs = rttMaster, RttServerMs = rttServer, LossPct = loss,
-                RxKbps = rxK, TxKbps = txK, AppCpu = appCpu
-            };
-            try { await SendFrameAsync(stream, GalaFrame.Encode(msg), ct).ConfigureAwait(false); }
-            catch { break; }
+            try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, tick)), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
         }
     }
 
@@ -486,6 +521,7 @@ public sealed class GalaAgent
                 Connected = _connected,
                 MasterHost = _masterHost,
                 Port = _port,
+                ReconnectDelaySeconds = _reconnectDelay,
                 RouterId = _routerId,
                 ServerId = _serverId,
                 ServerIp = _serverIp,

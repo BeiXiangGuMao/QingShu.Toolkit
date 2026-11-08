@@ -147,7 +147,7 @@ public sealed class GalaAgentPanelView : UserControl
                 _metricsText.Text = a.Connected
                     ? $"已连接主控 {a.MasterHost}:{a.Port} · 到主控 RTT {FmtMs(a.RttMasterMs)} · 丢包 {a.LossPct:F0}% · 到服务器 RTT {FmtMs(a.RttServerMs)}"
                       + $" · 收 {a.RxKbps:F0} kbps · 发 {a.TxKbps:F0} kbps · 本进程 CPU {a.AppCpu:F0}%"
-                    : $"未连接主控 {a.MasterHost}:{a.Port}（自动重连中）";
+                    : $"未连接主控 {a.MasterHost}:{a.Port}（自动重连中，约 {a.ReconnectDelaySeconds} 秒后重试）";
                 _eventText.Text = a.Events.Count > 0 ? string.Join("\n", a.Events.TakeLast(60)) : "暂无事件。";
             }
             else

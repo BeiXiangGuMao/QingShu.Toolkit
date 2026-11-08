@@ -232,7 +232,7 @@ public sealed class GalaAgentPlugin : IQToolkitPlugin, IQToolkitUiProvider
         var agent = EnsureAgent().Snapshot();
         if (!agent.Running) return "服务端未运行（未连接主控）。";
         if (!agent.Connected)
-            return $"未连接主控 {agent.MasterHost}:{agent.Port}（自动重连中，3 秒一次）。";
+            return $"未连接主控 {agent.MasterHost}:{agent.Port}（自动重连中，约 {agent.ReconnectDelaySeconds} 秒后重试）。";
         var assign = $"已连接主控 {agent.MasterHost}:{agent.Port} · 当前分配：服务器 {OrDash(agent.ServerId)}（{OrDash(agent.ServerIp)}）"
                      + $" · 经 {OrDash(agent.RouterId)} · 优先级 {GalaDispatcher.PriorityNames[Math.Clamp(agent.Priority, 0, 2)]}"
                      + (agent.ThrottleKbps > 0 ? $" · 限速标记 {agent.ThrottleKbps} kbps" : "");

@@ -75,7 +75,7 @@ powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginDir $qa
     "switchThreshold": 12,          // 切换阈值（路径分差），防抖动
     "switchCooldownSeconds": 30,    // 同一终端两次切换最小间隔
     "clientsPerNodeFull": 10,       // 并发满载基数（负载分）
-    "clientIdleTimeoutSeconds": 20, // 心跳空闲超时：超过该秒数未收到终端任何帧按离线断开（半开连接不虚占并发压力分）
+    "clientIdleTimeoutSeconds": 20, // 心跳空闲超时：超过该秒数未收到终端任何帧按离线断开（半开连接不虚占并发压力分）；须 ≥ 4×tickSeconds+5，配置健康检查会提醒
     "weightRtt": 0.35, "weightLoss": 0.25, "weightLoad": 0.20, "weightBandwidth": 0.20
   },
   "nodes": [                        // 固定设施：master / router / server / switch
@@ -122,8 +122,11 @@ Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网
 
 **心跳超时（半开连接治理）**：终端拔电/网线故障时 TCP 可能收不到断开信号（半开连接），
 主控超过 `clientIdleTimeoutSeconds`（默认 20 秒）未收到该终端任何帧即按离线断开；
-并发压力分同时改用「15 秒内有心跳」口径统计，半开终端不再虚增负载分导致调度失真。
-终端重连后 30 分钟内仍保分配不变。
+并发压力分同时改用「在线窗口内有心跳」口径统计（窗口 = max(15, 4×tickSeconds)，
+tickSeconds 配大时窗口自动跟着变，不会把每个正常心跳周期都误判成离线），
+半开终端不再虚增负载分导致调度失真。终端重连后 30 分钟内仍保分配不变。
+**配置自洽**：健康检查会提醒 `clientIdleTimeoutSeconds ≥ 4×tickSeconds + 5`，
+两者不匹配时终端会在线/离线反复横跳。
 
 **无人值守（autoStartMaster，默认开）**：主控插件随加载自动启动监听——控制机重启工具箱即
 恢复监听，无需人工点面板；「停止主控端」只停本次会话。不希望自动启动改为 `false`。
@@ -198,7 +201,11 @@ Ping 失败但 TCP 通即视为存活（RTT 取握手耗时）。禁 ICMP 的网
 - **连接**：服务端面板填主控 IP / 端口 / 配对码 → 打开「连接主控端」。成功一次即写入
   `plugins-data\qingshu.galaagent\gala-agent.json`，此后**随插件加载自动重连**（常驻语义，
   终端机重启工具箱后无需任何手动操作）；「断开连接」只停本次会话，清空主控 IP 再连一次才撤销自动重连。
-- **行为**：断线 3 秒重连；周期上报 RTT / 丢包 / 收发速率 / 进程 CPU；执行主控指令。
+- **行为**：断线自动重连（3 秒起步温和退避，封顶 10 秒，连接成功重置；面板/控制台实时显示
+  「约 N 秒后重试」）；连接成功立即首报一轮指标（不等第一个心跳周期）；周期上报
+  RTT / 丢包 / 收发速率 / 进程 CPU；执行主控指令。
+- **丢包口径**：终端到主控的丢包样本 = Ping 通或 TCP 会话仍在都算链路通——禁 ICMP 的网段
+  不会虚报 100% 丢包（RTT 仍如实显示「—」）。
 - **消费**：当前分配落盘 `plugins-data\qingshu.galaagent\assignment.json`；事件留痕写
   `plugins-data\qingshu.galaagent\gala-agent.log`（1MB 轮转）。
 
@@ -285,7 +292,8 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 - 配置：exe 同目录 `gala-agent.json`（首次运行自动生成模板）：`masterHost`（主控机 IP，必填）
   / `port` / `pairingCode` / `dataFolder` / `onAssignmentChange`（§3.1 变更钩子，可空）；命令行参数优先：
   `--master 主控IP[:端口] --port 端口 --pairing 配对码 --data 数据目录 --hook "变更钩子命令"`。
-- 行为与服务端插件一致：断线 3 秒重连、周期上报指标、执行主控指令、当前分配落盘
+- 行为与服务端插件一致：断线自动重连（3→10 秒温和退避）、连接后立即首报、周期上报指标、
+  执行主控指令、当前分配落盘
   `assignment.json`（供 §3 消费端使用）+ 事件留痕 `gala-agent.log`。
 - 交互命令：`status / events / quit`；重定向输出时同样保持常驻。
 
@@ -294,6 +302,7 @@ dotnet publish plugins-sdk/gala-dispatch/QingShu.GalaAgent/QingShu.GalaAgent.csp
 - 插件下发的是「终端应使用哪台服务器/线路」的分配与标记；实际网络路径由校园网策略/路由侧生效。
   `assignment.json` 就是为这类执行器准备的对接点（真实拓扑资料到位后可加路由器 API 对接）。
 - 协议为明文 JSON over TCP，靠**内网准入 + 配对码**控制接入，不含公网对抗设计。
-- 客户端指标中的「RTT/丢包」是终端到主控的 ICMP 探测结果；禁 ICMP 的网段内探测显示为「—」，调度退化为并发/带宽分量主导。
+- 客户端指标中的「RTT/丢包」是终端到主控的 ICMP 探测结果；禁 ICMP 的网段内 RTT 显示为「—」，
+  但丢包不会虚报（TCP 会话仍在即链路通），调度退化为并发/带宽分量主导。
 - 卸载任一插件只停自己的服务：卸主控 = 停监听（各终端自动重连等待），卸服务端 = 断本机连接；
   宿主统一收尾，面板自动收起。两个插件互不依赖，加载顺序无关。

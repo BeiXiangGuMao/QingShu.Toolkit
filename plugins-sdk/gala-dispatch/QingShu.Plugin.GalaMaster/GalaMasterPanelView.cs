@@ -41,6 +41,7 @@ public sealed class GalaMasterPanelView : UserControl
 
     private readonly List<ClientSnap> _clientRows = new();
     private readonly List<string> _serverIds = new();
+    private readonly TextBlock _onlineSummary;
     private string _selectedClientId = "";
     private string _routeSignature = "";
     private bool _suspendSwitch;
@@ -66,6 +67,7 @@ public sealed class GalaMasterPanelView : UserControl
         var opsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         opsRow.Children.Add(new TextBlock { Text = "主控端（礼堂控制台）", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
         opsRow.Children.Add(_masterSwitch);
+        opsRow.Children.Add(_onlineSummary); // 运行摘要每 2 秒刷新（在线 n/m），不占用操作反馈行
         opsRow.Children.Add(new TextBlock
         {
             Text = "监听端口/准入段/配对码在 gala-topology.json 配置（插件快捷动作可打开）。被控终端装服务端插件或独立 QingShu.GalaAgent 程序接入。",
@@ -127,6 +129,15 @@ public sealed class GalaMasterPanelView : UserControl
             FontSize = 11,
             Foreground = SecondaryBrush(),
             TextWrapping = TextWrapping.Wrap
+        };
+
+        _onlineSummary = new TextBlock
+        {
+            Text = "",
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12,
+            Foreground = SecondaryBrush(),
+            Margin = new Thickness(0, 0, 8, 0)
         };
 
         _clientList = new ListView { Height = 170, SelectionMode = SelectionMode.Single };
@@ -373,6 +384,10 @@ public sealed class GalaMasterPanelView : UserControl
             SyncRouteOptions();
             var master = _owner.EnsureMaster();
             var snap = master.Snapshot();
+            // 运行摘要：一眼看到接入情况（在线数/监听状态），操作反馈另走状态行不冲突
+            _onlineSummary.Text = master.IsRunning
+                ? $"在线 {snap.Clients.Count(c => c.Online)}/{snap.Clients.Count} 台 · 端口 {snap.Port}"
+                : "";
             RenderServers(snap);
             RenderClients(snap);
             _eventText.Text = snap.Events.Count > 0 ? string.Join("\n", snap.Events) : "暂无事件。";
@@ -466,7 +481,9 @@ public sealed class GalaMasterPanelView : UserControl
                 + $" · {GalaDispatcher.PriorityNames[Math.Clamp(c.Priority, 0, 2)]}优先"
                 + (c.Pinned ? " · 手动锁定" : "")
                 + (c.ThrottleKbps > 0 ? $" · 限速 {c.ThrottleKbps} kbps" : "")
-                + (c.Online ? $" · RTT {FmtMs(c.RttMasterMs)} · ↑{c.TxKbps:F0} ↓{c.RxKbps:F0} kbps" : " · 离线"));
+                + (c.Online
+                    ? $" · RTT {FmtMs(c.RttMasterMs)} · ↑{c.TxKbps:F0} ↓{c.RxKbps:F0} kbps"
+                    : $" · 离线（最后心跳 {FmtAge(c.LastAgeSec)}）"));
         }
         _clientList.SelectedIndex = restore;
     }
@@ -516,6 +533,7 @@ public sealed class GalaMasterPanelView : UserControl
 
         // 客户端小点：真实终端动态挂载——优先按交换机 segments 挂到所属网段接入交换机下，
         // 段未配交换机时挂其路由节点；都缺则排底部散行。逐台绘制，悬停看详情
+        var looseClients = new List<ClientSnap>();
         var mounts = new Dictionary<string, List<ClientSnap>>(StringComparer.OrdinalIgnoreCase);
         foreach (var c in snap.Clients)
         {
@@ -741,6 +759,9 @@ public sealed class GalaMasterPanelView : UserControl
     private static string OrDash(string s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
 
     private static string FmtMs(double v) => v < 0 ? "—" : $"{v:F0}ms";
+
+    /// <summary>心跳年龄人话化：离线终端判断“刚掉还是早掉”。</summary>
+    private static string FmtAge(double sec) => sec < 90 ? $"{Math.Max(0, sec):F0} 秒前" : $"{sec / 60:F0} 分钟前";
 
     private static Color PressureColor(double p) => p switch
     {
