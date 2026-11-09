@@ -6,9 +6,10 @@ using Microsoft.UI.Xaml;
 namespace QingShu.Toolkit.Services.Plugins;
 
 /// <summary>
-/// 插件契约（DeepSeek-harness 风格官方插件体系）：
-/// 插件 = 官方（BeiXiangGuMao 本人）RSA-2048 签名的目录（plugin.json + plugin.sig + 主程序集），
-/// 宿主验签后以可卸载 AssemblyLoadContext 隔离加载，卸载时回收整个上下文。
+/// 插件契约（DeepSeek-harness 风格插件体系）：
+/// 插件 = 目录（plugin.json + 主程序集，可选 plugin.sig），宿主校验后以可卸载
+/// AssemblyLoadContext 隔离加载，卸载时回收整个上下文。官方签名为可选增强：
+/// 未签名插件默认放行（徽章区分）；提供 sig 的目录走完整验签，验签不符仍拒绝（防篡改）。
 /// 契约接口全部定义在宿主程序集内，插件工程以宿主 exe 为引用编译，运行期类型同一。
 /// </summary>
 public interface IQToolkitPlugin
@@ -144,7 +145,8 @@ public enum PluginVerifyState
     /// <summary>目录缺少 plugin.json 或不可解析。</summary>
     ManifestInvalid,
 
-    /// <summary>缺少 plugin.sig（未签名）。</summary>
+    /// <summary>缺少 plugin.sig（未签名）。未签名插件默认放行加载（官方签名为可选增强徽章）；
+    /// 若清单自行登记了 mainAssemblySha256，仍会做自一致性哈希核对。</summary>
     Unsigned,
 
     /// <summary>签名验签失败（非官方密钥或清单被改动）。</summary>

@@ -60,12 +60,12 @@ Get-ChildItem plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/bin -Recurse -I
   Where-Object { $_.FullName -notmatch '\\obj\\' } | Copy-Item -Destination $qa -Force
 Copy-Item plugins-sdk/gala-dispatch/QingShu.Plugin.GalaAgent/plugin.json.template $qa\plugin.json
 
-# 4) 官方私钥分别签名（tools/plugin-sign.ps1，私钥离线保管，绝不入库）
+# 4) 可选：官方私钥分别签名（tools/plugin-sign.ps1；未签名插件同样可加载，签名仅提供徽章与防篡改校验）
 powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginFolder $qm
 powershell -ExecutionPolicy Bypass -File tools/plugin-sign.ps1 -PluginFolder $qa
 ```
 
-宿主插件页「重新扫描」→ 两张卡片各自出现「官方签名」→ 分别「加载」。**控制机只装主控端
+宿主插件页「重新扫描」→ 两张卡片出现（签名后带「官方签名」徽章，未签名带「未签名 · 可加载」徽章，均可加载）→ 分别「加载」。**控制机只装主控端
 插件即可**；终端机只装服务端插件（同一台机器想自测回环可两个都装）。
 
 ## 2. 主控端：拓扑配置与综合调控

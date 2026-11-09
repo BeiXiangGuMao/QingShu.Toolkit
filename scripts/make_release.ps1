@@ -87,6 +87,39 @@ if (-not (Test-Path (Join-Path $publishDir "QingShu.Toolkit.exe"))) {
     throw "发布目录缺少 QingShu.Toolkit.exe，请先构建（或去掉 -SkipBuild）"
 }
 
+# ---- 2.5 默认插件装载（harness 风格：发布包自带 plugins\；更新器 robocopy /e 增量不删，
+#      用户自装插件与已改配置不受更新影响）。仅补缺失文件：重复打包不会覆盖已改的 plugin.json。
+$sdkRoot = Join-Path $RepoRoot "plugins-sdk\gala-dispatch"
+$defaultPlugins = @(
+    @{ Id = "qingshu.galamaster"; Sdk = "QingShu.Plugin.GalaMaster" },
+    @{ Id = "qingshu.galaagent";  Sdk = "QingShu.Plugin.GalaAgent" }
+)
+foreach ($dp in $defaultPlugins) {
+    $binRoot = Join-Path $sdkRoot "$($dp.Sdk)\bin"
+    $srcDll = Get-ChildItem $binRoot -Recurse -Filter "$($dp.Sdk).dll" -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+    if (-not $srcDll) {
+        Write-Host "    · 未找到 $($dp.Sdk) 构建产物，跳过默认装载（先构建插件再打包即可带上）" -ForegroundColor Yellow
+        continue
+    }
+    $target = Join-Path $publishDir "plugins\$($dp.Id)"
+    New-Item -ItemType Directory -Force $target | Out-Null
+    $staged = 0
+    foreach ($f in @($srcDll.FullName,
+                     [IO.Path]::ChangeExtension($srcDll.FullName, ".pdb"),
+                     (Join-Path $srcDll.DirectoryName "plugin.json.template"))) {
+        if (-not (Test-Path $f)) { continue }
+        $dstName = (Get-Item $f).Name -replace '\.template$', ''
+        $dst = Join-Path $target $dstName
+        if (-not (Test-Path $dst)) {
+            Copy-Item $f $dst -Force
+            $staged++
+        }
+    }
+    Write-Host ("    · 默认插件 {0}：装载 {1} 个文件 → {2}" -f $dp.Id, $staged, $target) -ForegroundColor DarkCyan
+}
+Write-Host "    注：装载的默认插件无 plugin.sig，宿主按可选签名策略直接放行加载；如需官方签名徽章，装载后运行 tools\plugin-sign.ps1 -PluginFolder <插件目录> 重签。" -ForegroundColor DarkGray
+
 # ---- 3. 打包 ----
 $zipPath = Join-Path $RepoRoot "QingShu.Toolkit-$version.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }

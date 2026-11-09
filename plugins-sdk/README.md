@@ -1,6 +1,6 @@
-# 青枢工具箱 · 插件 SDK（官方签名插件体系）
+# 青枢工具箱 · 插件 SDK（harness 风格插件体系，官方签名为可选增强）
 
-与 DeepSeek harness 的插件思路同构：**只有官方（BeiXiangGuMao 本人）用专用私钥签名的插件才能被加载**，加载后完全隔离、可随时卸载并整体回收；插件可以声明权限访问宿主能力，其中 `releases` 权限允许读取/下载官方仓库 Release（与本机自动更新共用同一套多线路链与 Token 治理）。
+与 DeepSeek harness 的插件思路同构：插件 = 清单 + 主程序集（可选官方签名），加载后完全隔离、可随时卸载并整体回收；**未签名插件默认放行加载**，官方签名是可选增强徽章与防篡改校验。内置功能（网络诊断 / 磁盘清理 / U盘工具等）已作为默认插件预装在插件管理页，可启停。插件可以声明权限访问宿主能力，其中 `releases` 权限允许读取/下载官方仓库 Release（与本机自动更新共用同一套多线路链与 Token 治理）。
 
 ## 1. 安全模型（宿主强制）
 
@@ -9,20 +9,20 @@
 ```
 plugins/
   qingshu.sample/
-    plugin.json      ← 清单（含 mainAssemblySha256）
-    plugin.sig       ← 官方签名（对 plugin.json 原始字节的 RSA-2048/SHA-256 签名）
+    plugin.json      ← 清单（可选含 mainAssemblySha256）
+    plugin.sig       ← 官方签名（可选；对 plugin.json 原始字节的 RSA-2048/SHA-256 签名）
     QingShu.Plugin.Sample.dll   ← 主程序集
     *.dll            ← 自带依赖（与宿主同名依赖会被宿主版本覆盖）
 ```
 
-加载前宿主逐项校验，任何一项不过即拒绝并显示原因：
+加载前宿主逐项校验（未签名插件走 1/3/5/6 四项即可加载）：
 
 | # | 校验项 | 说明 |
 |---|--------|------|
 | 1 | 清单存在且可解析 | `plugin.json`，允许注释与尾逗号 |
-| 2 | 官方签名 | 内置公钥验签（指纹 `846C:65C7:BDD7:1029`，插件管理页可见）；无 sig = 未签名，验不过 = 被篡改或非官方钥 |
+| 2 | 官方签名（可选增强） | **无 plugin.sig = 未签名，默认放行加载**（插件页灰色徽章）；有 sig 则内置公钥验签（指纹 `846C:65C7:BDD7:1029`），验不过 = 被篡改或非官方钥，仍拒绝（删除 plugin.sig 可按未签名加载） |
 | 3 | 目录名 = `manifest.id` | 防冒名（目录随便起名装别人的清单） |
-| 4 | 主程序集 SHA-256 = 清单登记值 | 清单与 dll 绑定，改任一都要重签 |
+| 4 | 主程序集 SHA-256 = 清单登记值 | 已签名必查；未签名且清单登记了哈希时做自一致性检查，未登记则跳过 |
 | 5 | `mainAssembly` 为纯文件名 | 防路径穿越 |
 | 6 | `minHostVersion` ≤ 宿主版本 | 版本门槛 |
 
@@ -135,10 +135,10 @@ public sealed class MyPlugin : IQToolkitPlugin, IQToolkitUiProvider
   后台服务由 `OnUnloadedAsync` 统一收尾。
 - 未实现该接口的插件完全不受影响；旧宿主加载带面板的插件只是没有「面板」按钮。
 
-## 4. 签名与安装（官方流程）
+## 4. 构建与安装（签名可选）
 
 ```powershell
-# ① 一次性：生成官方密钥对（私钥务必离线保管）
+# ① 可选一次性：生成官方密钥对（私钥务必离线保管）
 powershell -ExecutionPolicy Bypass -File tools\plugin-keygen.ps1
 
 # ② 构建插件
@@ -147,14 +147,20 @@ dotnet build plugins-sdk\sample\QingShu.Plugin.Sample -c Release
 # ③ 组装插件目录（目录名必须 = manifest.id）
 #    plugins\qingshu.sample\{plugin.json, QingShu.Plugin.Sample.dll, 自带依赖...}
 
-# ④ 签名（写入 mainAssemblySha256 并对清单签名）
+# ④ 可选：官方签名（写入 mainAssemblySha256 并对清单签名；不签名也能加载，仅少徽章与防篡改校验）
 powershell -ExecutionPolicy Bypass -File tools\plugin-sign.ps1 -PluginFolder plugins\qingshu.sample
 
 # ⑤ 安装：把整个目录拷到 <工具箱目录>\plugins\ 下
 # ⑥ 「插件管理」页 → 重新扫描 → 勾选启用 → 加载
 ```
 
-改任何清单字段或更换 dll 后**必须重新签名**。启动时宿主自动加载全部「已启用且验签通过」的插件。
+已签名的插件改任何清单字段或更换 dll 后**必须重新签名**（验签不过会拒绝；删除 plugin.sig 可改按未签名加载）；未签名插件无此约束。
+
+### 默认插件随包安装
+
+`scripts/make_release.ps1` 在打包时会把 `plugins-sdk` 下已构建的插件（qingshu.galamaster / qingshu.galaagent）
+自动装载进发布目录 `plugins\<id>\`（仅补缺失文件，已改过的 plugin.json 不被覆盖；未构建则跳过）。
+更新器 robocopy `/e` 增量不删——用户自装插件与配置在升级后原样保留。
 
 ## 5. 换钥
 
@@ -162,7 +168,7 @@ powershell -ExecutionPolicy Bypass -File tools\plugin-sign.ps1 -PluginFolder plu
 2. `plugin-rotate-publickey.ps1` 自动把新公钥写进 `Services/Plugins/PluginSigning.cs`
    的 `OfficialPublicKeyXml` 常量（写入前验证公钥可用、自动备份原文件、打印新指纹；
    也可手工替换该常量）；
-3. 重新发布宿主；存量插件全部用新私钥重签。
+3. 重新发布宿主；已用旧钥签名的插件要么用新私钥重签，要么删除 plugin.sig 按未签名加载。
 
 ## 6. 边界与已知限制
 

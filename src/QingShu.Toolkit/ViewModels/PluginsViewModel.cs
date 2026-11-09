@@ -7,21 +7,27 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Plugins;
 
 namespace QingShu.Toolkit.ViewModels;
 
 /// <summary>
-/// 插件管理 VM：扫描插件目录 → 官方验签 → 加载/卸载/启用禁用 → 快捷操作。
+/// 插件管理 VM：扫描插件目录 → 校验（官方签名为可选增强，未签名放行）→ 加载/卸载/启用禁用 → 快捷操作；
+/// 同时展示内置功能插件卡（默认安装、可停用，harness 风格统一管理面）。
 /// 全部命令自带 try/catch 并把结果写入界面可见文案（全局异常兜底只记日志，不可依赖）。
 /// </summary>
 public partial class PluginsViewModel : ObservableObject
 {
     private readonly PluginManager _manager;
     private readonly ILogService _log;
+    private readonly ISettingsService _settings;
 
     public ObservableCollection<PluginItemVm> Plugins { get; } = new();
+
+    /// <summary>内置功能插件（默认安装，与外置插件并列展示）。</summary>
+    public ObservableCollection<BuiltInPluginVm> BuiltIns { get; } = new();
 
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusText = "正在初始化…";
@@ -45,10 +51,16 @@ public partial class PluginsViewModel : ObservableObject
         OnPropertyChanged(nameof(EmptyVis));
     }
 
-    public PluginsViewModel(PluginManager manager, ILogService log)
+    public PluginsViewModel(PluginManager manager, ILogService log, ISettingsService settings)
     {
         _manager = manager;
         _log = log;
+        _settings = settings;
+
+        // 内置功能插件卡：默认安装默认启用，停用状态按 navTag 持久化在 config.json
+        foreach (var info in BuiltInPluginCatalog.All)
+            BuiltIns.Add(new BuiltInPluginVm(info, this,
+                !(_settings.Current.DisabledBuiltIns ?? new List<string>()).Contains(info.NavTag)));
     }
 
     // ================= 扫描 =================
@@ -63,7 +75,7 @@ public partial class PluginsViewModel : ObservableObject
             StatusText = "正在扫描插件目录并验签…";
             var entries = await _manager.ScanAsync().ConfigureAwait(true);
             Rebuild(entries);
-            StatusText = $"扫描完成：共 {entries.Count} 个插件（运行中 {entries.Count(e => e.Loaded)} · 官方验签通过 {entries.Count(e => e.VerifyState == PluginVerifyState.Ok)}）。";
+            StatusText = $"扫描完成：外置插件 {entries.Count} 个（运行中 {entries.Count(e => e.Loaded)} · 官方签名 {entries.Count(e => e.VerifyState == PluginVerifyState.Ok)} · 未签名放行 {entries.Count(e => e.VerifyState == PluginVerifyState.Unsigned)}）；内置功能 {BuiltIns.Count} 项（默认安装）。";
         }
         catch (Exception ex)
         {
@@ -238,6 +250,37 @@ public partial class PluginsViewModel : ObservableObject
         }
     }
 
+    // ================= 内置功能插件（默认安装、可停用） =================
+
+    /// <summary>内置插件启用开关落 config.json（DisabledBuiltIns），导航过滤由 MainWindow 订阅 Changed 即时生效。</summary>
+    internal async Task SetBuiltInEnabledAsync(BuiltInPluginVm row, bool enabled)
+    {
+        try
+        {
+            var list = _settings.Current.DisabledBuiltIns ??= new List<string>();
+            bool changed;
+            if (enabled)
+            {
+                changed = list.RemoveAll(t => string.Equals(t, row.NavTag, StringComparison.Ordinal)) > 0;
+            }
+            else
+            {
+                changed = !list.Contains(row.NavTag);
+                if (changed) list.Add(row.NavTag);
+            }
+            if (changed) await _settings.SaveAsync().ConfigureAwait(true);
+            StatusText = $"内置插件「{row.DisplayName}」已{(enabled ? "启用" : "停用")}"
+                         + (enabled ? "。" : "（左侧导航入口已隐藏，重新打开开关即恢复）。");
+        }
+        catch (Exception ex)
+        {
+            row.RollbackEnabled();
+            StatusText = $"保存内置插件启用状态失败：{ex.Message}";
+            _log.App(LogLevel.Error, "plugins", "内置插件启用状态保存异常",
+                new { id = row.NavTag, ex = ex.ToString() });
+        }
+    }
+
     /// <summary>页面 Unloaded 收尾（当前无在途句柄，保持与其它页一致的生命周期约定）。</summary>
     public void Dispose() { }
 }
@@ -260,6 +303,7 @@ public sealed partial class PluginItemVm : ObservableObject
     public string Description { get; }
     public string PermissionsText { get; }
     public bool VerifyOk { get; }
+    public bool IsUnsigned { get; }
     public string VerifyText { get; }
     public bool HasPanel { get; }
     public ObservableCollection<QuickActionVm> QuickActions { get; } = new();
@@ -269,7 +313,8 @@ public sealed partial class PluginItemVm : ObservableObject
     [ObservableProperty] private string _runtimeText = "";
     [ObservableProperty] private string _errorText = "";
 
-    public bool VerifyOkVis => VerifyOk;
+    public bool VerifyOkVis => VerifyOk && !IsUnsigned;
+    public bool VerifyUnsignedVis => IsUnsigned;
     public bool VerifyBadVis => !VerifyOk;
     public bool LoadedVis => IsLoaded;
     public bool UnloadedVis => !IsLoaded;
@@ -306,8 +351,14 @@ public sealed partial class PluginItemVm : ObservableObject
         PermissionsText = e.Manifest is { Permissions.Count: > 0 }
             ? "权限：" + string.Join("、", e.Manifest.Permissions)
             : "权限：无（仅基础生命周期）";
-        VerifyOk = e.VerifyState == PluginVerifyState.Ok;
-        VerifyText = VerifyOk ? "官方签名 · 验签通过" : e.VerifyError;
+        VerifyOk = e.VerifyState is PluginVerifyState.Ok or PluginVerifyState.Unsigned;
+        IsUnsigned = e.VerifyState == PluginVerifyState.Unsigned;
+        VerifyText = e.VerifyState switch
+        {
+            PluginVerifyState.Ok => "官方签名 · 验签通过",
+            PluginVerifyState.Unsigned => "未签名 · 已放行可加载（官方签名为可选增强）",
+            _ => e.VerifyError
+        };
         HasPanel = e.HasUiPanel;
         _suspendToggle = true;
         IsEnabled = e.Enabled;
@@ -432,4 +483,57 @@ public sealed partial class QuickActionVm : ObservableObject
             IsRunning = false;
         }
     }
+}
+
+/// <summary>
+/// 内置功能插件卡（harness 风格：默认安装、默认启用、可停用）。
+/// 停用 = 隐藏左侧导航与功能入口（config.json DisabledBuiltIns，MainWindow 即时过滤）；
+/// 「打开」按钮跳转对应功能页（App.NavigateTo 静态导航）。
+/// </summary>
+public sealed partial class BuiltInPluginVm : ObservableObject
+{
+    private readonly BuiltInPluginInfo _info;
+    private readonly PluginsViewModel _parent;
+    private bool _suspendToggle;
+
+    public string NavTag { get; }
+    public string DisplayName { get; }
+    public string Description { get; }
+    public string VersionText => "与宿主一致";
+    public string MetaText => $"id {_info.Id} · 内置功能（默认安装）";
+
+    [ObservableProperty] private bool _isEnabled;
+
+    /// <summary>停用后隐藏「打开」按钮（导航入口同步隐藏）。</summary>
+    public bool OpenVis => IsEnabled;
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(OpenVis));
+        if (_suspendToggle) return;
+        _ = _parent.SetBuiltInEnabledAsync(this, value);
+    }
+
+    public BuiltInPluginVm(BuiltInPluginInfo info, PluginsViewModel parent, bool enabled)
+    {
+        _info = info;
+        _parent = parent;
+        NavTag = info.NavTag;
+        DisplayName = info.Name;
+        Description = info.Description;
+        _suspendToggle = true;
+        IsEnabled = enabled;
+        _suspendToggle = false;
+    }
+
+    /// <summary>保存失败时由 VM 回滚勾选（不触发保存）。</summary>
+    public void RollbackEnabled()
+    {
+        _suspendToggle = true;
+        IsEnabled = !IsEnabled;
+        _suspendToggle = false;
+    }
+
+    [RelayCommand]
+    private void Open() => App.NavigateTo(_info.PageType);
 }

@@ -72,6 +72,7 @@ public sealed partial class MainWindow : Window
         {
             ApplyTheme();
             RefreshRootBackground();
+            ApplyBuiltInVisibility(); // 内置插件启停 → 导航入口即时显隐
         };
 
         _power.Changed += OnPowerChanged;
@@ -85,6 +86,7 @@ public sealed partial class MainWindow : Window
         _navSyncing = true;
         SelectNavItem("dashboard");
         _navSyncing = false;
+        ApplyBuiltInVisibility();
 
         // 插件收尾：窗口关闭 → 逐个通知 OnUnloadedAsync 并卸载 ALC（尽力而为，不阻塞退出）
         Closed += (_, _) => App.Services.GetRequiredService<PluginManager>().BeginShutdown();
@@ -172,6 +174,31 @@ public sealed partial class MainWindow : Window
         var item = NavView.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (string?)i.Tag == tag)
                    ?? NavView.FooterMenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (string?)i.Tag == tag);
         if (item != null) NavView.SelectedItem = item;
+    }
+
+    // ================= 内置插件导航过滤（harness 风格：停用即隐藏入口） =================
+
+    /// <summary>
+    /// 按 config.json 的 DisabledBuiltIns 过滤左侧导航内置项；当前页被停用时
+    /// 回退到首个仍启用的内置页（全部停用则回插件管理页，插件管理/日志/设置不受限）。
+    /// 构造时与 settings.Changed（内置插件启停开关）都会调用。
+    /// </summary>
+    private void ApplyBuiltInVisibility()
+    {
+        var disabled = _settings.Current.DisabledBuiltIns ?? new List<string>();
+
+        foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
+        {
+            if (item.Tag is string tag && BuiltInPluginCatalog.IsManagedTag(tag))
+                item.Visibility = disabled.Contains(tag) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        var current = ContentFrame.CurrentSourcePageType;
+        var currentTag = current == null ? null : BuiltInPluginCatalog.TagOfPage(current);
+        if (currentTag == null || !disabled.Contains(currentTag)) return;
+
+        var fallback = BuiltInPluginCatalog.FirstEnabled(disabled);
+        NavigateToPage(fallback?.PageType ?? typeof(PluginsPage));
     }
 
     // ================= 状态栏 =================

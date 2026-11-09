@@ -20,7 +20,7 @@
         <!-- 页头 -->
         <StackPanel Grid.Row="0">
             <TextBlock Text="插件管理" Style="{StaticResource PageTitleTextBlock}" />
-            <TextBlock Text="官方签名插件体系：只有用官方私钥签名的插件才会被加载。把签好的插件目录放入下方目录，扫描通过后即可加载/卸载/启用/停用；声明了 releases 权限的插件可以查询与下载本工具箱仓库的 Release（走更新同款多线路与 Token 治理）。卸载使用独立加载上下文整体回收。"
+            <TextBlock Text="插件化功能体系：内置功能（网络诊断、磁盘清理、U盘工具等）已作为默认插件预装，可在下方启停；外置插件目录（上方路径）中的插件无需签名即可加载，官方签名为可选增强——提供 plugin.sig 的目录会做完整验签，验签不符仍会拒绝（防篡改）。声明 releases 权限的插件可查询与下载仓库 Release。"
                        Style="{StaticResource PageSubtitleTextBlock}" MaxWidth="860" HorizontalAlignment="Left" />
         </StackPanel>
 
@@ -60,7 +60,7 @@
                                Foreground="{ThemeResource PlaceholderTextBrush}" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="官方签名指纹" Style="{StaticResource CaptionTextBlock}"
+                    <TextBlock Text="官方签名指纹（可选校验）" Style="{StaticResource CaptionTextBlock}"
                                Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
                     <TextBlock Text="{x:Bind Vm.KeyFingerprint, Mode=OneWay}" Style="{StaticResource CaptionTextBlock}"
                                Foreground="{ThemeResource PlaceholderTextBrush}" VerticalAlignment="Center" />
@@ -93,18 +93,62 @@
             </Grid>
         </Border>
 
-        <!-- 插件列表 -->
+        <!-- 插件列表：内置功能（默认插件）+ 外置插件 -->
         <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="14">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="已安装插件" Style="{StaticResource SectionTitleTextBlock}" />
-                <TextBlock Grid.Row="1" Text="插件目录为空。把官方签名的插件目录放入上面路径后点「重新扫描」；开发与签名方法见仓库 plugins-sdk/README.md。"
+                <TextBlock Grid.Row="0" Text="内置功能（默认插件 · 默认安装）" Style="{StaticResource SectionTitleTextBlock}" />
+                <ListView Grid.Row="1" ItemsSource="{x:Bind Vm.BuiltIns, Mode=OneWay}" SelectionMode="None" MaxHeight="300">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0,2" /><Setter Property="MinHeight" Value="0" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BuiltInPluginVm">
+                            <Grid Padding="2,10" ColumnSpacing="14" BorderThickness="0,0,0,1"
+                                  BorderBrush="{ThemeResource DividerStrokeBrush}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="3">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource BodyTextBlock}"
+                                                   Foreground="{ThemeResource TextPrimaryBrush}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{x:Bind VersionText}" Style="{StaticResource CaptionTextBlock}"
+                                                   Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                        <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="4" Padding="6,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="内置 · 默认安装" Foreground="{ThemeResource InfoTextBrush}" FontSize="10.5" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind Description}" Style="{StaticResource CaptionTextBlock}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind MetaText}" Style="{StaticResource CaptionTextBlock}"
+                                               Foreground="{ThemeResource PlaceholderTextBrush}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top" HorizontalAlignment="Right">
+                                    <CheckBox Content="启用" MinWidth="0" IsChecked="{x:Bind IsEnabled, Mode=TwoWay}" />
+                                    <Button Content="打开" Command="{x:Bind OpenCommand}" Padding="14,5" MinWidth="86"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            Visibility="{x:Bind OpenVis, Mode=OneWay}" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBlock Grid.Row="2" Text="外置插件（plugins 目录）" Style="{StaticResource SectionTitleTextBlock}" Margin="0,8,0,0" />
+                <TextBlock Grid.Row="3" Text="插件目录为空。把插件目录放入上面路径后点「重新扫描」即可加载（无需签名；开发方法见仓库 plugins-sdk/README.md）。"
                            Style="{StaticResource CaptionTextBlock}" Foreground="{ThemeResource PlaceholderTextBrush}"
                            TextWrapping="Wrap" Visibility="{x:Bind Vm.EmptyVis, Mode=OneWay}" />
-                <ListView Grid.Row="1" ItemsSource="{x:Bind Vm.Plugins, Mode=OneWay}" SelectionMode="None">
+                <ListView Grid.Row="3" ItemsSource="{x:Bind Vm.Plugins, Mode=OneWay}" SelectionMode="None">
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -132,6 +176,10 @@
                                         <Border Background="{ThemeResource ErrorChipFillBrush}" CornerRadius="4" Padding="6,1"
                                                 VerticalAlignment="Center" Visibility="{x:Bind VerifyBadVis, Mode=OneWay}">
                                             <TextBlock Text="验签未过" Foreground="{ThemeResource ErrorTextBrush}" FontSize="10.5" />
+                                        </Border>
+                                        <Border Background="{ThemeResource InfoChipFillBrush}" CornerRadius="4" Padding="6,1"
+                                                VerticalAlignment="Center" Visibility="{x:Bind VerifyUnsignedVis, Mode=OneWay}">
+                                            <TextBlock Text="未签名 · 可加载" Foreground="{ThemeResource InfoTextBrush}" FontSize="10.5" />
                                         </Border>
                                         <Border Background="{ThemeResource SuccessChipFillBrush}" CornerRadius="4" Padding="6,1"
                                                 VerticalAlignment="Center" Visibility="{x:Bind LoadedVis, Mode=OneWay}">

@@ -100,6 +100,13 @@ public sealed class AppSettings
     // ---------- 演示数据标记 ----------
     public bool FirstRunDone { get; set; } = false;
 
+    // ---------- 内置插件（harness 风格：默认安装、默认启用、可停用） ----------
+    /// <summary>
+    /// 被停用的内置插件导航 tag 清单（dashboard/network/cleanup/optimize/popupguard/usb）。
+    /// 停用即隐藏左侧导航与功能入口，随时恢复；清单定义见 Services/Plugins/BuiltInPluginCatalog。
+    /// </summary>
+    public List<string> DisabledBuiltIns { get; set; } = new();
+
     public static List<string> DefaultWhitelist() => new()
     {
         // 系统

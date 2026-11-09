@@ -39,7 +39,7 @@ public interface IPluginManager
     /// <summary>卸载指定插件，返回面向用户的结果文案（失败抛异常）。</summary>
     Task<string> UnloadAsync(string folderName);
     Task SetEnabledAsync(string folderName, bool enabled);
-    /// <summary>启动时自动加载全部「已启用且验签通过」的插件（逐个隔离失败，绝不让单个插件拖垮启动）。</summary>
+    /// <summary>启动时自动加载全部「已启用且可加载（验签通过或未签名放行）」的插件（逐个隔离失败，绝不让单个插件拖垮启动）。</summary>
     Task AutoLoadEnabledAsync();
     /// <summary>进程退出前的尽力收尾（fire-and-forget，不阻塞退出）。</summary>
     void BeginShutdown();
@@ -72,7 +72,7 @@ public sealed class PluginManager : IPluginManager
         _log = log;
         _releaseAccess = releaseAccess;
         _enabled = LoadEnabledMap();
-        _log.App(LogLevel.Debug, "plugin", $"插件管理器就绪（根目录 {PluginsRoot}，签名指纹 {KeyFingerprint}）");
+        _log.App(LogLevel.Debug, "plugin", $"插件管理器就绪（根目录 {PluginsRoot}，官方签名可选校验，指纹 {KeyFingerprint}）");
     }
 
     // ================= 扫描 =================
@@ -131,7 +131,8 @@ public sealed class PluginManager : IPluginManager
     private PluginVerifyResult VerifyFull(string folder, string folderName)
     {
         var core = PluginSigning.VerifyFolderCore(folder);
-        if (!core.Ok || core.Manifest == null) return core;
+        // 清单不可解析 / 签名存在但验签不符 → 仍拒绝（防篡改红线；想按未签名加载删除 plugin.sig 即可）
+        if (core.Manifest == null || core.State == PluginVerifyState.BadSignature) return core;
         var m = core.Manifest;
 
         if (!string.Equals(m.Id, folderName, StringComparison.OrdinalIgnoreCase))
@@ -147,13 +148,19 @@ public sealed class PluginManager : IPluginManager
         if (!File.Exists(dllPath))
             return new PluginVerifyResult { State = PluginVerifyState.ManifestInvalid, ErrorText = $"主程序集缺失：{m.MainAssembly}" };
 
-        var actual = PluginSigning.Sha256File(dllPath);
-        if (!string.Equals(actual, m.MainAssemblySha256?.Trim(), StringComparison.OrdinalIgnoreCase))
-            return new PluginVerifyResult
-            {
-                State = PluginVerifyState.HashMismatch,
-                ErrorText = "主程序集与清单登记的 SHA-256 不符（插件文件在签名后被改动）。请用 tools/plugin-sign.ps1 重新签名。"
-            };
+        // 哈希核对：已签名（Ok）必查（锁定签名对象）；未签名仅在清单自行登记哈希时做自一致性检查
+        if (core.State == PluginVerifyState.Ok || !string.IsNullOrWhiteSpace(m.MainAssemblySha256))
+        {
+            var actual = PluginSigning.Sha256File(dllPath);
+            if (!string.Equals(actual, m.MainAssemblySha256?.Trim(), StringComparison.OrdinalIgnoreCase))
+                return new PluginVerifyResult
+                {
+                    State = PluginVerifyState.HashMismatch,
+                    ErrorText = core.State == PluginVerifyState.Ok
+                        ? "主程序集与清单登记的 SHA-256 不符（插件文件在签名后被改动）。请用 tools/plugin-sign.ps1 重新签名，或删除 plugin.sig 按未签名加载。"
+                        : "主程序集与清单登记的 SHA-256 不符（mainAssemblySha256 与实际文件不一致，请更正清单或删除该字段）。"
+                };
+        }
 
         if (!string.IsNullOrWhiteSpace(m.MinHostVersion))
         {
@@ -391,7 +398,9 @@ public sealed class PluginManager : IPluginManager
         try
         {
             var entries = await ScanAsync().ConfigureAwait(false);
-            foreach (var e in entries.Where(e => e.Enabled && e.VerifyState == PluginVerifyState.Ok && !e.Loaded))
+            foreach (var e in entries.Where(e => e.Enabled
+                         && (e.VerifyState == PluginVerifyState.Ok || e.VerifyState == PluginVerifyState.Unsigned)
+                         && !e.Loaded))
             {
                 try
                 {
