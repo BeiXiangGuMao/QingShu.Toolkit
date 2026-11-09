@@ -1,0 +1,12 @@
+{
+  "id": "qingshu.plugin.optimize",
+  "name": "系统优化",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "内存整理 / 进程 EcoQoS 节能 / 启动项管理（内置工具外移插件版）：工作集整理不结束进程；EcoQoS 功耗遏制带失败原因细分；启动项支持应用内禁用/启用（禁用前自动备份、可随时恢复，沿用宿主同一路径），绝不触碰计划任务/服务/虚拟内存/Defender。接管宿主「性能优化」导航页，卸载后自动回退内置实现。",
+  "mainAssembly": "QingShu.Plugin.Optimize.dll",
+  "entryType": "QingShu.Plugin.Optimize.OptimizePlugin",
+  "navTag": "optimize",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}

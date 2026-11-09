@@ -90,13 +90,14 @@ if (-not (Test-Path (Join-Path $publishDir "QingShu.Toolkit.exe"))) {
 # ---- 2.5 默认插件装载（harness 风格：发布包自带 plugins\；更新器 robocopy /e 增量不删，
 #      用户自装插件与已改配置不受更新影响）。仅补缺失文件：重复打包不会覆盖已改的 plugin.json。
 #      SdkRoot = 插件工程所在子目录（galamaster/galaagent 在 gala-dispatch，弹窗拦截在 popup-guard，
-#      U盘工具在 usb-tool，磁盘清理在 disk-cleanup）。
+#      U盘工具在 usb-tool，磁盘清理在 disk-cleanup，系统优化在 optimize）。
 $defaultPlugins = @(
     @{ Id = "qingshu.galamaster"; Sdk = "QingShu.Plugin.GalaMaster";  SdkRoot = "plugins-sdk\gala-dispatch" },
     @{ Id = "qingshu.galaagent";  Sdk = "QingShu.Plugin.GalaAgent";   SdkRoot = "plugins-sdk\gala-dispatch" },
     @{ Id = "qingshu.plugin.popupguard"; Sdk = "QingShu.Plugin.PopupGuard"; SdkRoot = "plugins-sdk\popup-guard" },
     @{ Id = "qingshu.plugin.usbtool";    Sdk = "QingShu.Plugin.UsbTool";    SdkRoot = "plugins-sdk\usb-tool" },
-    @{ Id = "qingshu.plugin.diskcleanup"; Sdk = "QingShu.Plugin.DiskCleanup"; SdkRoot = "plugins-sdk\disk-cleanup" }
+    @{ Id = "qingshu.plugin.diskcleanup"; Sdk = "QingShu.Plugin.DiskCleanup"; SdkRoot = "plugins-sdk\disk-cleanup" },
+    @{ Id = "qingshu.plugin.optimize"; Sdk = "QingShu.Plugin.Optimize"; SdkRoot = "plugins-sdk\optimize" }
 )
 foreach ($dp in $defaultPlugins) {
     $binRoot = Join-Path (Join-Path $RepoRoot $dp.SdkRoot) "$($dp.Sdk)\bin"
