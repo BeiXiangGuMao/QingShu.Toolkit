@@ -1,0 +1,12 @@
+{
+  "id": "qingshu.plugin.diskcleanup",
+  "name": "磁盘清理",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "常规安全清理 / 微信QQ 久远文件询问式清理 / 全盘大文件兜底扫描（内置工具外移插件版）：14 个常规目标逐文件安全删除（回收站/永久按设置，需管理员目标合并一次 UAC）；微信/QQ 兼容新旧版目录布局，绝不触碰聊天记录数据库；大文件扫描跳过系统目录。接管宿主「磁盘清理」导航页，卸载后自动回退内置实现。",
+  "mainAssembly": "QingShu.Plugin.DiskCleanup.dll",
+  "entryType": "QingShu.Plugin.DiskCleanup.DiskCleanupPlugin",
+  "navTag": "cleanup",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}
