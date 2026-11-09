@@ -159,7 +159,7 @@ powershell -ExecutionPolicy Bypass -File tools\plugin-sign.ps1 -PluginFolder plu
 ### 默认插件随包安装
 
 `scripts/make_release.ps1` 在打包时会把 `plugins-sdk` 下已构建的插件
-（qingshu.galamaster / qingshu.galaagent / qingshu.plugin.popupguard / qingshu.plugin.usbtool / qingshu.plugin.diskcleanup / qingshu.plugin.optimize）
+（qingshu.galamaster / qingshu.galaagent / qingshu.plugin.popupguard / qingshu.plugin.usbtool / qingshu.plugin.diskcleanup / qingshu.plugin.optimize / qingshu.plugin.networkdiag）
 自动装载进发布目录 `plugins\<id>\`（仅补缺失文件，已改过的 plugin.json 不被覆盖；未构建则跳过）。
 更新器 robocopy `/e` 增量不删——用户自装插件与配置在升级后原样保留。
 

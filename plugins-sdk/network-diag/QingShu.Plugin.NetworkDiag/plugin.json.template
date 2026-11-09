@@ -1,0 +1,12 @@
+{
+  "id": "qingshu.plugin.networkdiag",
+  "name": "网络诊断",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "傻瓜模式一站式「诊断 → 修复 → 导出报告」（内置工具外移插件版）：全面诊断/快速体检/网速与低速分析三模式，检查项 30+ 逐项通过/警告/未通过，自动生成网络拓扑 Canvas 图，低速专项实时测速与嫌疑清单，QuestPDF 正式报告导出；一键修复管理类操作合并一次 UAC 提权确认，危险项默认不勾选。接管宿主「网络诊断」导航页，卸载后自动回退内置实现。",
+  "mainAssembly": "QingShu.Plugin.NetworkDiag.dll",
+  "entryType": "QingShu.Plugin.NetworkDiag.NetworkDiagPlugin",
+  "navTag": "network",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}

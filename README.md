@@ -79,8 +79,9 @@
 - **外移插件（真插件，第二批）**：`plugins-sdk/usb-tool/` U盘工具——同一导航接管架构，四服务（探查/健康检测/查杀/修复）自包含移植，隔离区与提权脚本目录与内置版共用同一路径；插件卸载自动回退内置页。
 - **外移插件（真插件，第三批）**：`plugins-sdk/disk-cleanup/` 磁盘清理——清理引擎（14 目标）/微信QQ 久远文件/大文件三服务自包含移植；运行时 XamlReader 模板保 ListView 虚拟化（数千行列表手工重建会卡死）；设置存插件私有 settings.json（首启从宿主 config.json 迁移）；插件卸载自动回退内置页。
 - **外移插件（真插件，第四批）**：`plugins-sdk/optimize/` 系统优化——内存整理（EmptyWorkingSet）/进程 EcoQoS（失败原因细分）/启动项管理（可逆备份沿用宿主同路径）自包含移植；顺手修正内置页「EcoQoS 徽章不刷新」潜伏缺陷（EcoApplied 可观察化）；无设置迁移需求。
+- **外移插件（真插件，第五批）**：`plugins-sdk/network-diag/` 网络诊断——诊断引擎（30+ 检查项三模式）/一键修复（合并 UAC）/Canvas 拓扑/低速专项实时测速/QuestPDF 报告导出（报告与日志目录沿用宿主同路径）全量自包含移植；表单记忆存插件私有 settings.json（首启从宿主 config.json 迁移）。
 - **网络插件**：`plugins-sdk/gala-dispatch/` 元旦晚会智能分流（主控端/服务端，纯代码面板）。
-- **默认装载**：`make_release.ps1` 打包时自动把已构建的默认外置插件（galamaster / galaagent / popupguard / usbtool / diskcleanup / optimize）带入发布包 `plugins\` 目录；更新器增量覆盖，用户自装插件与已改配置不受升级影响。
+- **默认装载**：`make_release.ps1` 打包时自动把已构建的默认外置插件（galamaster / galaagent / popupguard / usbtool / diskcleanup / optimize / networkdiag）带入发布包 `plugins\` 目录；更新器增量覆盖，用户自装插件与已改配置不受升级影响。
 - 插件契约（`IQToolkitPlugin` / `IQToolkitNavPageProvider` / `IQToolkitUiProvider` / `IPluginContext`）定义在宿主程序集，`plugins-sdk/` 四个插件工程可直接作为新插件模板。
 
 ---
@@ -113,7 +114,7 @@ QingShu.Toolkit/
 │   ├── ViewModels/        # MVVM（CommunityToolkit.Mvvm 8.4）
 │   └── Views/             # 6 页面（仪表盘/诊断/清理/优化/日志/设置）
 ├── packaging/Package.appxmanifest   # MSIX 双模式备用清单
-├── plugins-sdk/                     # 插件工程模板（popup-guard 弹窗拦截外移版 / usb-tool U盘工具外移版 / disk-cleanup 磁盘清理外移版 / optimize 系统优化外移版 / gala-dispatch 晚会分流）
+├── plugins-sdk/                     # 插件工程模板（popup-guard 弹窗拦截外移版 / usb-tool U盘工具外移版 / disk-cleanup 磁盘清理外移版 / optimize 系统优化外移版 / network-diag 网络诊断外移版 / gala-dispatch 晚会分流）
 ├── tools/plugin-*.ps1               # 插件签名工具链（keygen / sign / rotate-publickey）
 ├── scripts/make_release.ps1         # 发布打包（含默认插件装载）
 └── docs/                            # BUILD / DESIGN / RELEASE / TESTING

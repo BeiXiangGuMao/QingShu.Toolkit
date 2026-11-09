@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      网络诊断插件（内置工具真外移第五批）。
+      与宿主完全一致的 TFM / SDK 投影 / MinVersion，保证跨 ALC 类型同一。
+      全部代码自包含：诊断引擎（43 项检查 × 全/快/速三模式 + 逐项硬超时）+ 一键修复
+      （普通动作本进程 / 管理类合并一次 UAC 提权批处理）+ 拓扑自动构建（Canvas 手绘渲染）+
+      低速专项（下载吞吐实测 + 嫌疑归因）+ QuestPDF 正式报告（综合推断引擎），
+      全部从宿主内置实现移植而来，仅依赖契约接口（IQToolkitPlugin / IQToolkitNavPageProvider /
+      IPluginContext，宿主程序集提供）。
+      manifest.navTag = network → 加载后接管宿主左侧『网络诊断』导航页；卸载自动回退内置实现。
+      内置页保留兜底（插件未装/停用时导航回内置页），与弹窗拦截 / U盘工具 / 磁盘清理 / 性能优化外移同一策略。
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <WindowsSdkPackageVersion>10.0.26100.86</WindowsSdkPackageVersion>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>QingShu.Plugin.NetworkDiag</AssemblyName>
+    <RootNamespace>QingShu.Plugin.NetworkDiag</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!--
+      MVVM Toolkit 风格提示关闭：与宿主同口径（[ObservableProperty] 保持经典字段式写法，
+      C# 13 分部属性写法在部分 VS/Roslyn 组合下生成器不产出实现导致全量报错，固定字段式）。
+    -->
+    <NoWarn>$(NoWarn);MVVMTK0045;MVVMTK0034</NoWarn>
+    <!--
+      宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。探测顺序：
+      ① -p:QingshuHome=...（命令行传参最可靠，不受 MSBuild 节点复用缓存旧环境的影响）
+      ② 环境变量 QINGSHU_HOME（可能被复用的构建节点按旧环境求值，设了不生效时改用 ①）
+      ③ 仓库内宿主发布目录自动探测（make_release.ps1 -o 与新版 SDK dotnet publish 的
+         产物路径 bin\publish\win-x64；旧式 bin\x64\Release\...\publish 兼容探测）
+      ④ C:\Tools\QingShu.Toolkit 默认值
+      指定/探测的目录里找不到 QingShu.Toolkit.exe 时逐级向后兜底；
+      全部落空由 EnsureHostAssemblyExists 报人话错误（含发布命令与传参示例）。
+    -->
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\win-x64\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\win-x64</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe')">C:\Tools\QingShu.Toolkit</QingshuHome>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 版本必须与宿主一致：Microsoft.UI.Xaml.* 在默认加载上下文共享，跨 ALC 类型同一 -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <!--
+      三个依赖均为仅编译期引用，ExcludeAssets=runtime 不拷贝到插件输出目录——运行期经
+      PluginLoadContext 回退默认加载上下文共享宿主同版本程序集（跨 ALC 类型同一，杜绝双份
+      程序集），照抄 usb 批口径（usb 批 CommunityToolkit.Mvvm + System.Management 同款）：
+      - CommunityToolkit.Mvvm：[ObservableProperty] / [RelayCommand] 源生成器；
+      - System.Management：硬件探测与网卡驱动检查的 WMI 查询（Win32_Processor / Win32_BIOS /
+        Win32_NetworkAdapter 等）；
+      - System.ServiceProcess.ServiceController：网络基础服务状态检查（stack.services，
+        ServiceController 只读枚举；本批新增，Checks.SystemQuality 编译必需）。
+    -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Management" Version="8.0.0" ExcludeAssets="runtime" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.0" ExcludeAssets="runtime" />
+    <!--
+      QuestPDF：PDF 报告渲染（2026.9.1 与宿主同版本）。仅编译期引用，运行期经默认加载上下文
+      共享宿主 QuestPDF / QuestPDF.Drawing / SkiaSharp 等同版本程序集——报告引擎在插件 ALC 内
+      new 出的对象（Document / IContainer 描述符等）与宿主侧类型同一，跨 ALC 传入不会发生
+      类型身份冲突（与 Microsoft.UI.Xaml 共享同一原理）；同时 SkiaSharp 原生库只有宿主一份。
+    -->
+    <PackageReference Include="QuestPDF" Version="2026.9.1" ExcludeAssets="runtime" />
+    <Reference Include="QingShu.Toolkit">
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 宿主程序集缺失时直接报人话错误，不再吞成二十条 CS0246/CS0234 级联 -->
+  <Target Name="EnsureHostAssemblyExists" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe')"
+           Text="找不到宿主程序集 QingShu.Toolkit.exe。已依次探测：-p:QingshuHome 与环境变量 QINGSHU_HOME 的指定值、仓库内 src/QingShu.Toolkit/bin/publish/win-x64、bin/publish、bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/publish、C:\Tools\QingShu.Toolkit。最可靠做法：先发布宿主，再把 dotnet publish 输出「→」后面的发布目录以 -p:QingshuHome=&quot;目录&quot; 传给本构建（环境变量可能被 MSBuild 节点复用吞掉，命令行传参必生效）。宿主发布命令：dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 -r win-x64 --self-contained -p:WindowsAppSDKSelfContained=true" />
+  </Target>
+
+</Project>
