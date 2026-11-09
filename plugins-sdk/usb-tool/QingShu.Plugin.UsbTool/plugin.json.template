@@ -1,0 +1,12 @@
+{
+  "id": "qingshu.plugin.usbtool",
+  "name": "U盘工具",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "U盘体检 / 查杀 / 扩容盘检测 / 修复（内置工具外移插件版）：直连物理盘扇区做硬件级检测——表面坏区扫描、扩容盘鉴别、写速度实测；查杀覆盖 U 盘蠕虫落盘特征；修复提供设备栈重置到分区表重建。只对 USB 设备生效，绝不触碰系统盘。接管宿主「U盘工具」导航页，卸载后自动回退内置实现。",
+  "mainAssembly": "QingShu.Plugin.UsbTool.dll",
+  "entryType": "QingShu.Plugin.UsbTool.UsbToolPlugin",
+  "navTag": "usb",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}
