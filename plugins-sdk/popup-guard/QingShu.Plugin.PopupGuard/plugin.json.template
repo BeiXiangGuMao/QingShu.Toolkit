@@ -1,0 +1,12 @@
+{
+  "id": "qingshu.plugin.popupguard",
+  "name": "弹窗拦截",
+  "version": "0.1.0",
+  "author": "BeiXiangGuMao",
+  "description": "被动弹窗拦截（内置工具外移插件版）：全局白名单策略，白名单进程放行，其余新出现的可见窗口被动关闭（不注入、不挂钩）。接管宿主「弹窗拦截」导航页，设置随插件自治（首启自动迁移宿主配置），卸载后自动回退内置实现。",
+  "mainAssembly": "QingShu.Plugin.PopupGuard.dll",
+  "entryType": "QingShu.Plugin.PopupGuard.PopupGuardPlugin",
+  "navTag": "popupguard",
+  "minHostVersion": "1.2.0",
+  "permissions": [ "storage" ]
+}

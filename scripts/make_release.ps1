@@ -89,13 +89,14 @@ if (-not (Test-Path (Join-Path $publishDir "QingShu.Toolkit.exe"))) {
 
 # ---- 2.5 默认插件装载（harness 风格：发布包自带 plugins\；更新器 robocopy /e 增量不删，
 #      用户自装插件与已改配置不受更新影响）。仅补缺失文件：重复打包不会覆盖已改的 plugin.json。
-$sdkRoot = Join-Path $RepoRoot "plugins-sdk\gala-dispatch"
+#      SdkRoot = 插件工程所在子目录（galamaster/galaagent 在 gala-dispatch，弹窗拦截在 popup-guard）。
 $defaultPlugins = @(
-    @{ Id = "qingshu.galamaster"; Sdk = "QingShu.Plugin.GalaMaster" },
-    @{ Id = "qingshu.galaagent";  Sdk = "QingShu.Plugin.GalaAgent" }
+    @{ Id = "qingshu.galamaster"; Sdk = "QingShu.Plugin.GalaMaster";  SdkRoot = "plugins-sdk\gala-dispatch" },
+    @{ Id = "qingshu.galaagent";  Sdk = "QingShu.Plugin.GalaAgent";   SdkRoot = "plugins-sdk\gala-dispatch" },
+    @{ Id = "qingshu.plugin.popupguard"; Sdk = "QingShu.Plugin.PopupGuard"; SdkRoot = "plugins-sdk\popup-guard" }
 )
 foreach ($dp in $defaultPlugins) {
-    $binRoot = Join-Path $sdkRoot "$($dp.Sdk)\bin"
+    $binRoot = Join-Path (Join-Path $RepoRoot $dp.SdkRoot) "$($dp.Sdk)\bin"
     $srcDll = Get-ChildItem $binRoot -Recurse -Filter "$($dp.Sdk).dll" -ErrorAction SilentlyContinue |
               Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
     if (-not $srcDll) {

@@ -43,6 +43,25 @@ public interface IQToolkitUiProvider
     FrameworkElement CreatePanelView();
 }
 
+/// <summary>
+/// 可选能力：插件接管左侧导航页（内置工具外移为插件的正式通道，分批推进）。
+/// manifest.navTag 与 MainWindow 导航 Tag 一致（如 "popupguard"）即视为接管：
+/// 该内置导航项保留原位置与图标，但点击进入的是本接口 CreateNavView 返回的插件视图；
+/// 对应内置服务由宿主挂起（运行时挂起，不改持久设置），插件卸载后自动回退内置实现。
+/// </summary>
+public interface IQToolkitNavPageProvider
+{
+    /// <summary>导航页显示名（缺省保留内置导航项文案）。</summary>
+    string NavTitle { get; }
+
+    /// <summary>
+    /// 创建整页视图（宿主 UI 线程调用；每次导航进入调用一次，旧视图由宿主替换丢弃）。
+    /// 插件应在元素 Unloaded 后自行停掉界面定时器等纯 UI 资源；
+    /// 后台服务（窗口扫描等）由 OnUnloadedAsync 统一收尾。
+    /// </summary>
+    FrameworkElement CreateNavView();
+}
+
 /// <summary>宿主提供给插件的运行环境。权限由 manifest.permissions 声明、宿主强制执行。</summary>
 public interface IPluginContext
 {
@@ -54,6 +73,13 @@ public interface IPluginContext
 
     /// <summary>插件私有数据目录 %LOCALAPPDATA%\QingShu.Toolkit\plugins-data\&lt;id&gt;（自动创建）。</summary>
     string DataFolder { get; }
+
+    /// <summary>
+    /// 宿主数据根 %LOCALAPPDATA%\QingShu.Toolkit（config.json 所在目录，只读约定）。
+    /// 供外移插件做一次性设置迁移：首次启动时从 config.json 读取旧内置实现的设置，
+    /// 落入插件私有 DataFolder 后即完成交接；插件绝不回写宿主配置。
+    /// </summary>
+    string HostDataRoot { get; }
 
     /// <summary>宿主日志（app-*.log，category = plugin:&lt;id&gt;；绝不记录 Token 等凭据）。</summary>
     void Log(string level, string message);
@@ -129,6 +155,13 @@ public sealed class PluginManifest
 
     /// <summary>权限声明：releases / storage。</summary>
     [JsonPropertyName("permissions")] public List<string> Permissions { get; set; } = new();
+
+    /// <summary>
+    /// 接管导航页的 Tag（可选，如 "popupguard"，与 MainWindow.xaml 导航项 Tag 一致）。
+    /// 非空且插件实现 IQToolkitNavPageProvider 时：宿主导航该内置页改挂插件视图，
+    /// 对应内置服务挂起（运行时挂起，不改持久设置），插件卸载自动回退。
+    /// </summary>
+    [JsonPropertyName("navTag")] public string NavTag { get; set; } = "";
 
     /// <summary>主程序集 SHA-256（签名工具注入；宿主验签后核对，防清单与程序集错配）。</summary>
     [JsonPropertyName("mainAssemblySha256")] public string MainAssemblySha256 { get; set; } = "";

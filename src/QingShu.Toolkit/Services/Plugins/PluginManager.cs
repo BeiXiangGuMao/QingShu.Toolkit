@@ -22,6 +22,10 @@ public sealed class PluginEntry
     public bool Loaded { get; init; }
     /// <summary>运行中且实现了 IQToolkitUiProvider（可在插件页打开自绘面板）。</summary>
     public bool HasUiPanel { get; init; }
+    /// <summary>运行中且声明 navTag + 实现 IQToolkitNavPageProvider（接管左侧导航页）。</summary>
+    public bool HasNavPage { get; init; }
+    /// <summary>接管的导航 Tag（manifest.navTag，未接管为空）。</summary>
+    public string NavTag { get; init; } = "";
     public IReadOnlyList<PluginQuickAction> QuickActions { get; init; } = Array.Empty<PluginQuickAction>();
 }
 
@@ -33,6 +37,12 @@ public interface IPluginManager
 {
     string PluginsRoot { get; }
     string KeyFingerprint { get; }
+
+    /// <summary>
+    /// 运行集变化（任一插件加载成功 / 卸载完成 / 退出收尾开始）后触发。
+    /// 注意：在后台线程触发（加载/卸载均为异步管线），订阅方必须调度回 UI 线程。
+    /// </summary>
+    event Action? RuntimesChanged;
     Task<List<PluginEntry>> ScanAsync();
     /// <summary>加载指定插件，返回面向用户的结果文案（失败抛异常）。</summary>
     Task<string> LoadAsync(string folderName);
@@ -117,6 +127,10 @@ public sealed class PluginManager : IPluginManager
                     Enabled = enabled,
                     Loaded = loaded,
                     HasUiPanel = rt?.Instance is IQToolkitUiProvider,
+                    HasNavPage = rt != null
+                                 && !string.IsNullOrWhiteSpace(rt.Manifest.NavTag)
+                                 && rt.Instance is IQToolkitNavPageProvider,
+                    NavTag = rt?.Manifest.NavTag ?? "",
                     QuickActions = loaded && rt != null
                         ? rt.Context.ActionsSnapshot()
                         : Array.Empty<PluginQuickAction>()
@@ -222,7 +236,9 @@ public sealed class PluginManager : IPluginManager
                     throw new TimeoutException($"插件初始化超时（{InitTimeoutSeconds}s）：OnLoadedAsync 迟迟未返回");
                 await initTask.ConfigureAwait(false); // 观察初始化异常
 
-                _log.App(LogLevel.Info, "plugin", $"插件已加载：{manifest.Id} v{manifest.Version}（{instance.DisplayName}）");
+                _log.App(LogLevel.Info, "plugin", $"插件已加载：{manifest.Id} v{manifest.Version}（{instance.DisplayName}）"
+                    + (manifest.NavTag.Length > 0 ? "，接管导航页 " + manifest.NavTag : ""));
+                RaiseRuntimesChanged(); // 导航接管状态可能变化（宿主回 UI 线程刷新导航）
                 return $"已加载「{instance.DisplayName}」v{manifest.Version}。";
             }
             catch
@@ -275,6 +291,68 @@ public sealed class PluginManager : IPluginManager
         }
     }
 
+    // ================= 导航页接管（内置工具外移通道） =================
+
+    /// <summary>当前已运行插件接管的导航 Tag 集合（去重；宿主导航用它判断内置页是否被取代）。</summary>
+    public IReadOnlyList<string> LoadedNavTags()
+    {
+        lock (_sync)
+        {
+            return _runtime.Values
+                .Where(rt => !string.IsNullOrWhiteSpace(rt.Manifest.NavTag)
+                             && rt.Instance is IQToolkitNavPageProvider)
+                .Select(rt => rt.Manifest.NavTag.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+    }
+
+    /// <summary>指定导航 Tag 是否已被某个运行中插件接管。</summary>
+    public bool IsNavTagLoaded(string navTag)
+    {
+        if (string.IsNullOrWhiteSpace(navTag)) return false;
+        lock (_sync)
+        {
+            return _runtime.Values.Any(rt =>
+                string.Equals(rt.Manifest.NavTag?.Trim(), navTag, StringComparison.Ordinal)
+                && rt.Instance is IQToolkitNavPageProvider);
+        }
+    }
+
+    /// <summary>
+    /// 创建被接管导航页的插件视图（必须在 UI 线程调用）。tag 未被接管 / 视图创建抛异常时
+    /// 返回 null（异常已记日志，调用方回退内置页）。
+    /// </summary>
+    public Microsoft.UI.Xaml.FrameworkElement? CreateNavViewFor(string navTag)
+    {
+        RuntimePlugin? rt;
+        lock (_sync)
+        {
+            rt = _runtime.Values.FirstOrDefault(p =>
+                string.Equals(p.Manifest.NavTag?.Trim(), navTag, StringComparison.Ordinal)
+                && p.Instance is IQToolkitNavPageProvider);
+        }
+        if (rt == null) return null;
+        try
+        {
+            return ((IQToolkitNavPageProvider)rt.Instance).CreateNavView();
+        }
+        catch (Exception ex)
+        {
+            _log.App(LogLevel.Error, "plugin", $"插件 {rt.Manifest.Id} 创建导航页失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>运行集变化事件触发（后台线程；订阅方自行调度 UI）。吞异常防插件侧 handler 拖垮加载管线。</summary>
+    private void RaiseRuntimesChanged()
+    {
+        try { RuntimesChanged?.Invoke(); } catch (Exception ex)
+        {
+            _log.App(LogLevel.Warn, "plugin", $"RuntimesChanged 订阅方异常：{ex.Message}");
+        }
+    }
+
     // ================= 卸载 =================
 
     public async Task<string> UnloadAsync(string folderName)
@@ -312,6 +390,7 @@ public sealed class PluginManager : IPluginManager
                 fully = false;
             }
             _log.App(LogLevel.Info, "plugin", $"插件已卸载：{folderName}（上下文回收：{(fully ? "完全" : "待后台释放")}）");
+            RaiseRuntimesChanged(); // 被接管导航页回退内置实现
             return fully
                 ? $"已卸载「{rt.Instance.DisplayName}」，加载上下文完全释放。"
                 : $"已卸载「{rt.Instance.DisplayName}」；个别后台引用将在空闲后回收，不影响使用。";
@@ -421,6 +500,7 @@ public sealed class PluginManager : IPluginManager
 
     public void BeginShutdown()
     {
+        RaiseRuntimesChanged(); // 退出收尾开始：宿主先回退内置导航/服务，插件随后逐个卸载
         _ = Task.Run(async () =>
         {
             List<string> names;
@@ -467,6 +547,9 @@ internal sealed class PluginContext : IPluginContext
 
     public string PluginId { get; }
     public string PluginFolder { get; }
+
+    public string HostDataRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QingShu.Toolkit");
 
     public PluginContext(string pluginId, string pluginFolder, IEnumerable<string> permissions,
         IPluginReleaseAccess? releaseAccess, List<PluginQuickAction> actions, ILogService log)

@@ -25,8 +25,12 @@ public sealed partial class MainWindow : Window
     private readonly IPowerService _power;
     private readonly IPopupBlockerService _popup;
     private readonly IUpdateService _update;
+    private readonly PluginManager _plugins;
     private readonly WindowBackdropService _backdrop = new();
     private bool _navSyncing;
+    // 当前显示的插件导航页 tag（PluginNavHostPage 无内置页型映射，回退/选中导航都要用到）
+    private string? _currentPluginNavTag;
+    private bool _closed;
 
     private static readonly Dictionary<string, Type> PageMap = new()
     {
@@ -82,6 +86,11 @@ public sealed partial class MainWindow : Window
         PopupCountText.Text = $"拦截 {_popup.BlockedCount}";
         _update.StatusChanged += OnUpdateStatus;
 
+        // 外移插件运行集变化（后台线程触发）：回 UI 线程统一协调导航接管与内置服务挂起/恢复。
+        // AutoLoadEnabledAsync 完成时（启动阶段）与手动加载/卸载时都会触发
+        _plugins = App.Services.GetRequiredService<PluginManager>();
+        _plugins.RuntimesChanged += () => DispatcherQueue.TryEnqueue(SyncPluginDelegation);
+
         NavigateToPage(typeof(DashboardPage));
         _navSyncing = true;
         SelectNavItem("dashboard");
@@ -89,7 +98,11 @@ public sealed partial class MainWindow : Window
         ApplyBuiltInVisibility();
 
         // 插件收尾：窗口关闭 → 逐个通知 OnUnloadedAsync 并卸载 ALC（尽力而为，不阻塞退出）
-        Closed += (_, _) => App.Services.GetRequiredService<PluginManager>().BeginShutdown();
+        Closed += (_, _) =>
+        {
+            _closed = true; // 关闭后不再响应插件事件触发的回退导航（Frame 可能已不可用）
+            App.Services.GetRequiredService<PluginManager>().BeginShutdown();
+        };
     }
 
     /// <summary>
@@ -156,11 +169,78 @@ public sealed partial class MainWindow : Window
 
     public void NavigateToPage(Type pageType)
     {
+        // 内置页被外移插件接管（manifest.navTag 对上）：内容改挂插件视图，导航项原位不动。
+        // 该检查在「同页短路」之前——当前正显示内置页时接管发生，再次导航也要进入插件视图
+        var tag = BuiltInPluginCatalog.TagOfPage(pageType);
+        if (tag != null && _plugins.IsNavTagLoaded(tag))
+        {
+            NavigateToPluginNav(tag);
+            return;
+        }
+
         if (ContentFrame.CurrentSourcePageType == pageType) return;
         ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
         _navSyncing = true;
         SelectNavItemByPage(pageType);
         _navSyncing = false;
+    }
+
+    /// <summary>
+    /// 进入被接管导航页的插件视图。视图创建失败视为本次接管失败：内置服务恢复运行并回退内置页，
+    /// 下次导航会重新尝试插件视图（插件侧修复后自动恢复接管）。
+    /// </summary>
+    private void NavigateToPluginNav(string tag)
+    {
+        var view = _plugins.CreateNavViewFor(tag);
+        if (view == null)
+        {
+            _popup.ResumeRuntime(); // 视图拿不到 = 内置实现继续服役，运行时先恢复
+            var builtin = BuiltInPluginCatalog.All.FirstOrDefault(b => b.NavTag == tag);
+            if (builtin == null) return;
+            if (ContentFrame.CurrentSourcePageType == builtin.PageType) return;
+            ContentFrame.Navigate(builtin.PageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            _navSyncing = true;
+            SelectNavItem(tag);
+            _navSyncing = false;
+            return;
+        }
+
+        _currentPluginNavTag = tag;
+        ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+        _navSyncing = true;
+        SelectNavItem(tag);
+        _navSyncing = false;
+    }
+
+    /// <summary>
+    /// 外移插件运行集变化的统一协调（UI 线程）：
+    /// ① 弹窗拦截被接管 → 内置拦截服务运行时挂起（不改持久设置），状态栏计数入口隐藏；
+    ///    不再接管（卸载/加载失败）→ 内置服务恢复 + 入口恢复。
+    /// ② 当前正显示的插件页被卸载 → 回退到对应内置页（已关闭则不动）。
+    /// </summary>
+    private void SyncPluginDelegation()
+    {
+        if (_closed) return;
+        try
+        {
+            bool popupTaken = _plugins.IsNavTagLoaded("popupguard");
+            if (popupTaken) _popup.SuspendRuntime();
+            else _popup.ResumeRuntime(); // 幂等：未挂起时为无操作
+            BtnWhitelist.Visibility = popupTaken ? Visibility.Collapsed : Visibility.Visible;
+
+            if (ContentFrame.CurrentSourcePageType == typeof(PluginNavHostPage)
+                && _currentPluginNavTag != null
+                && !_plugins.IsNavTagLoaded(_currentPluginNavTag))
+            {
+                var builtin = BuiltInPluginCatalog.All.FirstOrDefault(b => b.NavTag == _currentPluginNavTag);
+                _currentPluginNavTag = null;
+                NavigateToPage(builtin?.PageType ?? typeof(PluginsPage));
+            }
+        }
+        catch
+        {
+            // 协调失败不拖垮 UI（如导航过程中 Frame 不可用）
+        }
     }
 
     private void SelectNavItemByPage(Type pageType)

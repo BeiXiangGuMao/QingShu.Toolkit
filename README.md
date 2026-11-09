@@ -70,6 +70,16 @@
 
 主题切换（跟随系统/浅色/深色）、亚克力材质开关、城域网认证地址/状态接口/在线关键字、内网探测地址、DNS、久远阈值、大文件阈值、删除方式、功耗模式、EcoQoS、弹窗拦截、更新开关与仓库、日志保留期、恢复默认。
 
+### 7. 插件扩展（harness 风格）
+
+全部工具能力以「默认插件」形式在插件管理页统一管理（默认安装、默认启用、可停用随时恢复）；插件程序集经可选签名校验后以**可卸载 AssemblyLoadContext** 隔离加载（未签名默认放行，官方签名为可选增强徽章）。
+
+- **默认插件（内置功能）**：仪表盘 / 网络诊断 / 磁盘清理 / 系统优化 / 弹窗拦截 / U盘工具——插件管理页启停（停用即隐藏导航入口），状态持久化 `config.json`。
+- **外移插件（真插件，首批）**：`plugins-sdk/popup-guard/` 弹窗拦截——`manifest.navTag` 接管左侧导航页（导航项原位不变，内容换为插件纯代码视图），宿主内置拦截服务**运行时挂起**（不改持久设置），插件卸载自动回退内置实现；首次启动自动迁移宿主配置（开关/白名单）。
+- **网络插件**：`plugins-sdk/gala-dispatch/` 元旦晚会智能分流（主控端/服务端，纯代码面板）。
+- **默认装载**：`make_release.ps1` 打包时自动把已构建的默认外置插件（galamaster / galaagent / popupguard）带入发布包 `plugins\` 目录；更新器增量覆盖，用户自装插件与已改配置不受升级影响。
+- 插件契约（`IQToolkitPlugin` / `IQToolkitNavPageProvider` / `IQToolkitUiProvider` / `IPluginContext`）定义在宿主程序集，`plugins-sdk/` 三个插件工程可直接作为新插件模板。
+
 ---
 
 ## 视觉规范（详见 docs/DESIGN.md 与《架构设计与视觉规范》PDF）
@@ -100,8 +110,10 @@ QingShu.Toolkit/
 │   ├── ViewModels/        # MVVM（CommunityToolkit.Mvvm 8.4）
 │   └── Views/             # 6 页面（仪表盘/诊断/清理/优化/日志/设置）
 ├── packaging/Package.appxmanifest   # MSIX 双模式备用清单
-├── tools/make_assets.py             # 图标资产生成脚本
-└── docs/                            # BUILD / DESIGN
+├── plugins-sdk/                     # 插件工程模板（popup-guard 弹窗拦截外移版 / gala-dispatch 晚会分流）
+├── tools/plugin-*.ps1               # 插件签名工具链（keygen / sign / rotate-publickey）
+├── scripts/make_release.ps1         # 发布打包（含默认插件装载）
+└── docs/                            # BUILD / DESIGN / RELEASE / TESTING
 ```
 
 ## 构建

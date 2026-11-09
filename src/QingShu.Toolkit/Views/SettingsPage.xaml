@@ -99,7 +99,7 @@
             </Border>
 
             <!-- 弹窗拦截 -->
-            <Border Style="{StaticResource CardStyle}">
+            <Border x:Name="PopupCard" Style="{StaticResource CardStyle}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="弹窗拦截" Style="{StaticResource SectionTitleTextBlock}" />
                     <ToggleSwitch Header="被动弹窗拦截（全局白名单策略）" OnContent="开启" OffContent="关闭"

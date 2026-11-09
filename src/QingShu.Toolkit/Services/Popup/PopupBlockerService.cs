@@ -20,6 +20,15 @@ public interface IPopupBlockerService
     void ReloadWhitelist();
     /// <summary>最近拦截记录（时间 / 标题 / 进程）。</summary>
     IReadOnlyList<(DateTime Time, string Title, string Process)> Recent { get; }
+
+    /// <summary>
+    /// 运行时挂起（外移插件接管导航页时调用）：停计时器/钩子，不写持久设置。
+    /// 插件卸载后用 ResumeRuntime 恢复，内置服务按设置原样回档。
+    /// </summary>
+    void SuspendRuntime();
+
+    /// <summary>运行时恢复（插件卸载/不再接管时调用）：按 config.json 的开关重新启动。</summary>
+    void ResumeRuntime();
 }
 
 /// <summary>
@@ -55,6 +64,9 @@ public sealed class PopupBlockerService : IPopupBlockerService, IDisposable
     private int _ownPid;
     private DateTime _day = DateTime.Today;
     private int _blocked;
+    // 插件接管挂起：仅停运行时（timer/钩子），不改 PopupBlockEnabled 设置；
+    // ResumeRuntime 后按设置原样回档，插件卸载回退无感
+    private volatile bool _runtimeSuspended;
 
     /// <summary>前台新窗口宽限期：给正常启动的窗口留出展示时间，期满仍未关闭则照拦。</summary>
     private static readonly TimeSpan ForegroundGrace = TimeSpan.FromSeconds(2);
@@ -111,6 +123,37 @@ public sealed class PopupBlockerService : IPopupBlockerService, IDisposable
     }
 
     public void ReloadWhitelist() { /* 白名单在每次扫描时从设置读取，无需缓存清理 */ }
+
+    /// <inheritdoc />
+    public void SuspendRuntime()
+    {
+        lock (_lock)
+        {
+            if (_runtimeSuspended) return;
+            _runtimeSuspended = true;
+            Enabled = false;          // 仅停运行时判定；PopupBlockEnabled 设置原样保留
+            try { _timer?.Dispose(); } catch { }
+            _timer = null;
+            try { NativeMethods.UnhookForegroundEvent(_hook); } catch { }
+            _hook = IntPtr.Zero;
+        }
+        _log.App(LogLevel.Info, "popup", "弹窗拦截（内置实现）运行时已挂起：外移插件接管中，设置项不变，插件卸载后自动恢复");
+    }
+
+    /// <inheritdoc />
+    public void ResumeRuntime()
+    {
+        bool shouldRun;
+        lock (_lock)
+        {
+            if (!_runtimeSuspended) return;
+            _runtimeSuspended = false;
+            Enabled = _settings.Current.PopupBlockEnabled;
+            shouldRun = Enabled;
+        }
+        if (shouldRun) Start(); // Start 幂等（timer 非空即返回），恢复后重拍基线/钩子/计时器
+        _log.App(LogLevel.Info, "popup", $"弹窗拦截（内置实现）运行时已恢复：{(shouldRun ? "按设置继续拦截" : "设置为关闭，待命")}");
+    }
 
     private void SnapshotExistingWindows()
     {
