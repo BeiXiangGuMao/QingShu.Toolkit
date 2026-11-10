@@ -43,6 +43,7 @@ public sealed class NetworkDiagView : UserControl
     private readonly bool _hasStyles;                    // 宿主样式键齐全 → 尝试样式模板；否则直接走无资源降级模板
     private Canvas? _topoCanvas;                         // 拓扑手绘画布（BuildLayout 装配；重画前判空防御）
     private InfoBar? _reportInfo;                        // 导出结果提示（成功路径 / 失败原因 / 缺必填）
+    private Button? _completeActionBtn;                  // InfoBar「补全信息」动作按钮（复用实例，按需挂/摘）
 
     public NetworkDiagView(NetworkDiagViewModel vm, NetworkDiagSettingsStore settings,
         IHardwareProbeService probe, Action<string, string> log)
@@ -334,7 +335,7 @@ public sealed class NetworkDiagView : UserControl
         ApplyStyle(exportTitle, "SectionTitleTextBlock");
         var exportDesc = new TextBlock
         {
-            Text = "诊断与修复完成后自动生成报告（强制性留档，防遗忘），无需手动操作；如需上报，点下方按钮补全学校 / 年级 / 班级后重新导出。报告含报告编号（按日累计）、设备序列号、分层结果、修复记录与分级处置建议。",
+            Text = "诊断与修复完成后自动生成报告（强制性留档，防遗忘），无需手动操作；如需上报，点 InfoBar 的「补全信息」或下方按钮，填写学校 / 年级 / 班级后重新导出，正式报告将顶替（移除）本次自动生成的兜底报告。报告含报告编号（按日累计）、设备序列号、分层结果、修复记录与分级处置建议。",
             TextWrapping = TextWrapping.Wrap
         };
         ApplyStyle(exportDesc, "CaptionTextBlock");
@@ -392,7 +393,7 @@ public sealed class NetworkDiagView : UserControl
         panel.Children.Add(tbReporter);
         var hint = new TextBlock
         {
-            Text = "诊断完成后已按上次填写信息自动生成报告；此表单补全学校 / 年级 / 班级后重新导出适合正式上报。报告将自动写入设备序列号（SMBIOS）与 MachineGuid，并按当日次数编号，便于追溯。",
+            Text = "诊断完成后已按上次填写信息自动生成报告；此表单补全学校 / 年级 / 班级后重新导出适合正式上报，生成后本报告将顶替（移除）本次自动生成的兜底报告。报告将自动写入设备序列号（SMBIOS）与 MachineGuid，并按当日次数编号，便于追溯。",
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
             // 内置页此处用宿主内部主题解析服务；插件不依赖宿主内部类型，退化为
@@ -432,12 +433,25 @@ public sealed class NetworkDiagView : UserControl
         }
     }
 
-    private void ShowReportInfo(InfoBarSeverity severity, string title, string message)
+    private void ShowReportInfo(InfoBarSeverity severity, string title, string message, bool withCompleteAction = false)
     {
         if (_reportInfo == null) return; // 布局未装配时不可达（防御）
         _reportInfo.Severity = severity;
         _reportInfo.Title = title;
         _reportInfo.Message = message;
+        // 「补全信息」动作按钮：自动生成成功 → 引导补全信息顶替兜底版；自动生成失败 → 同一入口重试。
+        // 手动导出路径（对话框内已操作）不挂按钮，避免冗余入口。先摘后挂防重复订阅。
+        if (withCompleteAction)
+        {
+            _completeActionBtn ??= new Button { Content = "补全信息" };
+            _completeActionBtn.Click -= ExportPdf_Click;
+            _completeActionBtn.Click += ExportPdf_Click;
+            _reportInfo.ActionButton = _completeActionBtn;
+        }
+        else
+        {
+            _reportInfo.ActionButton = null;
+        }
         _reportInfo.IsOpen = true;
     }
 
@@ -457,12 +471,13 @@ public sealed class NetworkDiagView : UserControl
     {
         if (e.PropertyName is nameof(NetworkDiagViewModel.Topology) or nameof(NetworkDiagViewModel.HasTopology))
             RenderTopology();
-        // 报告强制性自动生成的结果提示（成功路径 / 失败原因，插件版新增）
+        // 报告强制性自动生成的结果提示（成功路径 / 失败原因，插件版新增）；
+        // 两态均带「补全信息」动作按钮：成功 → 补全信息顶替；失败 → 同一入口重试。
         else if (e.PropertyName == nameof(NetworkDiagViewModel.AutoReportMessage) && !string.IsNullOrEmpty(_vm.AutoReportMessage))
             ShowReportInfo(
                 _vm.AutoReportFailed ? InfoBarSeverity.Error : InfoBarSeverity.Success,
                 _vm.AutoReportFailed ? "自动生成报告失败" : "报告已自动生成",
-                _vm.AutoReportMessage);
+                _vm.AutoReportMessage, withCompleteAction: true);
     }
 
     private void RenderTopology()

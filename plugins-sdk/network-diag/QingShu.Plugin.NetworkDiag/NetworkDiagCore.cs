@@ -2057,7 +2057,7 @@ public static partial class NetworkChecks
             ctx.SetShared(TopoKeys.Portal, new TopoSegmentStats(
                 portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal) ? portalUrl : NcsiUrl,
                 null, false, r.ElapsedMs, "检测到认证门户（未通过认证）"));
-            // 仅在真实捕获到门户地址（非 NCSI 兑底）时写入共享上下文，
+            // 仅在真实捕获到门户地址（非 NCSI 兜底）时写入共享上下文，
             // 避免一键修复打开无意义的探测地址
             if (portalUrl.Length > 0 && !portalUrl.StartsWith(NcsiUrl, StringComparison.Ordinal))
                 ctx.SetShared("portal.url", portalUrl);

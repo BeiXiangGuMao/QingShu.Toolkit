@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,6 +30,10 @@ public partial class NetworkDiagViewModel : ObservableObject
 
     private DiagnosticSessionReport? _lastReport;
     private CheckContext? _lastContext;
+    // 报告顶替语义（插件版新增）：本诊断会话内自动生成的兜底报告路径（诊断后/修复后各一份）；
+    // 手动补全信息的正式报告生成成功后移除这些兜底文件，正式版顶替，防上报时兜底版与正式版并列混淆。
+    // 新诊断开始即清空：上一会话的自动版转为历史留档，不追溯删除；VM 每次导航新建，天然会话级。
+    private readonly List<string> _autoReportPaths = new();
     private string _topoModeText = ""; // 拓扑卡「生成来源」用的模式名（修复后重建时复用）
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _ctsRepair; // 修复专用：与诊断分立，取消互不误伤
@@ -132,6 +137,7 @@ public partial class NetworkDiagViewModel : ObservableObject
         IsRunning = true;
         HasRun = false;
         ReportReady = false;
+        _autoReportPaths.Clear(); // 新诊断周期：上一会话自动版转为历史留档，不再被本会话正式报告顶替
         RepairActions.Clear();
         RepairHint = "";
         Items.Clear();
@@ -388,8 +394,12 @@ public partial class NetworkDiagViewModel : ObservableObject
             var deviceTag = string.IsNullOrWhiteSpace(_settings.LastDeviceTag) ? facts.HostName : _settings.LastDeviceTag;
             var path = await GenerateReportAsync(_settings.LastSchool, _settings.LastGrade, _settings.LastClassName,
                 reporter, deviceTag, rememberForm: false).ConfigureAwait(true);
+            _autoReportPaths.Add(path);
             AutoReportFailed = false;
-            AutoReportMessage = afterRepair ? "修复后报告已重新生成：" + path : "报告已自动生成（强制性留档）：" + path;
+            // 引导式要求填写信息：自动版仅兜底留档，正式上报需补全信息重新生成顶替
+            //（View 侧 InfoBar 同步带「补全信息」动作按钮，点击即开导出对话框）。
+            AutoReportMessage = (afterRepair ? "修复后报告已重新生成：" : "报告已自动生成（强制性留档）：") + path
+                + "。如需正式上报，点「补全信息」填写学校 / 年级 / 班级，重新生成的正式报告将顶替（移除）本兜底报告。";
             _log("info", $"[report] 已自动生成诊断报告（{(afterRepair ? "修复后" : "诊断后")}）：{path}");
             return true;
         }
@@ -456,7 +466,27 @@ public partial class NetworkDiagViewModel : ObservableObject
         // 记住上次填写，减少重复输入（插件适配：Last* 五项写入插件 store 并落盘 settings.json；
         // 自动生成路径不进来——兜底值不得覆盖用户手动填过的表单记忆）
         if (rememberForm)
+        {
             _settings.SetLastReport(school, grade, className, reporter, meta.DeviceTag);
+            // 顶替语义：正式报告（信息完整）已生成，移除本诊断会话自动生成的兜底报告（诊断后 + 修复后），
+            // 防上报时「未填写」兜底版与正式版并列；删除前校验 QS-DIAG- 前缀防误删，失败仅记日志不响正式报告。
+            foreach (var auto in _autoReportPaths)
+            {
+                try
+                {
+                    if (File.Exists(auto) && Path.GetFileName(auto).StartsWith("QS-DIAG-", StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.Delete(auto);
+                        _log("info", $"[report] 正式报告已顶替自动兜底报告（已删除）：{auto}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log("warn", $"[report] 兜底报告清理失败（不影响正式报告，可手动删除）：{auto}：{ex.Message}");
+                }
+            }
+            _autoReportPaths.Clear();
+        }
         _log("info", $"[report] 已生成诊断报告：{path}");
         return path;
     }
