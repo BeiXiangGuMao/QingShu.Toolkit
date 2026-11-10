@@ -68,7 +68,9 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
         _popup.Blocked += OnPopupBlocked;
         UpdatePower(_power.Current, _power.IsOnBattery);
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        // 3 秒采样：CPU 计数器/内存/C 盘查询在页面内常跑，2 秒偏勤快（低配教学机有感）；
+        // 3 秒视觉无差且采样成本降 1/3。首次采样 0.8s 预热逻辑见 SampleLive
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _timer.Tick += (_, _) => _ = RefreshLiveAsync();
         _timer.Start();
         _ = RefreshLiveAsync();

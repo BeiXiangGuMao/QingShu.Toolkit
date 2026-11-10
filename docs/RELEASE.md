@@ -87,6 +87,7 @@ Get-FileHash $zip -Algorithm SHA256
 1. 解压到**任意可写目录**（如 `D:\Tools\QingShu.Toolkit`）；不建议解压到
    `C:\Program Files` 等需要管理员写权限的目录（日志、下载更新等写入会受影响）。
 2. 双击 `QingShu.Toolkit.exe` 运行。首次运行如出现 SmartScreen 提示，见第五节 FAQ。
+3. 机房批量部署、升级与卸载全流程规划见 `docs/DEPLOY_ZIP.md`。
 
 ### 2.6 七插件一键构建验证与装载（`scripts/build_all_plugins.ps1`）
 

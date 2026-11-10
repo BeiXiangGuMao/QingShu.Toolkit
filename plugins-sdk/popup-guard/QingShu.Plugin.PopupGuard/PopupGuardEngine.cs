@@ -40,7 +40,9 @@ internal sealed class PopupGuardEngine : IDisposable
     private readonly Dictionary<long, DateTime> _grace = new();
     private readonly List<BlockedEntry> _recent = new();
     private IntPtr _hook;
+    private IntPtr _hookShow;
     private Win32Interop.WinEventDelegate? _hookProc;
+    private Win32Interop.WinEventDelegate? _hookShowProc;
     private System.Threading.Timer? _timer;
     private int _ownPid;
     private DateTime _day = DateTime.Today;
@@ -48,6 +50,11 @@ internal sealed class PopupGuardEngine : IDisposable
 
     /// <summary>前台新窗口宽限期：给正常启动的窗口留出展示时间，期满仍未关闭则照拦。</summary>
     private static readonly TimeSpan ForegroundGrace = TimeSpan.FromSeconds(2);
+    // 事件驱动常态下的轮询克备间隔（与宿主内置 PopupBlockerService 同源同步）：
+    // 钩子在位时 20 秒（防钩子丢事件 + 克备），存在宽限观察窗口时压回 3 秒（宽限满 2s 后快速拦截）；
+    // 全钩子安装失败时恒 3 秒。
+    private const int IdlePeriodMs = 20_000;
+    private const int FallbackPeriodMs = 3_000;
 
     public bool Enabled { get; private set; }
     public int BlockedCount => _blocked;
@@ -65,7 +72,7 @@ internal sealed class PopupGuardEngine : IDisposable
         Enabled = settings().Enabled;
     }
 
-    /// <summary>启动扫描（幂等：timer 非空即返回）。基线快照 + 前台钩子 + 3 秒轮询。</summary>
+    /// <summary>启动扫描（幂等：timer 非空即返回）。基线快照 + 双事件钩子 + 自适应轮询。</summary>
     public void Start()
     {
         lock (_lock)
@@ -75,11 +82,16 @@ internal sealed class PopupGuardEngine : IDisposable
             SnapshotExistingWindows();
             Enabled = _settings().Enabled;
             if (!Enabled) return; // 已停用：不装钩子不轮询（Toggle 开启时再 Start）
+            // 双事件钩子：前台切换 + 窗口显示（后台弹出的广告不抢前台，事件驱动后即时拦）
             _hookProc = OnWinEvent;
+            _hookShowProc = OnWinEvent;
             _hook = Win32Interop.HookForegroundEvent(_hookProc);
-            _timer = new System.Threading.Timer(_ => SafeScan(), null, 3000, 3000);
-            _log("info", $"弹窗拦截引擎已启动（全局白名单策略，白名单 {_settings().Whitelist.Count} 项"
-                + (_hook != IntPtr.Zero ? "" : "；前台切换钩子安装失败，退化为 3 秒轮询") + "）");
+            _hookShow = Win32Interop.HookWindowShowEvent(_hookShowProc);
+            bool hooked = _hook != IntPtr.Zero || _hookShow != IntPtr.Zero;
+            _timer = new System.Threading.Timer(_ => SafeScan(), null, 3000, hooked ? IdlePeriodMs : FallbackPeriodMs);
+            _log("info", $"弹窗拦截引擎已启动（事件驱动 + 全局白名单策略，白名单 {_settings().Whitelist.Count} 项"
+                + (hooked ? $"；轮询克备 {(hooked ? IdlePeriodMs / 1000 : FallbackPeriodMs / 1000)} 秒）"
+                          : "；事件钩子安装失败，退化为 3 秒轮询）"));
         }
     }
 
@@ -87,7 +99,8 @@ internal sealed class PopupGuardEngine : IDisposable
     {
         try { _timer?.Dispose(); } catch { }
         try { Win32Interop.UnhookForegroundEvent(_hook); } catch { }
-        lock (_lock) { _timer = null; _hook = IntPtr.Zero; }
+        try { Win32Interop.UnhookForegroundEvent(_hookShow); } catch { }
+        lock (_lock) { _timer = null; _hook = IntPtr.Zero; _hookShow = IntPtr.Zero; }
     }
 
     /// <summary>开关切换（视图层调用）：重拍基线，按需启停扫描。</summary>
@@ -119,8 +132,23 @@ internal sealed class PopupGuardEngine : IDisposable
 
     private void OnWinEvent(IntPtr hHook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
     {
-        if (evt == Win32Interop.EVENT_SYSTEM_FOREGROUND && idObject == 0)
+        if (evt == Win32Interop.EVENT_SYSTEM_FOREGROUND)
+        {
+            if (idObject == 0) SafeScan();
+            return;
+        }
+        // EVENT_OBJECT_SHOW 高频（tooltip/菜单都触发）：仅「不在基线内的顶层窗口」才升级为扫描，
+        // 其余直接返回——回调侧先过滤是事件驱动开销可控的关键
+        if (evt == Win32Interop.EVENT_OBJECT_SHOW
+            && idObject == Win32Interop.OBJID_WINDOW
+            && hwnd != IntPtr.Zero)
+        {
+            lock (_lock)
+            {
+                if (_knownWindows.Contains(hwnd.ToInt64())) return;
+            }
             SafeScan();
+        }
     }
 
     private void SafeScan()
@@ -144,7 +172,12 @@ internal sealed class PopupGuardEngine : IDisposable
             var whitelist = settings.Whitelist;
             var foreground = Win32Interop.GetForegroundWindowSafe();
             var seen = new HashSet<long>();
-            foreach (var w in Win32Interop.GetVisibleWindows(_ownPid))
+            // 基线快照：锁内一次性拷贝后传入增量枚举（与宿主内置同源）——扫描中 Allow()/拦截路径
+            // 会写 _knownWindows，直接传引用会与枚举回调并发修改同一 HashSet；快照只读，
+            // 新进基线的窗口下轮才跳过（可接受）
+            ICollection<long> baseline;
+            lock (_lock) baseline = new List<long>(_knownWindows);
+            foreach (var w in Win32Interop.GetVisibleWindows(_ownPid, baseline))
             {
                 var handle = w.Handle.ToInt64();
                 seen.Add(handle);
@@ -201,15 +234,19 @@ internal sealed class PopupGuardEngine : IDisposable
                     }
                     else
                     {
-                        // 已发过 WM_CLOSE 仍可见 → 顽固弹窗（忽略关闭消息），强制隐藏兜底并固化进基线；
-                        // 同一弹窗只计一次数（隐藏动作不重复计数）
-                        Win32Interop.HideWindow(w.Handle);
-                        lock (_lock)
+                        // 已发过 WM_CLOSE 仍可见 → 顽固弹窗（忽略关闭消息），强制隐藏兜底；
+                        // 同一弹窗只计一次数（隐藏动作不重复计数）。
+                        // 隐藏失败不进基线（与宿主内置同源同步）：句柄已失效（下轮尾部清理回收）
+                        // 或权限异常——保留 attempts 下轮重试，避免一次失败就永久漏拦
+                        if (Win32Interop.HideWindow(w.Handle))
                         {
-                            _attempts.Remove(handle);
-                            _knownWindows.Add(handle);
+                            lock (_lock)
+                            {
+                                _attempts.Remove(handle);
+                                _knownWindows.Add(handle);
+                            }
+                            _log("warn", $"窗口未响应关闭消息，已强制隐藏：\"{w.Title}\" class={w.ClassName} process={w.ProcessName}.exe pid={w.Pid}");
                         }
-                        _log("warn", $"窗口未响应关闭消息，已强制隐藏：\"{w.Title}\" class={w.ClassName} process={w.ProcessName}.exe pid={w.Pid}");
                     }
                 }
                 catch { }
@@ -225,7 +262,27 @@ internal sealed class PopupGuardEngine : IDisposable
                     foreach (var h in _attempts.Keys.ToList())
                         if (!seen.Contains(h)) _attempts.Remove(h);
             }
+
+            // 轮询间隔自适应（与宿主内置同源）：宽限观察窗口在 → 3s；否则克备 20s；全钩子失败恒 3s
+            AdjustTimerPeriod();
         }
+    }
+
+    /// <summary>按宽限观察态与钩子在位情况调整克备轮询周期（幂等：间隔未变时 Change 开销可忽略）。</summary>
+    private void AdjustTimerPeriod()
+    {
+        System.Threading.Timer? t;
+        bool anyHook;
+        int graceCount;
+        lock (_lock)
+        {
+            t = _timer;
+            anyHook = _hook != IntPtr.Zero || _hookShow != IntPtr.Zero;
+            graceCount = _grace.Count;
+        }
+        if (t == null) return;
+        int period = !anyHook ? FallbackPeriodMs : (graceCount > 0 ? FallbackPeriodMs : IdlePeriodMs);
+        try { t.Change(period, period); } catch { } // timer 可能刚被 Dispose
     }
 
     /// <summary>豁免类窗口放行并固化进基线。</summary>
@@ -234,7 +291,7 @@ internal sealed class PopupGuardEngine : IDisposable
         lock (_lock) _knownWindows.Add(handle);
     }
 
-    /// <summary>白名单匹配：进程名归一（去 .exe 转小写），支持前缀通配（如 wps*）。</summary>
+    /// <summary>白名单匹配：进程名归一（去 .exe 转小写），支持前/后缀通配（如 wps* / *player）。</summary>
     private static bool IsWhitelisted(string processName, IReadOnlyList<string> whitelist)
     {
         var name = processName.Trim().ToLowerInvariant().Replace(".exe", "");
@@ -245,6 +302,7 @@ internal sealed class PopupGuardEngine : IDisposable
             if (item.Length == 0) continue;
             if (name == item) return true;
             if (item.EndsWith("*") && name.StartsWith(item[..^1], StringComparison.Ordinal)) return true;
+            if (item.StartsWith("*") && item.Length > 1 && name.EndsWith(item[1..], StringComparison.Ordinal)) return true;
         }
         return false;
     }

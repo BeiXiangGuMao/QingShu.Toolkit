@@ -47,8 +47,9 @@ public sealed class PowerService : IPowerService, IDisposable
         if (_started) return;
         _started = true;
         Recompute();
-        // 轮询兜底（WinRT 电源事件在部分 Win10 机型上不可靠）
-        _timer = new Timer(_ => Recompute(), null, 10_000, 10_000);
+        // 轮询克备（WinRT 电源事件在部分 Win10 机型上不可靠）。电源状态变化频率极低，
+        // 30 秒足够灵敏；配合 EcoQoS 幂等判定，常态轮询开销微秒级
+        _timer = new Timer(_ => Recompute(), null, 10_000, 30_000);
     }
 
     public void SetMode(string mode)
@@ -80,7 +81,7 @@ public sealed class PowerService : IPowerService, IDisposable
         IsOnBattery = onBattery;
         bool stateChanged = next != Current;
         Current = next;
-        ApplyEcoQos(next);
+        ApplyEcoQos(next, stateChanged);
 
         if (stateChanged)
         {
@@ -104,14 +105,18 @@ public sealed class PowerService : IPowerService, IDisposable
         }
     }
 
-    private void ApplyEcoQos(PowerUiState state)
+    private bool? _lastEcoApplied; // 上次实际应用的 EcoQoS 态：未变化时跳过重复系统调用（常态轮询零开销）
+
+    private void ApplyEcoQos(PowerUiState state, bool force = false)
     {
-        if (!_settings.Current.ApplyEcoQosToSelf) return;
+        if (!_settings.Current.ApplyEcoQosToSelf) { _lastEcoApplied = null; return; }
         bool enable = state == PowerUiState.Eco;
+        if (!force && _lastEcoApplied == enable) return; // 幂等：状态未变不重复调
         try
         {
             using var p = System.Diagnostics.Process.GetCurrentProcess();
             NativeMethods.SetProcessEcoQos(p.Id, enable);
+            _lastEcoApplied = enable;
         }
         catch { }
     }
