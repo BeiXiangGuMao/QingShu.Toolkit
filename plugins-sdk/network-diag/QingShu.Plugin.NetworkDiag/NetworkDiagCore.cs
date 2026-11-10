@@ -23,7 +23,7 @@ namespace QingShu.Plugin.NetworkDiag;
 // ============================================================================
 // 网络诊断核心引擎（宿主 Services/Network 全量同源移植 + 隐藏依赖 Helper 一并移植）：
 //   会话日志 / 网络探测工具箱 / WMI / 原生 DNS / 测速引擎 / 门户自动登录 /
-//   共享上下文与检查基座 / 诊断编排器 / 43 项检查（物理·DNS 认证·系统质量·吞吐·疑难）/
+//   共享上下文与检查基座 / 诊断编排器 / 45 项检查（物理·DNS 认证·系统质量·吞吐·疑难·硬件健康·IP 冲突）/
 //   一键修复服务 / 低速归因分析 / 拓扑构建器
 // 日志适配：宿主日志服务接口 → Action<string, string>（level = "debug"/"info"/"warn"/"error"）；
 // 会话日志按宿主同口径写入 宿主数据根\logs\yyyy-MM-dd\diag-yyyyMMdd-HHmmss-NNN.{log,jsonl}
@@ -1011,8 +1011,10 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     {
         new NetworkChecks.PhysicalLinkCheck(),
         new NetworkChecks.NicHardwareCheck(),
+        new NetworkChecks.HardwareHealthCheck(),
         new NetworkChecks.WifiSignalCheck(),
         new NetworkChecks.IpConfigCheck(),
+        new NetworkChecks.IpConflictCheck(),
         new NetworkChecks.DhcpLeaseCheck(),
         new NetworkChecks.GatewayReachableCheck(),
         new NetworkChecks.ArpCheck(),
@@ -1059,7 +1061,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly Dictionary<string, int> TimeoutOverrides = new()
     {
         ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
-        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30, ["hardware.devices"] = 40
     };
 
     private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
@@ -1353,6 +1355,87 @@ public static partial class NetworkChecks
         }
     }
 
+    // ---------------- 整机硬件健康（设备管理器异常设备 + 磁盘状态 + WHEA 硬件错误事件，插件版新增） ----------------
+    public sealed class HardwareHealthCheck : CheckBase
+    {
+        public override string Id => "hardware.devices";
+        public override string Name => "整机硬件健康扫描";
+        public override CheckCategory Category => CheckCategory.HardwareDriver;
+
+        public override async Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
+        {
+            // 1) 设备管理器「感叹号」设备（错误码 ≠ 0）。网卡故障已由 hardware.nic_pnp 细查，
+            //    此处聚焦其余硬件；错误码 24/45（设备不存在/历史幽灵设备）不计入故障防误报。
+            var bad = await WmiHelper.QueryAsync(
+                "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE ConfigManagerErrorCode != 0",
+                mo => new
+                {
+                    Name = mo["Name"]?.ToString() ?? "",
+                    Err = Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)
+                }).ConfigureAwait(false);
+
+            // 2) 物理磁盘健康状态（SMART 预警时 Status 为 Pred Fail/Degraded/Error）
+            var disks = await WmiHelper.QueryAsync(
+                "SELECT Model, Status, Size FROM Win32_DiskDrive WHERE Index < 8",
+                mo => new
+                {
+                    Model = mo["Model"]?.ToString() ?? "",
+                    Status = mo["Status"]?.ToString() ?? "",
+                    Size = Convert.ToUInt64(mo["Size"] ?? (object)0UL)
+                }).ConfigureAwait(false);
+
+            // 3) WHEA 硬件错误事件（内存/CPU/总线级故障，Windows 硬件错误架构记录），近 7 天
+            var since = DateTime.Now.AddDays(-7).ToString("yyyyMMddHHmmss");
+            var whea = await WmiHelper.QueryAsync(
+                "SELECT TimeGenerated FROM Win32_NTLogEvent WHERE LogFile='System' AND SourceName='Microsoft-Windows-WHEA-Logger'",
+                mo => mo["TimeGenerated"]?.ToString() ?? "").ConfigureAwait(false);
+            int wheaRecent = whea.Count(t => t.Length >= 14 && string.CompareOrdinal(t[..14], since) >= 0);
+
+            var details = new List<string>();
+            var problems = new List<string>();
+            foreach (var d in bad)
+            {
+                var text = d.Err switch
+                {
+                    1 => "设备未正确配置", 10 => "设备无法启动", 11 => "设备异常（将失败）", 12 => "系统资源不足",
+                    14 => "需重启后重新配置", 18 => "需重装驱动", 22 => "设备被禁用", 23 => "显示适配器故障",
+                    28 => "驱动未安装", 29 => "被固件禁用", 31 => "设备驱动异常", 43 => "设备因故障停止",
+                    24 => "设备当前不存在（历史记录）", 45 => "未连接（历史幽灵设备）",
+                    _ => $"错误码 {d.Err}"
+                };
+                if (d.Err is 24 or 45)
+                    details.Add($"○ {d.Name}: {text}（不计入故障）");
+                else
+                {
+                    details.Add($"⚠ {d.Name}: {text}");
+                    problems.Add($"{d.Name}（{text}）");
+                }
+            }
+            if (bad.Count == 0) details.Add("设备管理器：无异常设备");
+
+            foreach (var d in disks)
+                details.Add($"磁盘 {d.Model}: {d.Status}{(d.Size > 0 ? $" · {FormatHelper.Bytes((long)d.Size)}" : "")}");
+            var badDisk = disks.FirstOrDefault(d => !string.Equals(d.Status, "OK", StringComparison.OrdinalIgnoreCase));
+
+            if (problems.Count > 0)
+                return CheckOutcome.Fail($"发现 {problems.Count} 个硬件异常设备：{string.Join("；", problems.Take(3))}",
+                    "建议先重启复检；仍异常则联系机房管理员（带黄色感叹号的设备通常需重装驱动或报修换件）。",
+                    details.ToArray());
+
+            if (badDisk != null)
+                return CheckOutcome.Fail($"物理磁盘状态异常（{badDisk.Model}: {badDisk.Status}）",
+                    "磁盘 SMART 预警意味着数据损坏风险，请立即备份重要资料并报修更换硬盘。",
+                    details.ToArray());
+
+            if (wheaRecent > 0)
+                return CheckOutcome.Warn($"近 7 天系统记录 {wheaRecent} 次硬件错误事件（WHEA）",
+                    "多为内存/处理器的可纠正错误，偶发可不处理；若频繁出现伴随蓝屏死机，建议报修检查内存条与散热。",
+                    details.ToArray());
+
+            return CheckOutcome.Pass($"整机硬件健康正常（{disks.Count} 块磁盘状态 OK，无异常设备）", details.ToArray());
+        }
+    }
+
     // ---------------- Wi-Fi 信号质量 ----------------
     public sealed class WifiSignalCheck : CheckBase
     {
@@ -1446,6 +1529,93 @@ public static partial class NetworkChecks
             if (lease.Expires < DateTime.Now.AddMinutes(10))
                 return CheckOutcome.Warn("DHCP 租约即将到期", "系统会自动续租，一般无需处理；如正在续租中出现断网属正常现象。", details.ToArray());
             return CheckOutcome.Pass("DHCP 租约正常", details.ToArray());
+        }
+    }
+
+    // ---------------- IP 地址冲突检测（主动 ARP 探测 + 系统冲突事件佐证，插件版新增） ----------------
+    public sealed class IpConflictCheck : CheckBase
+    {
+        public override string Id => "ip.conflict";
+        public override string Name => "IP 地址冲突检测";
+        public override CheckCategory Category => CheckCategory.IpConfig;
+        public override bool InQuickMode => true;
+
+        public override async Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
+        {
+            var p = ctx.Primary;
+            if (p == null || string.IsNullOrEmpty(p.IpV4) || !System.Net.IPAddress.TryParse(p.IpV4, out var selfIp))
+                return CheckOutcome.Skip("本机无 IPv4 地址，跳过冲突探测。");
+            if (NetworkProbeHelper.IsApipa(p.IpV4))
+                return CheckOutcome.Skip("当前为自动私有地址（APIPA），先解决 DHCP 获取问题，冲突探测顺延。");
+
+            // 本机全部适配器 MAC（物理+虚拟）：应答 MAC 命中其一即本机自答，不算冲突
+            var selfMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                var pa = nic.GetPhysicalAddress();
+                if (pa == null || pa.GetAddressBytes().Length < 6) continue;
+                selfMacs.Add(FormatMac(pa.GetAddressBytes()));
+            }
+
+            // 主动探测：对本机 IP 连发 3 次 ARP，间隔 300ms（多次取证防单次缓存抖动）
+            var foreign = new List<string>();
+            var selfAnswers = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var mac = NativeIphlpapi.ProbeMac(selfIp);
+                if (mac != null)
+                {
+                    if (selfMacs.Contains(mac)) selfAnswers++;
+                    else foreign.Add(mac);
+                }
+                if (i < 2) await Task.Delay(300, ct).ConfigureAwait(false);
+            }
+
+            // 历史佐证：系统事件日志 Tcpip 4199（检测到 IP 与网络上其他系统冲突），近 7 天
+            var since = DateTime.Now.AddDays(-7).ToString("yyyyMMddHHmmss");
+            var conflicts = await WmiHelper.QueryAsync(
+                "SELECT TimeGenerated, Message FROM Win32_NTLogEvent WHERE LogFile='System' AND EventCode=4199 AND SourceName='Tcpip'",
+                mo => new
+                {
+                    Time = mo["TimeGenerated"]?.ToString() ?? "",
+                    Msg = mo["Message"]?.ToString() ?? ""
+                }).ConfigureAwait(false);
+            var recent = conflicts
+                .Where(e => e.Time.Length >= 14 && string.CompareOrdinal(e.Time[..14], since) >= 0)
+                .OrderByDescending(e => e.Time)
+                .ToList();
+
+            var details = new List<string>
+            {
+                $"探测目标: 本机 IP {p.IpV4}（3 次 ARP 请求）",
+                $"本机应答 MAC: {(selfAnswers > 0 ? "收到（自答正常）" : "未收到（部分栈不对自探应答，不影响结论）")}"
+            };
+            foreach (var e in recent.Take(3))
+                details.Add($"系统冲突记录 {e.Time[..14]}: {FirstLine(e.Msg)}");
+
+            if (foreign.Count > 0)
+            {
+                var macText = string.Join("、", foreign.Distinct());
+                return CheckOutcome.Fail($"IP 冲突实锤：{p.IpV4} 被其他设备占用（应答 MAC {macText}）",
+                    "两台机器用同一 IP 会互相挤掉线。请检查本机是否手工配置了与同网段其他机器相同的地址；建议改回“自动获取 IP”后重启，或联系信息中心排查占用方。",
+                    details.ToArray());
+            }
+
+            if (recent.Count > 0)
+                return CheckOutcome.Warn($"当前未探测到冲突，但系统近 7 天记录过 {recent.Count} 次 IP 冲突事件",
+                    "多为间歇性冲突（对方设备时开时关）。建议反馈信息中心核对同网段地址分配；本机可改回自动获取 IP 避开占用。",
+                    details.ToArray());
+
+            return CheckOutcome.Pass("未发现 IP 地址冲突（网内无其他主机冒用本机 IP）", details.ToArray());
+        }
+
+        private static string FormatMac(byte[] bytes) => string.Join("-", bytes.Select(b => b.ToString("X2")));
+
+        private static string FirstLine(string s)
+        {
+            var i = s.IndexOf('\n');
+            return (i > 0 ? s[..i] : s).Trim();
         }
     }
 

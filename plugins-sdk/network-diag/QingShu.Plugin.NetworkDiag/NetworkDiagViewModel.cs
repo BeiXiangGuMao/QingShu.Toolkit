@@ -57,6 +57,12 @@ public partial class NetworkDiagViewModel : ObservableObject
     [ObservableProperty] private string _repairHint = "";
     [ObservableProperty] private string _lastReportPath = "";
     [ObservableProperty] private bool _reportReady;
+    /// <summary>报告强制性生成（插件版新增）：诊断/修复完成后自动生成的结果提示（成功路径或失败原因）。</summary>
+    [ObservableProperty] private string _autoReportMessage = "";
+    [ObservableProperty] private bool _autoReportFailed;
+    public bool AutoReportVis => !string.IsNullOrEmpty(AutoReportMessage);
+
+    partial void OnAutoReportMessageChanged(string value) => OnPropertyChanged(nameof(AutoReportVis));
     [ObservableProperty] private string _sessionText = "";
     // ---- 网络拓扑（诊断后自动生成，页面 Canvas 渲染） ----
     [ObservableProperty] private NetworkTopology _topology = NetworkTopology.Empty;
@@ -171,6 +177,10 @@ public partial class NetworkDiagViewModel : ObservableObject
             SessionText = $"会话日志：{_lastReport.StartedAt:yyyy-MM-dd HH:mm:ss} · {_lastReport.ModeText}";
             if (mode == RunMode.Speed) FillSpeedResult();
             BuildRepairPlan();
+            // 报告强制性生成（插件版新增）：诊断完成必出报告，不再依赖用户手动导出防遗忘；
+            // 失败在 InfoBar 可见化（AutoReportMessage 驱动），不响诊断成功主流程。
+            var ok = await AutoGenerateReportAsync(afterRepair: false).ConfigureAwait(true);
+            ProgressText += ok ? " · 报告已自动生成" : " · 报告生成失败（见右下提示）";
         }
         catch (OperationCanceledException)
         {
@@ -332,6 +342,12 @@ public partial class NetworkDiagViewModel : ObservableObject
                 Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
             }
             RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
+            // 报告强制性生成（插件版新增）：修复后重出报告，把修复结果固化进留档（用户重开诊断则跳过，新报告由新诊断产出）
+            if (!IsRunning)
+            {
+                var ok = await AutoGenerateReportAsync(afterRepair: true).ConfigureAwait(true);
+                if (ok) RepairHint += " 报告已同步重新生成。";
+            }
         }
         catch (OperationCanceledException)
         {
@@ -348,9 +364,46 @@ public partial class NetworkDiagViewModel : ObservableObject
         }
     }
 
-    // ================= PDF 报告导出 =================
+    // ================= PDF 报告生成（强制性：诊断/修复完成自动出报告 + 手动补全信息重新导出） =================
 
-    public async Task<string> ExportReportAsync(string school, string grade, string className, string reporter, string deviceTag)
+    /// <summary>
+    /// 手动重新导出（视图「重新导出 PDF 报告」按钮）：可补全学校/年级/班级/报告人/设备编号，
+    /// 并写入表单记忆。正式上报场景用；年级班级必填校验在视图层对话框完成。
+    /// </summary>
+    public Task<string> ExportReportAsync(string school, string grade, string className, string reporter, string deviceTag)
+        => GenerateReportAsync(school, grade, className, reporter, deviceTag, rememberForm: true);
+
+    /// <summary>
+    /// 报告强制性自动生成（插件版新增，宿主内置版无此语义）：诊断完成与修复完成后各调用一次。
+    /// 元信息取表单记忆五项，空值按当前登录用户/主机名兜底；不写表单记忆（自动生成的兜底值
+    /// 不得污染用户已填的手动表单）；失败吞掉并置 AutoReportFailed（InfoBar 可见化），
+    /// 绝不影响诊断/修复主流程的成败。返回是否生成成功（调用方据此追加提示文案）。
+    /// </summary>
+    private async Task<bool> AutoGenerateReportAsync(bool afterRepair)
+    {
+        try
+        {
+            var facts = await _probe.EnsureLoadedAsync().ConfigureAwait(true);
+            var reporter = string.IsNullOrWhiteSpace(_settings.LastReporter) ? Environment.UserName : _settings.LastReporter;
+            var deviceTag = string.IsNullOrWhiteSpace(_settings.LastDeviceTag) ? facts.HostName : _settings.LastDeviceTag;
+            var path = await GenerateReportAsync(_settings.LastSchool, _settings.LastGrade, _settings.LastClassName,
+                reporter, deviceTag, rememberForm: false).ConfigureAwait(true);
+            AutoReportFailed = false;
+            AutoReportMessage = afterRepair ? "修复后报告已重新生成：" + path : "报告已自动生成（强制性留档）：" + path;
+            _log("info", $"[report] 已自动生成诊断报告（{(afterRepair ? "修复后" : "诊断后")}）：{path}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AutoReportFailed = true;
+            AutoReportMessage = "自动生成失败：" + ex.Message + "。可点「重新导出 PDF 报告」重试。";
+            _log("error", $"[report] 自动生成失败：{ex}");
+            return false;
+        }
+    }
+
+    /// <summary>报告生成核心（手动导出与自动生成共用；rememberForm 仅手动路径为 true）。</summary>
+    private async Task<string> GenerateReportAsync(string school, string grade, string className, string reporter, string deviceTag, bool rememberForm)
     {
         if (_lastReport == null) throw new InvalidOperationException("尚未执行诊断");
         var facts = await _probe.EnsureLoadedAsync().ConfigureAwait(true);
@@ -396,9 +449,11 @@ public partial class NetworkDiagViewModel : ObservableObject
         LastReportPath = path;
         ReportReady = true;
 
-        // 记住上次填写，减少重复输入（插件适配：Last* 五项写入插件 store 并落盘 settings.json）
-        _settings.SetLastReport(school, grade, className, reporter, meta.DeviceTag);
-        _log("info", $"[report] 已导出诊断报告：{path}");
+        // 记住上次填写，减少重复输入（插件适配：Last* 五项写入插件 store 并落盘 settings.json；
+        // 自动生成路径不进来——兜底值不得覆盖用户手动填过的表单记忆）
+        if (rememberForm)
+            _settings.SetLastReport(school, grade, className, reporter, meta.DeviceTag);
+        _log("info", $"[report] 已生成诊断报告：{path}");
         return path;
     }
 

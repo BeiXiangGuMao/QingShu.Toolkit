@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -184,6 +185,41 @@ internal static class NativeKernel32
         var m = new MEMORYSTATUSEX();
         if (GlobalMemoryStatusEx(m)) return (m.dwMemoryLoad, m.ullTotalPhys, m.ullAvailPhys);
         return (0, 0, 0);
+    }
+}
+
+/// <summary>
+/// IP Helper ARP 主动探测（IP 地址冲突检测专用，宿主无对应物——冲突检测为插件版新增）：
+/// SendARP 向目标 IPv4 发 ARP 请求并取回应答 MAC。探测本机 IP 时，若应答 MAC 不属于
+/// 本机任何适配器，即网内有另一台主机占用本机 IP（冲突实锤）；无应答（非零返回码）
+/// 视为无人冒用。IP 转 uint 沿用 BitConverter.ToUInt32 惯例（与小端内存布局下的
+/// inet_addr 返回值一致，PInvoke.net 标准写法）。
+/// </summary>
+internal static class NativeIphlpapi
+{
+    private const uint NO_ERROR = 0;
+
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint SendARP(uint destIp, uint srcIp, byte[] macAddr, ref uint physAddrLen);
+
+    /// <summary>
+    /// 向目标 IPv4 发一次 ARP 请求。返回应答 MAC（"AA-BB-CC-DD-EE-FF" 大写）；
+    /// null = 无应答或探测失败（网络不可达/权限异常），调用方按「无人冒用」与
+    /// 「探测受限」两类结合其他证据判定。
+    /// </summary>
+    public static string? ProbeMac(System.Net.IPAddress ip)
+    {
+        try
+        {
+            var bytes = ip.GetAddressBytes();
+            if (bytes.Length != 4) return null;
+            uint dest = BitConverter.ToUInt32(bytes, 0);
+            var mac = new byte[6];
+            uint len = 6;
+            if (SendARP(dest, 0, mac, ref len) != NO_ERROR || len < 6) return null;
+            return string.Join("-", mac.Take(6).Select(b => b.ToString("X2")));
+        }
+        catch { return null; }
     }
 }
 

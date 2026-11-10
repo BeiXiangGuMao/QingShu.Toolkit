@@ -329,16 +329,16 @@ public sealed class NetworkDiagView : UserControl
         repairCard.SetValue(Grid.ColumnProperty, 0);
         bottom.Children.Add(repairCard);
 
-        // 右卡：导出 PDF 诊断报告（按钮行 + 结果 InfoBar + 诊断日志位置）
-        var exportTitle = new TextBlock { Text = "导出 PDF 诊断报告" };
+        // 右卡：导出 PDF 诊断报告（诊断/修复完成已强制自动生成，此卡供补全信息重新导出）
+        var exportTitle = new TextBlock { Text = "诊断报告（自动生成 + 补全导出）" };
         ApplyStyle(exportTitle, "SectionTitleTextBlock");
         var exportDesc = new TextBlock
         {
-            Text = "正规模板：含报告编号（按日累计）、设备编号与序列号、年级班级（生成时填写）、分层结果、修复记录与分级处置建议，适合上报与留档。",
+            Text = "诊断与修复完成后自动生成报告（强制性留档，防遗忘），无需手动操作；如需上报，点下方按钮补全学校 / 年级 / 班级后重新导出。报告含报告编号（按日累计）、设备序列号、分层结果、修复记录与分级处置建议。",
             TextWrapping = TextWrapping.Wrap
         };
         ApplyStyle(exportDesc, "CaptionTextBlock");
-        var exportBtn = new Button { Content = "导出 PDF 报告" };
+        var exportBtn = new Button { Content = "重新导出 PDF 报告" };
         ApplyStyle(exportBtn, "AccentButtonStyle");
         exportBtn.Click += ExportPdf_Click;
         exportBtn.SetBinding(Control.IsEnabledProperty, OneWay(nameof(NetworkDiagViewModel.HasRun)));
@@ -372,7 +372,7 @@ public sealed class NetworkDiagView : UserControl
         return root;
     }
 
-    // ================= PDF 导出（询问式填写 年级/班级，内置页逐字对应） =================
+    // ================= PDF 重新导出（补全 年级/班级 等信息；自动生成已在诊断/修复完成时强制执行） =================
 
     private async void ExportPdf_Click(object sender, RoutedEventArgs e)
     {
@@ -392,7 +392,7 @@ public sealed class NetworkDiagView : UserControl
         panel.Children.Add(tbReporter);
         var hint = new TextBlock
         {
-            Text = "报告将自动写入设备序列号（SMBIOS）与 MachineGuid，并按当日次数编号，便于追溯。",
+            Text = "诊断完成后已按上次填写信息自动生成报告；此表单补全学校 / 年级 / 班级后重新导出适合正式上报。报告将自动写入设备序列号（SMBIOS）与 MachineGuid，并按当日次数编号，便于追溯。",
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
             // 内置页此处用宿主内部主题解析服务；插件不依赖宿主内部类型，退化为
@@ -403,7 +403,7 @@ public sealed class NetworkDiagView : UserControl
 
         var dlg = new ContentDialog
         {
-            Title = "导出网络诊断 PDF 报告",
+            Title = "重新导出网络诊断 PDF 报告",
             Content = panel,
             PrimaryButtonText = "生成报告",
             CloseButtonText = "取消",
@@ -457,6 +457,12 @@ public sealed class NetworkDiagView : UserControl
     {
         if (e.PropertyName is nameof(NetworkDiagViewModel.Topology) or nameof(NetworkDiagViewModel.HasTopology))
             RenderTopology();
+        // 报告强制性自动生成的结果提示（成功路径 / 失败原因，插件版新增）
+        else if (e.PropertyName == nameof(NetworkDiagViewModel.AutoReportMessage) && !string.IsNullOrEmpty(_vm.AutoReportMessage))
+            ShowReportInfo(
+                _vm.AutoReportFailed ? InfoBarSeverity.Error : InfoBarSeverity.Success,
+                _vm.AutoReportFailed ? "自动生成报告失败" : "报告已自动生成",
+                _vm.AutoReportMessage);
     }
 
     private void RenderTopology()
