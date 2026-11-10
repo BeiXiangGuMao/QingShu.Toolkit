@@ -485,13 +485,25 @@ public sealed class PdfReportService : IPdfReportService
 
         string conclusion;
         if (fail == 0 && warn == 0)
-            conclusion = "本次诊断共检查全部项目，未发现影响校园网络使用的故障，网络处于健康状态。";
-        else if (fail == 0)
-            conclusion = $"本次诊断发现 {warn} 项警告，网络当前可用但存在隐患，建议按处置建议在今日内处理。";
+        {
+            // 口径准确性：跳过项是「环境不适用」而非「检查通过」，结论必须区分列出数与实检数，
+            // 避免快速体检/有线环境读者误以为全部项目都已检查。
+            var checkedN = pass + fixedCount;
+            conclusion = skip > 0
+                ? $"本次诊断共列出 {checkedN + skip} 项，实际检查 {checkedN} 项，另有 {skip} 项因环境不适用自动跳过（如有线环境跳过 Wi-Fi 类检查），未发现影响校园网络使用的故障，网络处于健康状态。"
+                : "本次诊断共检查全部项目，未发现影响校园网络使用的故障，网络处于健康状态。";
+        }
         else
-            conclusion = $"本次诊断发现 {fail} 项故障、{warn} 项警告。" +
-                (fixedCount > 0 ? $"其中 {fixedCount} 项已尝试自动修复。" : "") +
-                "未通过的故障项请按“四、分级处置建议”逐项处理，处理后可重新运行诊断复核。";
+        {
+            if (fail == 0)
+                conclusion = $"本次诊断发现 {warn} 项警告，网络当前可用但存在隐患，建议按处置建议在今日内处理。";
+            else
+                conclusion = $"本次诊断发现 {fail} 项故障、{warn} 项警告。" +
+                    (fixedCount > 0 ? $"其中 {fixedCount} 项已尝试自动修复。" : "") +
+                    "未通过的故障项请按“四、分级处置建议”逐项处理，处理后可重新运行诊断复核。";
+            if (skip > 0)
+                conclusion += $"另有 {skip} 项因环境不适用自动跳过，未计入统计。";
+        }
         conclusion += "全部证据的最终综合判断见下方「综合推断（最终判断）」一节。";
         col.Item().PaddingTop(8).PaddingBottom(2).Text(conclusion).FontSize(9.5f).LineHeight(1.6f);
     }
@@ -974,6 +986,7 @@ public static class ReportInference
         }
         var fails = results.Where(r => r.Status == CheckStatus.Fail).ToList();
         var warns = results.Where(r => r.Status == CheckStatus.Warning).ToList();
+        int skipN = results.Count(r => r.Status == CheckStatus.Skipped);
 
         int repTotal = data.Repairs.Count;
         int repOk = data.Repairs.Count(r => r.Status == RepairStatus.Ok);
@@ -1031,6 +1044,7 @@ public static class ReportInference
             badge = "健康";
             verdict = $"全部 {pass} 项检查通过" +
                       (fixedN > 0 ? $"（含已修复 {fixedN} 项）" : "") +
+                      (skipN > 0 ? $"，另有 {skipN} 项因环境不适用自动跳过" : "") +
                       "，未发现故障与隐患，网络处于健康状态。该判断整合了结论概览、诊断明细" +
                       (topo != null ? "、网络拓扑实测" : "") + (speed != null ? "、网速实测" : "") +
                       "的全部证据；如后续出现异常，建议留存本报告作为基线对比。";
@@ -1097,6 +1111,13 @@ public static class ReportInference
         // 印证必须对拓扑合并前的检查项原始首要定位比较：拓扑抢占插入首位后
         // 再与 layers[0] 比对会恒真，把「两路证据不一致」误报成「相互印证」。
         var notes = new List<string>();
+        // IP 冲突专项归属（准确性）：冲突实锤/历史记录均属同网段地址占用（网络侧问题），
+        // 与本机网卡硬件和链路无关；先于其他交叉验证呈现，避免读者按责任环节误判为本机故障。
+        var ipConflict = results.FirstOrDefault(r => r.Id == "ip.conflict" && r.Status is CheckStatus.Fail or CheckStatus.Warning);
+        if (ipConflict != null)
+            notes.Add(ipConflict.Status == CheckStatus.Fail
+                ? "IP 冲突已实锤：属同网段地址占用问题，与本机网卡硬件和链路无关——本机侧改回自动获取 IP 即可避开，网络侧需信息中心定位占用设备。"
+                : "系统历史冲突记录说明本网段存在间歇性地址占用：与本机硬件无关，建议信息中心核对地址分配，本机改回自动获取 IP 避开占用。");
         bool chainBad = topoWorst is { Health: TopoHealth.Fail or TopoHealth.Warn } &&
                         IsSegmentLayer(topoWorst.Value.Layer);
         if (topoWorst is { Health: TopoHealth.Fail or TopoHealth.Warn } &&

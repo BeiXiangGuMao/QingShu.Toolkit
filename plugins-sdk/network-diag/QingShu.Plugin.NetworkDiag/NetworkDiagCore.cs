@@ -367,6 +367,13 @@ public static class NetworkProbeHelper
 
 // ================= WMI 查询封装（宿主 Helpers/WmiHelper 同源移植） =================
 
+/// <summary>WMI 命名空间常量（默认 root\cimv2 之外的 provider）。</summary>
+internal static class WmiScopes
+{
+    /// <summary>MSFT_NetAdapter / MSFT_NetAdapterPowerManagement 所在命名空间（Win8+ 自带）。</summary>
+    public const string StandardCimV2 = "root\\standardcimv2";
+}
+
 /// <summary>
 /// WMI 查询封装：全部在后台线程执行，避免卡 UI。
 /// System.Management 程序集运行期经默认加载上下文共享宿主副本（插件 csproj ExcludeAssets=runtime）。
@@ -380,6 +387,30 @@ public static class WmiHelper
             try
             {
                 using var searcher = new ManagementObjectSearcher(wql);
+                foreach (var o in searcher.Get())
+                {
+                    if (o is ManagementObject mo)
+                    {
+                        try { list.Add(selector(mo)); }
+                        catch { }
+                        mo.Dispose();
+                    }
+                }
+            }
+            catch { }
+            return list;
+        });
+
+    /// <summary>带 WMI 命名空间的查询：root\standardcimv2 的 MSFT_NetAdapter* 系列 provider
+    /// （双工/速率协商、网卡节能）不在默认 root\cimv2 下。类不存在（Win7）或查询失败一律
+    /// 返回空列表不抛——调用方按「信息不可得」降级，不阻断诊断。</summary>
+    public static Task<List<T>> QueryInScopeAsync<T>(string scope, string wql, Func<ManagementObject, T> selector)
+        => Task.Run(() =>
+        {
+            var list = new List<T>();
+            try
+            {
+                using var searcher = new ManagementObjectSearcher(scope, wql);
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -1011,7 +1042,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     {
         new NetworkChecks.PhysicalLinkCheck(),
         new NetworkChecks.NicHardwareCheck(),
-        new NetworkChecks.HardwareHealthCheck(),
+        new NetworkChecks.NetworkHardwareProbeCheck(),
         new NetworkChecks.WifiSignalCheck(),
         new NetworkChecks.IpConfigCheck(),
         new NetworkChecks.IpConflictCheck(),
@@ -1061,7 +1092,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly Dictionary<string, int> TimeoutOverrides = new()
     {
         ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
-        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30, ["hardware.devices"] = 40
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30, ["hardware.nic_probe"] = 40
     };
 
     private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
@@ -1355,51 +1386,42 @@ public static partial class NetworkChecks
         }
     }
 
-    // ---------------- 整机硬件健康（设备管理器异常设备 + 磁盘状态 + WHEA 硬件错误事件，插件版新增） ----------------
-    public sealed class HardwareHealthCheck : CheckBase
+    // ---------------- 网络硬件探查（网络类 PnP 设备 + 双工/速率协商 + 收发错误计数 + 网卡节能，插件版新增） ----------------
+    // 与 hardware.nic_pnp 互补不重复：nic_pnp 从 Win32_NetworkAdapter 侧细查物理网卡的连接状态
+    // 与逐卡 PnP 错误；本项补三个硬件证据面——① PnP 侧网络类设备全量（含 WAN Miniport/蓝牙 PAN/
+    // 虚拟交换机等非物理卡）；② MSFT_NetAdapter 的双工与速率协商（交换网络里正常协商应为全双工，
+    // 半双工 = 网线线序/水晶头/端口协商故障的强信号）与驱动日期；③ 主适配器自开机累计的收发错误/
+    // 丢包计数（链路/驱动/硬件问题的量化证据）与网卡节能状态（休眠后断网的常见线索）。
+    public sealed class NetworkHardwareProbeCheck : CheckBase
     {
-        public override string Id => "hardware.devices";
-        public override string Name => "整机硬件健康扫描";
+        public override string Id => "hardware.nic_probe";
+        public override string Name => "网络硬件探查";
         public override CheckCategory Category => CheckCategory.HardwareDriver;
 
         public override async Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
         {
-            // 1) 设备管理器「感叹号」设备（错误码 ≠ 0）。网卡故障已由 hardware.nic_pnp 细查，
-            //    此处聚焦其余硬件；错误码 24/45（设备不存在/历史幽灵设备）不计入故障防误报。
+            var details = new List<string>();
+            var problems = new List<string>(); // 实锤故障（FAIL 证据）
+            var warns = new List<string>();    // 可用但劣化（WARN 证据）
+
+            // 1) PnP 侧网络类设备全量扫描（PNPClass='Net'，含非物理网络设备）。
+            //    错误码 24/45（设备不存在/历史幽灵设备）只记明细不计故障——防教学机 USB 网卡/
+            //    换槽位残留误报，与 physical.link/nic_pnp 的现行连接状态判断互不越界。
             var bad = await WmiHelper.QueryAsync(
-                "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE ConfigManagerErrorCode != 0",
+                "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPClass='Net' AND ConfigManagerErrorCode != 0",
                 mo => new
                 {
                     Name = mo["Name"]?.ToString() ?? "",
                     Err = Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)
                 }).ConfigureAwait(false);
 
-            // 2) 物理磁盘健康状态（SMART 预警时 Status 为 Pred Fail/Degraded/Error）
-            var disks = await WmiHelper.QueryAsync(
-                "SELECT Model, Status, Size FROM Win32_DiskDrive WHERE Index < 8",
-                mo => new
-                {
-                    Model = mo["Model"]?.ToString() ?? "",
-                    Status = mo["Status"]?.ToString() ?? "",
-                    Size = Convert.ToUInt64(mo["Size"] ?? (object)0UL)
-                }).ConfigureAwait(false);
-
-            // 3) WHEA 硬件错误事件（内存/CPU/总线级故障，Windows 硬件错误架构记录），近 7 天
-            var since = DateTime.Now.AddDays(-7).ToString("yyyyMMddHHmmss");
-            var whea = await WmiHelper.QueryAsync(
-                "SELECT TimeGenerated FROM Win32_NTLogEvent WHERE LogFile='System' AND SourceName='Microsoft-Windows-WHEA-Logger'",
-                mo => mo["TimeGenerated"]?.ToString() ?? "").ConfigureAwait(false);
-            int wheaRecent = whea.Count(t => t.Length >= 14 && string.CompareOrdinal(t[..14], since) >= 0);
-
-            var details = new List<string>();
-            var problems = new List<string>();
             foreach (var d in bad)
             {
                 var text = d.Err switch
                 {
                     1 => "设备未正确配置", 10 => "设备无法启动", 11 => "设备异常（将失败）", 12 => "系统资源不足",
-                    14 => "需重启后重新配置", 18 => "需重装驱动", 22 => "设备被禁用", 23 => "显示适配器故障",
-                    28 => "驱动未安装", 29 => "被固件禁用", 31 => "设备驱动异常", 43 => "设备因故障停止",
+                    14 => "需重启后重新配置", 18 => "需重装驱动", 22 => "设备被禁用", 28 => "驱动未安装",
+                    29 => "被固件禁用", 31 => "设备驱动异常", 43 => "设备因故障停止",
                     24 => "设备当前不存在（历史记录）", 45 => "未连接（历史幽灵设备）",
                     _ => $"错误码 {d.Err}"
                 };
@@ -1411,28 +1433,113 @@ public static partial class NetworkChecks
                     problems.Add($"{d.Name}（{text}）");
                 }
             }
-            if (bad.Count == 0) details.Add("设备管理器：无异常设备");
+            if (bad.Count == 0) details.Add("网络类 PnP 设备：无异常（含 WAN Miniport/蓝牙/虚拟网卡）");
 
-            foreach (var d in disks)
-                details.Add($"磁盘 {d.Model}: {d.Status}{(d.Size > 0 ? $" · {FormatHelper.Bytes((long)d.Size)}" : "")}");
-            var badDisk = disks.FirstOrDefault(d => !string.Equals(d.Status, "OK", StringComparison.OrdinalIgnoreCase));
+            // 2) 双工与速率协商 + 驱动日期（MSFT_NetAdapter，Win8+ 自带；查询失败按信息不可得降级。
+            //    Hidden 过滤对齐 Get-NetAdapter 语义，去掉 WAN Miniport 等隐藏适配器的噪音行）
+            var nics = await WmiHelper.QueryInScopeAsync(
+                WmiScopes.StandardCimV2,
+                "SELECT Name, InterfaceDescription, FullDuplex, Speed, DriverDate, DriverVersionString, Hidden FROM MSFT_NetAdapter",
+                mo => new
+                {
+                    Name = mo["Name"]?.ToString() ?? "",
+                    Desc = mo["InterfaceDescription"]?.ToString() ?? "",
+                    FullDuplex = mo["FullDuplex"] is bool b ? b : (bool?)null,
+                    Speed = Convert.ToUInt64(mo["Speed"] ?? (object)0UL),
+                    DriverDate = mo["DriverDate"]?.ToString() ?? "",
+                    DriverVer = mo["DriverVersionString"]?.ToString() ?? "",
+                    Hidden = mo["Hidden"] is bool h && h
+                }).ConfigureAwait(false);
+
+            int nicRows = 0;
+            foreach (var n in nics)
+            {
+                // 隐藏适配器与未连接且信息不可得的适配器（速率 0、无双工与驱动信息）不出行，防列表噪音
+                if (n.Hidden) continue;
+                if (n.Speed == 0 && n.FullDuplex == null && n.DriverVer.Length == 0) continue;
+                nicRows++;
+                var mbps = n.Speed / 1_000_000;
+                var duplexText = n.FullDuplex == null ? "双工未知" : n.FullDuplex == true ? "全双工" : "半双工";
+                var dateText = ParseDriverDate(n.DriverDate);
+                var verText = dateText != null ? $"{n.DriverVer}（{dateText}）" : n.DriverVer;
+                details.Add($"{n.Name}（{n.Desc}）: {duplexText} · {mbps} Mbps · 驱动 {verText}");
+                if (n.FullDuplex == false && n.Speed > 0)
+                {
+                    details.Add($"⚠ {n.Name} 协商为半双工：交换网络下正常应为全双工，多为网线线序/水晶头/端口协商故障");
+                    warns.Add($"{n.Name} 半双工（{mbps} Mbps）");
+                }
+                else if (n.Speed > 0 && n.Speed < 100_000_000)
+                    details.Add($"○ {n.Name} 链路速率仅 {mbps} Mbps：劣质/老化网线或老旧端口的典型表现");
+                if (dateText != null && int.TryParse(dateText.AsSpan(0, 4), out var year) && year <= DateTime.Now.Year - 8)
+                    details.Add($"○ {n.Name} 驱动发布于 {dateText}（超过 8 年）：能用但偏旧，遇兼容性问题可到设备厂商官网更新");
+            }
+
+            // 3) 主适配器自开机累计的收发错误/丢包计数（IPv4InterfaceStatistics，量化硬件证据）
+            var primary = ctx.Primary;
+            if (primary != null)
+            {
+                try
+                {
+                    var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(x => x.Id == primary.Id);
+                    if (nic != null)
+                    {
+                        var s = nic.GetIPv4Statistics();
+                        var ioErr = s.IncomingPacketsWithErrors + s.OutgoingPacketsWithErrors;
+                        var discard = s.IncomingPacketsDiscarded + s.OutgoingPacketsDiscarded;
+                        var errText = $"收 {s.IncomingPacketsWithErrors} / 发 {s.OutgoingPacketsWithErrors}";
+                        var disText = $"收 {s.IncomingPacketsDiscarded} / 发 {s.OutgoingPacketsDiscarded}";
+                        details.Add($"主适配器错误包计数（{primary.Name}，开机累计）: 错误 {errText}，丢弃 {disText}");
+                        if (ioErr >= 50)
+                        {
+                            details.Add($"⚠ 收发错误包累计 {ioErr} 个：链路质量差/驱动异常/硬件故障的量化证据");
+                            warns.Add($"主适配器收发错误包累计 {ioErr} 个");
+                        }
+                        else if (ioErr > 0)
+                            details.Add("○ 错误包计数偏低（少于 50 个），一般为瞬时抖动，可忽略");
+                        if (discard >= 500)
+                            details.Add($"○ 收发丢弃包累计 {discard} 个：多为突发流量下缓冲区瞬时不足，持续增长才需关注");
+                    }
+                }
+                catch { /* 计数不可得不影响其他证据 */ }
+            }
+
+            // 4) 网卡节能状态（MSFT_NetAdapterPowerManagementSettingData；值域为微软文档实锤：
+            //    0=Unsupported / 1=Disabled / 2=Enabled——「允许计算机关闭此设备以节约电源」
+            //    即 Enabled(2)。开启是休眠/长时间空闲后掉线的常见线索，与一键修复
+            //    「关闭网卡节能」联动，只记线索不计故障）
+            var pm = await WmiHelper.QueryInScopeAsync(
+                WmiScopes.StandardCimV2,
+                "SELECT Name, AllowComputerToTurnOffDevice FROM MSFT_NetAdapterPowerManagementSettingData",
+                mo => new
+                {
+                    Name = mo["Name"]?.ToString() ?? "",
+                    Allow = mo["AllowComputerToTurnOffDevice"]?.ToString() ?? ""
+                }).ConfigureAwait(false);
+            var powerOff = pm.Where(x => x.Allow == "2" && x.Name.Length > 0).Select(x => x.Name).ToList();
+            if (powerOff.Count > 0)
+                details.Add("○ 网卡节能（允许计算机关闭此设备以节约电源）已开启: " + string.Join("、", powerOff.Take(3)) +
+                            "——休眠/空闲后断网的常见线索，可用一键修复「关闭网卡节能」处理");
 
             if (problems.Count > 0)
-                return CheckOutcome.Fail($"发现 {problems.Count} 个硬件异常设备：{string.Join("；", problems.Take(3))}",
-                    "建议先重启复检；仍异常则联系机房管理员（带黄色感叹号的设备通常需重装驱动或报修换件）。",
+                return CheckOutcome.Fail($"网络硬件存在 {problems.Count} 处异常：{string.Join("；", problems.Take(3))}",
+                    "网络类设备报错通常需重装驱动或报修：先在设备管理器卸载该设备（勾选删除驱动程序）后重启复检，仍异常则报修换件。",
                     details.ToArray());
 
-            if (badDisk != null)
-                return CheckOutcome.Fail($"物理磁盘状态异常（{badDisk.Model}: {badDisk.Status}）",
-                    "磁盘 SMART 预警意味着数据损坏风险，请立即备份重要资料并报修更换硬盘。",
+            if (warns.Count > 0)
+                return CheckOutcome.Warn($"网络硬件存在 {warns.Count} 处劣化：{string.Join("；", warns.Take(2))}",
+                    "半双工与错误包累积多为网线线序、水晶头氧化或端口协商问题：先更换网线或换交换机端口，仍异常则报修。",
                     details.ToArray());
 
-            if (wheaRecent > 0)
-                return CheckOutcome.Warn($"近 7 天系统记录 {wheaRecent} 次硬件错误事件（WHEA）",
-                    "多为内存/处理器的可纠正错误，偶发可不处理；若频繁出现伴随蓝屏死机，建议报修检查内存条与散热。",
-                    details.ToArray());
+            return CheckOutcome.Pass($"网络硬件正常（{nicRows} 个适配器双工/速率协商正常，网络类 PnP 设备无异常）",
+                details.ToArray());
+        }
 
-            return CheckOutcome.Pass($"整机硬件健康正常（{disks.Count} 块磁盘状态 OK，无异常设备）", details.ToArray());
+        /// <summary>WMI DMTF 时间（yyyyMMddHHmmss.ffffff+zzz）取日期段，格式异常返回 null。</summary>
+        private static string? ParseDriverDate(string dmtf)
+        {
+            if (dmtf.Length < 8) return null;
+            var head = dmtf[..8];
+            return head.All(char.IsDigit) ? $"{head[..4]}-{head[4..6]}-{head[6..8]}" : null;
         }
     }
 

@@ -429,9 +429,13 @@ public partial class NetworkDiagViewModel : ObservableObject
             FinishedAt = _lastReport.FinishedAt,
             ToolVersion = AppVersion.DisplayText,
             ModeText = _lastReport.ModeText,
+            // 准确性兜底：测速未成功（或未跑测速模式）时链路速率改取主适配器的协商速率，
+            // 报告不再因测速失败缺失链路信息（协商速率是硬件事实，不依赖测速节点可达）
             LinkSpeedText = speed is { Success: true, LinkMbps: > 0 }
                 ? $"{(_lastContext?.Primary?.IsWireless == true ? "无线" : "有线")} {speed.LinkText}"
-                : ""
+                : _lastContext?.Primary is { SpeedBps: > 0 } pri
+                    ? $"{(pri.IsWireless ? "无线" : "有线")} {pri.SpeedBps / 1_000_000} Mbps（链路协商）"
+                    : ""
         };
 
         var data = new NetworkReportData

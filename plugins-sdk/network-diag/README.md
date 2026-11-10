@@ -25,7 +25,7 @@
 | 宿主 `QingShu.Toolkit.csproj` 口径 | `QingShu.Plugin.NetworkDiag.csproj` | TFM / WASDK 投影 / MinVersion 与宿主一致（跨 ALC 类型同一）；CommunityToolkit.Mvvm / System.Management / System.ServiceProcess.ServiceController / QuestPDF 仅编译期引用（ExcludeAssets=runtime，运行期共享宿主同版本程序集） |
 | `Helpers/FormatHelper`、`Helpers/ProcessRunner`、`Interop/ElevationHelper` | `NetworkDiagInterop.cs` | 字节/时长格式化、UTF-8 命令执行（netsh/arp/route/tracert/netstat）、UAC 提权脚本（1223 哨兵）；NativeKernel32 / NativeWinINet 与诊断会话双文件日志（DiagSessionLog）为本插件自包含补齐段 |
 | `Models/Diagnostics.cs`、`Models/Speed.cs`、`Models/NetworkTopology.cs` | `NetworkDiagModels.cs` | CheckItem / RepairAction（含 Visibility 类型 VisState 派生属性，供运行时模板经典 Binding）/ SlowCause / SpeedTestResult / NetworkTopology 快照模型 |
-| `Services/Network/*`（编排 + 45 项检查 + 会话日志 + 拓扑构建） | `NetworkDiagCore.cs` | 诊断引擎三模式计划 + 逐项硬超时 + 一键修复计划（管理类合并一次 UAC）+ NetworkTopologyBuilder 纯函数构建；插件版新增两项：IP 地址冲突检测（ip.conflict）与整机硬件健康扫描（hardware.devices） |
+| `Services/Network/*`（编排 + 45 项检查 + 会话日志 + 拓扑构建） | `NetworkDiagCore.cs` | 诊断引擎三模式计划 + 逐项硬超时 + 一键修复计划（管理类合并一次 UAC）+ NetworkTopologyBuilder 纯函数构建；插件版新增两项：IP 地址冲突检测（ip.conflict）与网络硬件探查（hardware.nic_probe） |
 | `Services/Reporting/PdfReportService.cs`、`Services/Reporting/ReportInference.cs`、`Services/HardwareProbeService.cs` | `NetworkReporting.cs` | QuestPDF 正式报告模板（中文注册字体/编号按日累计/分层明细/修复记录/综合推断/分级处置建议）+ 设备事实探测（序列号/MachineGuid/CPU/内存/网卡） |
 | `ISettingsService` 诊断域字段 + Last* 五项 | `NetworkDiagSettings.cs` | 插件私有 settings.json（原子写/损坏回退默认）+ 宿主 config.json 一次性迁移 + 诊断设置只读镜像刷新 |
 | `ViewModels/NetworkDiagViewModel.cs` | `NetworkDiagViewModel.cs` | VM 全量移植；诊断/修复/报告/探测四服务对接插件实现；设置对接插件 store；日志适配 `Action<string,string>`；护栏原样（诊断与修复取消源分立、修复成功转 Fixed、open_portal 不翻转、winsock 标注重启生效、修复后重建拓扑、修复提权中禁重开诊断） |
@@ -38,10 +38,14 @@
   应答 MAC 不属于本机任何适配器即冲突实锤（FAIL + 占用方 MAC 证据）；辅以系统事件日志
   Tcpip 4199（IP 冲突检测）近 7 天记录作历史佐证（有记录无现行 → WARN）。APIPA / 无 IP
   时跳过。与「网关 ARP 表项」的多 IP 同 MAC 检测互补：一个抓「同 IP 异 MAC」，一个抓「多 IP 同 MAC 欺骗」。
-- **整机硬件健康扫描（hardware.devices，全面诊断含）**：设备管理器全量「感叹号」设备
-  （错误码 24/45 幽灵设备不计入故障防误报）+ 物理磁盘 SMART 状态（Pred Fail/Degraded 即 FAIL）
-  + WHEA 硬件错误事件（内存/CPU/总线级，近 7 天，超 0 次 WARN）；与网卡专项
-  hardware.nic_pnp 互补，覆盖整机硬件问题。
+- **网络硬件探查（hardware.nic_probe，全面诊断含）**：聚焦网络硬件本身的四路证据面，与网卡专项
+  hardware.nic_pnp 互补不重复——① PnP 侧网络类设备全量扫描（PNPClass='Net'，含 WAN Miniport/
+  蓝牙 PAN/虚拟交换机等非物理卡；错误码 24/45 幽灵设备不计入故障防误报）；② MSFT_NetAdapter
+  双工与速率协商（交换网络下半双工 = 网线线序/水晶头/端口协商故障强信号 → WARN）与驱动日期
+  （超 8 年只记明细不判故障）；③ 主适配器自开机累计的收发错误/丢包计数（IPv4InterfaceStatistics，
+  错误包 ≥ 50 → WARN 的量化硬件证据）；④ 网卡节能状态（MSFT_NetAdapterPowerManagementSettingData，
+  AllowComputerToTurnOffDevice=2 即 Enabled 只记线索，与一键修复「关闭网卡节能」联动）。
+  WMI 命名空间查询经 QueryInScopeAsync（root\standardcimv2），类不存在/查询失败按信息不可得降级不阻断诊断。
 - **诊断报告强制性生成**：诊断完成与一键修复完成后各自动生成一份 PDF 报告（落
   reports\yyyy-MM-dd\，报告编号按日累计），不再依赖手动导出防遗忘；元信息取表单记忆
   五项（空值按当前登录用户/主机名兜底，不回写表单记忆）；失败在右下 InfoBar 可见化，
