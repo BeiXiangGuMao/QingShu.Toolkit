@@ -88,6 +88,42 @@ Get-FileHash $zip -Algorithm SHA256
    `C:\Program Files` 等需要管理员写权限的目录（日志、下载更新等写入会受影响）。
 2. 双击 `QingShu.Toolkit.exe` 运行。首次运行如出现 SmartScreen 提示，见第五节 FAQ。
 
+### 2.6 七插件一键构建验证与装载（`scripts/build_all_plugins.ps1`）
+
+harness 化后发布包默认自带七个插件（gala 主控/被控 + 弹窗拦截 / U盘工具 /
+磁盘清理 / 系统优化 / 网络诊断）。`make_release.ps1` 打包时自动装载——但它要求
+插件**先已构建**；本脚本是插件侧的独立验证入口，Windows 侧一条命令完成全部七插件
+构建核验（先编译验证）：
+
+```powershell
+# 只构建验证（宿主已发布过一次即可，脚本自动探测 bin\publish\win-x64 等四级路径）
+.\scripts\build_all_plugins.ps1
+
+# 构建 + 装载进宿主发布目录 plugins\，启动工具箱即可在「插件管理」页看到七插件加载
+.\scripts\build_all_plugins.ps1 -Install
+
+# 宿主发布目录不在仓库内 / 想显式指定时（最高优先级）
+.\scripts\build_all_plugins.ps1 -QingshuHome "D:\Tools\QingShu.Toolkit" -Install
+
+# 收全错误清单再一起修（某工程失败后继续构建其余工程）
+.\scripts\build_all_plugins.ps1 -KeepGoing
+```
+
+行为要点：
+
+- **宿主 exe 不在时不盲目构建**：五级探测（参数 + 四候选路径）全部落空则打印
+  宿主发布命令后退出，避免引用缺失产生几十条 CS0246 级联。
+- **构建传参 `-p:QingshuHome=`**：命令行传参必生效，不受 MSBuild 节点复用
+  缓存旧环境的影响（环境变量 `QINGSHU_HOME` 可能被复用节点按旧值求值）。
+- **失败即停**（`-KeepGoing` 继续）：每个 error 的排查顺序在失败处现场给出
+  （首个 error 才是根因 / `-p:` 传参 / 跨 ALC 版本一致）。
+- **装载语义**：dll/pdb 始终覆盖为最新构建（本机验证循环必须验新产物）；
+  `plugin.json` 仅缺失时从 template 创建，用户已改配置与 `plugin.sig` 不被重置；
+  装载的默认插件无 `plugin.sig`，宿主按可选签名策略放行，需要官方徽章时
+  `tools\plugin-sign.ps1 -PluginFolder <插件目录>` 重签。
+- 新增第六个插件时：先加进 `make_release.ps1` §2.5 的 `$defaultPlugins` 清单，
+  再同步 `build_all_plugins.ps1` 的同名清单（两处 Id 必须一致）。
+
 ## 三、格式二：MSIX 安装包（csproj 双模式切换）
 
 项目已预留 MSIX 双模式（详见 csproj 内注释与 `packaging/Package.appxmanifest`）。

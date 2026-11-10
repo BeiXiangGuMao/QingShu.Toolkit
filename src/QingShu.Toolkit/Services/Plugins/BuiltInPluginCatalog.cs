@@ -10,8 +10,10 @@ namespace QingShu.Toolkit.Services.Plugins;
 /// 全部工具能力（网络诊断 / 磁盘清理 / U盘工具等）以「默认插件」形式在插件管理页统一呈现——
 /// 默认安装、默认启用、可停用（停用即隐藏左侧导航与功能入口，随时恢复）。
 /// 壳基础设施（插件管理 / 日志 / 设置）不参与插件化，始终可见。
-/// 外置插件（plugins\ 目录）与本清单在管理页并列展示，构成完整的插件视图；
-/// 后续版本可按 gala 插件模板把内置功能逐个外移为独立程序集（清单 + ALC 隔离加载）。
+/// 外置插件（plugins\ 目录）与本清单在管理页并列展示，构成完整的插件视图。
+/// 五批真外移已完成：弹窗拦截 / U盘工具 / 磁盘清理 / 系统优化 / 网络诊断（+ gala 双插件）
+/// 均已外移为独立程序集（清单 + ALC 隔离加载，manifest.navTag 接管导航页）；本清单的内置页
+/// 退居「卸载/停用回退实现」——插件在位时导航进插件视图，插件缺失/加载失败自动回退本页。
 /// </summary>
 public sealed record BuiltInPluginInfo(string Id, string Name, string Description, string NavTag, Type PageType);
 

@@ -8,11 +8,20 @@
     <RootNamespace>QingShu.Plugin.Sample</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <!--
-      宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。
-      优先读环境变量 QINGSHU_HOME；没有则在 dotnet build 时传 -p:QingshuHome=... 或改这里。
+      宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。探测顺序：
+      ① -p:QingshuHome=...（命令行传参最可靠，不受 MSBuild 节点复用缓存旧环境的影响）
+      ② 环境变量 QINGSHU_HOME（可能被复用的构建节点按旧环境求值，设了不生效时改用 ①）
+      ③ 仓库内宿主发布目录自动探测（make_release.ps1 -o 与新版 SDK dotnet publish 的
+         产物路径 bin\publish\win-x64；旧式 bin/publish、bin/x64/Release/.../publish 兼容探测）
+      ④ C:\Tools\QingShu.Toolkit 默认值
+      指定/探测的目录里找不到 QingShu.Toolkit.exe 时逐级向后兜底；
+      全部落空由 EnsureHostAssemblyExists 报人话错误（含发布命令与传参示例）。
       插件契约（IQToolkitPlugin / IPluginContext ...）由宿主程序集提供，运行期类型同一。
     -->
-    <QingshuHome Condition="'$(QingshuHome)' == ''">C:\Tools\QingShu.Toolkit</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\win-x64\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\win-x64</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\publish</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe') and Exists('$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish\QingShu.Toolkit.exe')">$(MSBuildThisFileDirectory)..\..\..\src\QingShu.Toolkit\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish</QingshuHome>
+    <QingshuHome Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe')">C:\Tools\QingShu.Toolkit</QingshuHome>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,5 +29,11 @@
       <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
     </Reference>
   </ItemGroup>
+
+  <!-- 宿主程序集缺失时直接报人话错误，不再吞成二十条 CS0246/CS0234 级联 -->
+  <Target Name="EnsureHostAssemblyExists" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(QingshuHome)\QingShu.Toolkit.exe')"
+           Text="找不到宿主程序集 QingShu.Toolkit.exe。已依次探测：-p:QingshuHome 与环境变量 QINGSHU_HOME 的指定值、仓库内 src/QingShu.Toolkit/bin/publish/win-x64、bin/publish、bin/x64/Release/net8.0-windows10.0.19041.0/win-x64/publish、C:\Tools\QingShu.Toolkit。最可靠做法：先发布宿主，再把 dotnet publish 输出「→」后面的发布目录以 -p:QingshuHome=&quot;目录&quot; 传给本构建（环境变量可能被 MSBuild 节点复用吞掉，命令行传参必生效）。宿主发布命令：dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 -r win-x64 --self-contained -p:WindowsAppSDKSelfContained=true" />
+  </Target>
 
 </Project>
