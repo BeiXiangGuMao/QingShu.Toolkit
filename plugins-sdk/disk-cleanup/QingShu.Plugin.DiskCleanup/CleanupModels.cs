@@ -68,3 +68,15 @@ public sealed class LargeFileInfo
     public string Dir => System.IO.Path.GetDirectoryName(Path) ?? Path;
     public string Ext => System.IO.Path.GetExtension(Path).ToUpperInvariant();
 }
+
+// ================= 进度模型（进度条显示，插件版新增） =================
+// 三条进度均为节流上报（服务侧控制频率），Progress<T> 回调经同步上下文回 UI 线程。
+
+/// <summary>扫描实时进度（微信/QQ/大文件扫描共用）：已遍历目录数 / 已发现文件数 / 累计字节。</summary>
+public sealed record ScanProgress(int Dirs, int Found, long Bytes);
+
+/// <summary>逐文件删除进度：Done/Total 用于确定性进度条，Current 为文件名，Bytes 为已处理字节。</summary>
+public sealed record DeleteProgress(int Done, int Total, string Current, long Bytes);
+
+/// <summary>常规清理目标级进度：Done/Total 为目标序号，Current 为目标名。</summary>
+public sealed record CleanProgress(int Done, int Total, string Current);

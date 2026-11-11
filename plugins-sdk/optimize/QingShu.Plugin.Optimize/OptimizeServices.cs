@@ -15,6 +15,8 @@ namespace QingShu.Plugin.Optimize;
 
 public sealed record ProcessEntry(string Name, int Pid, long WorkingSetBytes, long CpuTimeMs, bool IsEcoCapable);
 public sealed record TrimResult(int Trimmed, int Skipped, long FreedBytes);
+/// <summary>内存整理逐进程进度（Done/Total 驱动确定性进度条，Name 实时显示）。</summary>
+public sealed record TrimProgress(int Done, int Total, string Name);
 /// <summary>Detail：按失败原因分组的补充提示（空串 = 全部成功）。</summary>
 public sealed record EcoResult(int Applied, int Skipped, string Detail);
 
@@ -27,7 +29,8 @@ public sealed record EcoResult(int Applied, int Skipped, string Detail);
 public interface IMemoryOptimizeService
 {
     Task<List<ProcessEntry>> ListProcessesAsync(int top = 25);
-    Task<TrimResult> TrimAsync(IEnumerable<int> pids);
+    /// <summary>逐进程整理工作集。progress 实时上报进度条；名单内受保护进程二次拦截计数。</summary>
+    Task<TrimResult> TrimAsync(IEnumerable<int> pids, IProgress<TrimProgress>? progress);
     Task<EcoResult> SetEcoAsync(IEnumerable<int> pids, bool enable);
     /// <summary>本机是否支持 EcoQoS（版本 ≥ Win10 1709 且对自身进程设置成功）。结果进程内缓存。</summary>
     bool IsEcoSupported();
@@ -40,7 +43,12 @@ public sealed class MemoryOptimizeService : IMemoryOptimizeService
         "system", "idle", "registry", "memcompression", "csrss", "wininit", "winlogon",
         "services", "lsass", "smss", "dwm", "svchost", "fontdrvhost", "sihost",
         "taskhostw", "audiodg", "securityhealthservice", "securityhealthsystray",
-        "explorer", "applicationframehost", "runtimebroker"
+        "explorer", "applicationframehost", "runtimebroker",
+        // 插件版新增：清工作集会触发重载/重扫反而更耗资源或影响系统稳定的关键服务
+        "msmpeng",          // Defender：清空工作集触发全量重新扫描
+        "wudfhost",         // 用户态驱动框架宿主
+        "searchindexer",    // Windows 搜索索引：清空后重新爬盘索引
+        "spoolsv"           // 打印服务（打印队列中后台服务，不稳定因素）
     };
 
     public Task<List<ProcessEntry>> ListProcessesAsync(int top = 25)
@@ -64,20 +72,26 @@ public sealed class MemoryOptimizeService : IMemoryOptimizeService
             return list.OrderByDescending(x => x.WorkingSetBytes).Take(top).ToList();
         });
 
-    public Task<TrimResult> TrimAsync(IEnumerable<int> pids)
+    public Task<TrimResult> TrimAsync(IEnumerable<int> pids, IProgress<TrimProgress>? progress)
         => Task.Run(() =>
         {
-            int trimmed = 0, skipped = 0;
+            var list = (pids as IList<int>) ?? pids.ToList();
+            int trimmed = 0, skipped = 0, done = 0;
             long freed = 0;
-            foreach (var pid in pids)
+            foreach (var pid in list)
             {
+                var name = "";
+                try { name = Process.GetProcessById(pid).ProcessName; } catch { }
+                progress?.Report(new TrimProgress(done, list.Count, name));
                 try
                 {
                     using var p = Process.GetProcessById(pid);
+                    // 二次拦截：列表是进入页面时快照，执行时可能已有进程换成受保护名单（或名单新增后旧列表残留）
+                    if (Protected.Contains(p.ProcessName)) { skipped++; done++; continue; }
                     long before = 0;
                     try { before = p.WorkingSet64; } catch { }
                     var r = NativeOptimize.TryEmptyWorkingSet(pid);
-                    if (r < 0) { skipped++; continue; }
+                    if (r < 0) { skipped++; done++; continue; }
                     p.Refresh();
                     long after = 0;
                     try { after = p.WorkingSet64; } catch { }
@@ -85,6 +99,7 @@ public sealed class MemoryOptimizeService : IMemoryOptimizeService
                     trimmed++;
                 }
                 catch { skipped++; }
+                done++;
             }
             return new TrimResult(trimmed, skipped, freed);
         });

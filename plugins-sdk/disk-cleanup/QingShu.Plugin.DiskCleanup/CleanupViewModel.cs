@@ -145,6 +145,8 @@ public partial class CleanupViewModel : ObservableObject
     // ---- 常规 ----
     [ObservableProperty] private bool _isRegularBusy;
     [ObservableProperty] private double _regularProgress;
+    /// <summary>清理阶段确定性进度（目标级 0-100；扫描阶段为 0，进度条切不定态）。</summary>
+    [ObservableProperty] private double _regularCleanProgress;
     [ObservableProperty] private string _regularStatus = "点击“开始扫描”统计可清理空间";
     [ObservableProperty] private string _regularSelectedText = "已选 0 项";
     [ObservableProperty] private string _regularResult = "";
@@ -156,6 +158,8 @@ public partial class CleanupViewModel : ObservableObject
     [ObservableProperty] private string _qqStatus = "";
     [ObservableProperty] private string _imOldDaysText;
     [ObservableProperty] private string _imSelectedText = "";
+    /// <summary>微信/QQ 删除确定性进度（0-100）。</summary>
+    [ObservableProperty] private double _imDeleteProgress;
 
     // ---- 大文件 ----
     [ObservableProperty] private bool _isLargeBusy;
@@ -164,6 +168,8 @@ public partial class CleanupViewModel : ObservableObject
     [ObservableProperty] private int _driveIndex;
     [ObservableProperty] private string _largeSelectedText = "";
     [ObservableProperty] private bool _hasDrives;
+    /// <summary>大文件删除确定性进度（0-100）。</summary>
+    [ObservableProperty] private double _largeDeleteProgress;
 
     // ---- 通用 ----
     [ObservableProperty] private string _lastResult = "";
@@ -309,7 +315,14 @@ public partial class CleanupViewModel : ObservableObject
             // 必须携带扫描结果：回收站目标依赖 SizeBytes 判断空/非空，传零值会被误判“已是空的”直接跳过（历史 bug）
             var scan = selected.Select(vm => vm.LastScan ?? new CleanScanTarget(vm.Def, 0, 0)).ToList();
             var log = new Progress<string>(line => RegularResult = line);
-            var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, _ctsRegular.Token).ConfigureAwait(true);
+            // 清理阶段确定性进度：目标级推进 + 当前目标名进状态行（扫描/清理共用取消源）
+            RegularCleanProgress = 0;
+            var progress = new Progress<CleanProgress>(p =>
+            {
+                RegularCleanProgress = p.Total <= 1 ? 0 : 100.0 * p.Done / p.Total;
+                RegularStatus = p.Done < p.Total ? $"正在清理 {p.Done + 1}/{p.Total}：{p.Current}…" : "清理收尾…";
+            });
+            var report = await _cleanup.CleanAsync(scan, DeleteToRecycleBin, log, progress, _ctsRegular.Token).ConfigureAwait(true);
             completion = $"清理完成：{report.ToSummary()}" +
                          (DeleteToRecycleBin && report.FreedBytes > 0 ? "（已移入回收站，清空回收站后才真正释放磁盘空间）" : "");
             RegularStatus = completion;
@@ -326,7 +339,7 @@ public partial class CleanupViewModel : ObservableObject
         {
             RegularStatus = $"清理失败：{ex.Message}";
         }
-        finally { IsRegularBusy = false; }
+        finally { IsRegularBusy = false; RegularCleanProgress = 0; }
         // 重扫必须等 busy 复位后执行：ScanRegularAsync 有 busy 保护，内联 await 会被静默跳过
         // （历史 bug：清理后列表不刷新，仍显示清理前大小，观感“没清理”）
         if (succeeded)
@@ -370,7 +383,12 @@ public partial class CleanupViewModel : ObservableObject
         _ctsWeChat = new CancellationTokenSource();
         try
         {
-            var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), _ctsWeChat.Token).ConfigureAwait(true);
+            // 扫描实时进度：Status 行滚动刷新计数，不再“正在扫描…干等”
+            var scanProgress = new Progress<ScanProgress>(p =>
+                WeChatStatus = p.Found > 0
+                    ? $"正在扫描微信目录…已发现 {p.Found} 个久远文件 · 累计 {FormatHelper.Bytes(p.Bytes)}"
+                    : "正在扫描微信目录…");
+            var files = await _im.ScanWeChatAsync(ParseDays(_imOldDaysText), scanProgress, _ctsWeChat.Token).ConfigureAwait(true);
             // 扫描服务取消时是 break 返回部分结果而非抛 OCE：这里如实报取消，避免误标“扫描完成”
             if (_ctsWeChat.IsCancellationRequested) { WeChatStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             WeChatFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "微信", OnImRowSelectionChanged));
@@ -401,7 +419,12 @@ public partial class CleanupViewModel : ObservableObject
         _ctsQq = new CancellationTokenSource();
         try
         {
-            var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), _ctsQq.Token).ConfigureAwait(true);
+            QqStatus = "正在扫描 QQ 目录…";
+            var scanProgress = new Progress<ScanProgress>(p =>
+                QqStatus = p.Found > 0
+                    ? $"正在扫描 QQ 目录…已发现 {p.Found} 个久远文件 · 累计 {FormatHelper.Bytes(p.Bytes)}"
+                    : "正在扫描 QQ 目录…");
+            var files = await _im.ScanQQAsync(ParseDays(_imOldDaysText), scanProgress, _ctsQq.Token).ConfigureAwait(true);
             if (_ctsQq.IsCancellationRequested) { QqStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             QqFiles = new ObservableCollection<ImFileVm>(BuildGroupedRows(files, "QQ", OnImRowSelectionChanged));
             UpdateImSelected();
@@ -501,11 +524,18 @@ public partial class CleanupViewModel : ObservableObject
             .Concat(QqFiles.Where(x => x.IsSelected && !x.IsHeader).Select(x => x.Item.Path)).ToList();
         if (paths.Count == 0) return;
         _imDeleteBusy = true;
+        ImDeleteProgress = 0;
         try
         {
             _ctsImDelete?.Dispose();
             _ctsImDelete = new CancellationTokenSource(); // 每次执行重建，防上轮取消状态残留
-            var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, _ctsImDelete.Token).ConfigureAwait(true);
+            // 删除确定性进度：逐文件推进 + 当前文件名实时显示
+            var deleteProgress = new Progress<DeleteProgress>(p =>
+            {
+                ImDeleteProgress = p.Total <= 1 ? 0 : 100.0 * p.Done / p.Total;
+                WeChatStatus = $"正在删除 {p.Done + 1}/{p.Total}：{p.Current}（已处理 {FormatHelper.Bytes(p.Bytes)}）";
+            });
+            var (ok, failed, freed) = await _im.DeleteAsync(paths, DeleteToRecycleBin, deleteProgress, _ctsImDelete.Token).ConfigureAwait(true);
             bool canceled = _ctsImDelete.IsCancellationRequested; // 服务逐文件 break 不抛 OCE，需显式判定
             var mode = DeleteToRecycleBin ? "（已移入回收站）" : "（已永久删除）";
             var status = canceled
@@ -528,7 +558,7 @@ public partial class CleanupViewModel : ObservableObject
         {
             WeChatStatus = $"删除失败：{ex.Message}";
         }
-        finally { _imDeleteBusy = false; }
+        finally { _imDeleteBusy = false; ImDeleteProgress = 0; }
     }
 
     // ================= 大文件 =================
@@ -546,7 +576,11 @@ public partial class CleanupViewModel : ObservableObject
         {
             var drive = Drives.ElementAtOrDefault(DriveIndex);
             if (drive == default) return;
-            var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), _ctsLarge.Token).ConfigureAwait(true);
+            // 扫描实时进度：已扫目录数/已发现/累计体积滚动刷新，不再静默干等
+            var scanProgress = new Progress<ScanProgress>(p =>
+                LargeStatus = $"正在扫描 {drive}: …已遍历 {p.Dirs} 个目录" +
+                              (p.Found > 0 ? $" · 发现 {p.Found} 个大文件 · 累计 {FormatHelper.Bytes(p.Bytes)}" : ""));
+            var files = await _large.ScanAsync(drive, ParseInt(_largeMinMbText, 100), scanProgress, _ctsLarge.Token).ConfigureAwait(true);
             if (_ctsLarge.IsCancellationRequested) { LargeStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             LargeFiles = new ObservableCollection<LargeFileVm>(files.Take(200).Select(f => new LargeFileVm(f)));
             UpdateLargeSelected();
@@ -568,9 +602,18 @@ public partial class CleanupViewModel : ObservableObject
     public bool QqBusyVis => IsQqBusy;
     public bool LargeBusyVis => IsLargeBusy;
 
+    // 删除确定性进度条可见性（仅删除执行中且有进度时显示，避免空条占位）
+    public bool ImDeleteProgressVis => _imDeleteBusy && ImDeleteProgress > 0;
+    public bool LargeDeleteProgressVis => _largeDeleteBusy && LargeDeleteProgress > 0;
+    /// <summary>常规清理确定性进度条可见性（清理阶段有目标推进时显示；扫描阶段走不定态条）。</summary>
+    public bool RegularCleanBarVis => IsRegularBusy && RegularCleanProgress > 0;
+
     partial void OnIsWeChatBusyChanged(bool value) => OnPropertyChanged(nameof(WeChatBusyVis));
     partial void OnIsQqBusyChanged(bool value) => OnPropertyChanged(nameof(QqBusyVis));
     partial void OnIsLargeBusyChanged(bool value) => OnPropertyChanged(nameof(LargeBusyVis));
+    partial void OnImDeleteProgressChanged(double value) => OnPropertyChanged(nameof(ImDeleteProgressVis));
+    partial void OnLargeDeleteProgressChanged(double value) => OnPropertyChanged(nameof(LargeDeleteProgressVis));
+    partial void OnRegularCleanProgressChanged(double value) => OnPropertyChanged(nameof(RegularCleanBarVis));
 
     [RelayCommand]
     private void OpenContainingFolder(object? param)
@@ -601,11 +644,18 @@ public partial class CleanupViewModel : ObservableObject
         var paths = LargeFiles.Where(x => x.IsSelected).Select(x => x.Item.Path).ToList();
         if (paths.Count == 0) return;
         _largeDeleteBusy = true;
+        LargeDeleteProgress = 0;
         try
         {
             _ctsLargeDelete?.Dispose();
             _ctsLargeDelete = new CancellationTokenSource(); // 每次执行重建，防上轮取消状态残留
-            var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, _ctsLargeDelete.Token).ConfigureAwait(true);
+            // 删除确定性进度：逐文件推进 + 当前文件名/已处理字节实时显示
+            var deleteProgress = new Progress<DeleteProgress>(p =>
+            {
+                LargeDeleteProgress = p.Total <= 1 ? 0 : 100.0 * p.Done / p.Total;
+                LargeStatus = $"正在删除 {p.Done + 1}/{p.Total}：{p.Current}（已处理 {FormatHelper.Bytes(p.Bytes)}）";
+            });
+            var (ok, failed, freed) = await _large.DeleteAsync(paths, DeleteToRecycleBin, deleteProgress, _ctsLargeDelete.Token).ConfigureAwait(true);
             bool canceled = _ctsLargeDelete.IsCancellationRequested; // 服务逐文件 break 不抛 OCE，需显式判定
             var tail = canceled ? "）" : "";
             LargeStatus = (canceled
@@ -619,7 +669,7 @@ public partial class CleanupViewModel : ObservableObject
         {
             LargeStatus = $"删除失败：{ex.Message}";
         }
-        finally { _largeDeleteBusy = false; }
+        finally { _largeDeleteBusy = false; LargeDeleteProgress = 0; }
     }
 
     private void UpdateLargeSelected()

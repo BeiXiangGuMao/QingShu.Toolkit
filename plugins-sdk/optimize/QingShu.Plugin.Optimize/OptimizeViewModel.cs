@@ -89,6 +89,9 @@ public partial class OptimizeViewModel : ObservableObject
     public ObservableCollection<StartupRowVm> StartupItems { get; } = new();
 
     [ObservableProperty] private bool _isMemoryBusy;
+    /// <summary>内存整理确定性进度（0-100）。</summary>
+    [ObservableProperty] private double _memoryProgress;
+    public bool MemoryProgressVis => IsMemoryBusy && MemoryProgress > 0;
     [ObservableProperty] private string _memoryResult = "";
     [ObservableProperty] private bool _isEcoBusy;
     [ObservableProperty] private string _ecoResult = "";
@@ -115,6 +118,7 @@ public partial class OptimizeViewModel : ObservableObject
     public bool EcoSupported => _memory.IsEcoSupported();
 
     partial void OnIsMemoryBusyChanged(bool value) => OnPropertyChanged(nameof(MemoryReady));
+    partial void OnMemoryProgressChanged(double value) => OnPropertyChanged(nameof(MemoryProgressVis));
     partial void OnIsEcoBusyChanged(bool value) => OnPropertyChanged(nameof(EcoReady));
 
     [RelayCommand]
@@ -149,14 +153,21 @@ public partial class OptimizeViewModel : ObservableObject
         var pids = MemoryProcesses.Where(x => x.IsSelected).Select(x => x.Pid).ToList();
         if (pids.Count == 0) { MemoryResult = "请先勾选要整理的进程。"; return; }
         IsMemoryBusy = true;
+        MemoryProgress = 0;
         try
         {
-            var r = await _memory.TrimAsync(pids).ConfigureAwait(true);
+            // 逐进程确定性进度：进度条推进 + 当前进程名实时显示
+            var progress = new Progress<TrimProgress>(p =>
+            {
+                MemoryProgress = p.Total <= 1 ? 0 : 100.0 * p.Done / p.Total;
+                MemoryResult = $"正在整理 {p.Done + 1}/{p.Total}：{p.Name}…";
+            });
+            var r = await _memory.TrimAsync(pids, progress).ConfigureAwait(true);
             MemoryResult = $"整理完成：{r.Trimmed} 个进程，释放约 {FormatHelper.Bytes(r.FreedBytes)} 工作集（跳过 {r.Skipped} 个受保护进程）。进程未被结束，仅回收可回收页。";
             await RefreshMemoryAsync().ConfigureAwait(true);
         }
         catch (Exception ex) { MemoryResult = $"内存整理失败：{ex.Message}"; }
-        finally { IsMemoryBusy = false; }
+        finally { IsMemoryBusy = false; MemoryProgress = 0; }
     }
 
     [RelayCommand]

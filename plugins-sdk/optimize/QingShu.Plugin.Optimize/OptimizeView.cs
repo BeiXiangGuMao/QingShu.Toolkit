@@ -75,10 +75,15 @@ public sealed class OptimizeView : UserControl
             nameof(OptimizeViewModel.MemoryProcesses), 300, pad: "0,1");
         var memResult = Caption(Info());
         memResult.SetBinding(TextBlock.TextProperty, OneWay(nameof(OptimizeViewModel.MemoryResult)));
+        // 逐进程确定性进度条（整理执行中且已报出进度时显示）
+        var memProgress = new ProgressBar { CornerRadius = new CornerRadius(2), Height = 6 };
+        memProgress.SetBinding(ProgressBar.ValueProperty, OneWay(nameof(OptimizeViewModel.MemoryProgress)));
+        memProgress.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(OptimizeViewModel.MemoryProgressVis)));
         rootStack.Children.Add(MakeCard(
             CardHeader("内存整理（不结束进程）", memRefresh, memTrim),
             CaptionText("EmptyWorkingSet 原理：把进程的物理内存页回收进待用列表，进程继续正常运行，等价于系统自带的内存压缩策略。"),
             memList,
+            memProgress,
             memResult));
 
         // ---- 进程节能卡 ----

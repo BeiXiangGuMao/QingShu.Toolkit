@@ -124,6 +124,9 @@ internal static class FileOpsHelper
         return (deleted, freed, failed);
     }
 
+    /// <summary>删除后存在性复核（目录或文件任一存在即视为仍存在）。回收站删除返回 0 不代表删净，必须二次确认（与常规批量同口径）。</summary>
+    public static bool PathStillExists(string p) => Directory.Exists(p) || File.Exists(p);
+
     /// <summary>递归收集文件（跳过无权限目录），按最近修改时间倒序，最多 maxFiles 条。</summary>
     public static List<FileInfo> CollectFiles(string root, int maxFiles = 5000, int maxDepth = 6,
         IEnumerable<string>? excludedDirNames = null, CancellationToken ct = default)
@@ -148,6 +151,9 @@ internal static class FileOpsHelper
                     foreach (var d in new DirectoryInfo(dir).EnumerateDirectories())
                     {
                         if (excluded.Contains(d.Name) || d.Name.StartsWith("$", StringComparison.Ordinal)) continue;
+                        // ReparsePoint（junction / 符号链接）不入栈：AppData 下 Application Data 等自指 junction
+                        // 会无限循环（仅靠 maxFiles/maxDepth 兕底）；系统符号链接指向的目标也不应被清理扫描穿透
+                        if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                         stack.Push((d.FullName, depth + 1));
                     }
                 }

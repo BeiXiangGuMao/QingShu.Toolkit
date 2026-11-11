@@ -53,6 +53,25 @@ QingShu.Toolkit\
    - 可选 `-WithConfig <config.json>`：预置弹窗白名单/功耗模式等公共配置
    - 可选 `-Autostart`：写 HKCU Run 键实现开机自启（公共机场景）
    - 输出安装摘要（版本/插件清单/config 来源）供点名核验
+
+   脚本骨架（交付时按此实现，兼容 PowerShell 5.1，禁 `\` 双引号转义写法，字符串用单引号或中文引号）：
+
+   ```powershell
+   param(
+     [string]$SharePath   = '\\\\server\\share\\QingShu',   # 共享目录（含 zip 与 SHA256）
+     [string]$InstallRoot = 'D:\\Tools',                        # 无 D 盘自动退 C:\\Tools
+     [string]$WithConfig  = '',                                 # 可选：基线 config.json 路径
+     [switch]$Autostart,                                        # 可选：写 HKCU Run 开机自启
+     [switch]$Force                                             # 已存在时覆盖解压
+   )
+   # 流程：① Get-FileHash 核验 zip 与 Release 说明一致，不一致中止；
+   #       ② 探测 D/C 盘选定安装根 → Expand-Archive 解压（-Force 覆盖或已存在跳过）；
+   #       ③ -WithConfig：拷贝基线 config.json 到 %LOCALAPPDATA%\QingShu.Toolkit\（不覆盖已有则按 -Force）；
+   #       ④ -Autostart：New-ItemProperty HKCU Run 键 QingShu.Toolkit → exe 全路径；
+   #       ⑤ 输出安装摘要（安装根/版本/七插件清单/config 来源/SHA256）供点名核验；
+   #       ⑥ 任一步失败：非 0 退出并打印已完成的步骤（幂等：重跑从未完成处续装）。
+   ```
+
 2. **配置基线**：机房统一一份 `config.json` 基线（白名单 + 关闭演示数据 + 功耗 auto），
    随脚本分发；机器个性配置（插件启停）装机后本机改。
 3. **验收清单**（脚本末尾自动跑 + 人工抽查）：
@@ -93,3 +112,22 @@ QingShu.Toolkit\
 - 插件构建验证：RELEASE.md §2.6 / scripts/build_all_plugins.ps1
 - 功能测试基线：TESTING.md（本规划 §三.3 验收清单是其部署子集）
 - 规划中未实现的交付物（后续任务）：`deploy_install.ps1` 一键装机脚本（§三.1）
+
+## 八、故障处置（装机与升级常见失败）
+
+| 现象 | 原因 | 处置 |
+| --- | --- | --- |
+| 双击 exe 无反应/SmartScreen 拦截 | 未签名 Beta 包 | 「更多信息 → 仍要运行」；机房场景可预先将安装根加入信任（RELEASE.md FAQ） |
+| 解压后启动报缺 dll | zip 传输损坏（SHA256 不符） | 重新下载/拷贝并核验哈希；装机脚本 ① 步已拦截 |
+| 应用内「检查更新」超时 | 机房网络未放行 GitHub | 见 §九 放行清单；或用共享目录新 zip 手动覆盖（等价 robocopy 语义） |
+| 更新下载完成后重启未生效 | update.cmd 被杀软拦截 | 将安装目录加入杀软白名单；重试一次；仍失败手动覆盖解压 |
+| 更新后插件消失 | 曾「先删后解压」重装（丢 plugins） | 重装/升级**永远解压覆盖，禁止先删**；用户自装插件重新放入并核对 plugin.json |
+| 升级后启动白屏/崩溃 | 新旧版本配置字段冲突（罕见） | 备份后删除 %LOCALAPPDATA%\QingShu.Toolkit\config.json 再启动（其余插件数据不动） |
+
+## 九、机房网络放行清单（应用内更新与门户检测）
+
+- `api.github.com`（版本检查，HTTPS 443）——必需
+- `github.com` 与 `objects.githubusercontent.com`（更新包下载，HTTPS 443）——必需
+- 加速线路域名（设置页可选线路，HTTPS 443）——备用，二选一放行即可
+- 校园认证门户地址（网络诊断/门户自动登录用，HTTP/HTTPS）——按学校实际配置
+- 放行方式：出口防火墙/上网行为管理按域名白名单；无法放行时走共享目录手动升级（§四）

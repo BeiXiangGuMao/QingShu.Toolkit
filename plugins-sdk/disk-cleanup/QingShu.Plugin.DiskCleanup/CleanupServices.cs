@@ -21,7 +21,7 @@ public interface ICleanupService
     IReadOnlyList<CleanTargetDef> Targets { get; }
     Task<List<CleanScanTarget>> ScanAsync(IReadOnlyList<CleanTargetDef> targets, IProgress<CleanScanTarget>? progress, CancellationToken ct);
     /// <summary>执行清理（回收站/永久删除按设置；需要管理员的目标若当前非管理员则自动走提权脚本）。</summary>
-    Task<CleanupReport> CleanAsync(IReadOnlyList<CleanScanTarget> targets, bool toRecycleBin, IProgress<string>? log, CancellationToken ct);
+    Task<CleanupReport> CleanAsync(IReadOnlyList<CleanScanTarget> targets, bool toRecycleBin, IProgress<string>? log, IProgress<CleanProgress>? progress, CancellationToken ct);
 }
 
 /// <summary>常规磁盘清理引擎：扫描 → 询问式勾选 → 逐文件安全删除（含提权目标合并 UAC）。</summary>
@@ -206,16 +206,20 @@ public sealed class CleanupService : ICleanupService
             return list;
         });
 
-    public async Task<CleanupReport> CleanAsync(IReadOnlyList<CleanScanTarget> targets, bool toRecycleBin, IProgress<string>? log, CancellationToken ct)
+    public async Task<CleanupReport> CleanAsync(IReadOnlyList<CleanScanTarget> targets, bool toRecycleBin, IProgress<string>? log, IProgress<CleanProgress>? progress, CancellationToken ct)
     {
         var report = new CleanupReport { StartedAt = DateTime.Now };
         var normal = targets.Where(t => !t.Def.NeedsAdmin).ToList();
         var admin = targets.Where(t => t.Def.NeedsAdmin).ToList();
+        var total = targets.Count;
+        var done = 0;
 
         foreach (var t in normal)
         {
             ct.ThrowIfCancellationRequested();
+            progress?.Report(new CleanProgress(done, total, t.Def.Name));
             await CleanOneAsync(t, toRecycleBin, report, log).ConfigureAwait(true);
+            done++;
         }
 
         if (admin.Count > 0)
@@ -225,12 +229,15 @@ public sealed class CleanupService : ICleanupService
                 foreach (var t in admin)
                 {
                     ct.ThrowIfCancellationRequested();
+                    progress?.Report(new CleanProgress(done, total, t.Def.Name));
                     await CleanOneAsync(t, toRecycleBin, report, log).ConfigureAwait(true);
+                    done++;
                 }
             }
             else
             {
                 // 提权批处理：cmd 删除目录内容（不需要逐文件精细记录）
+                progress?.Report(new CleanProgress(done, total, "管理员目标（提权批）"));
                 var (script, outLog) = BuildAdminCleanScript(admin, toRecycleBin);
                 log?.Report($"需要管理员权限的目标（{admin.Count} 项）将合并为一次 UAC 执行…");
                 var (exit, output) = await ElevationHelper.RunElevatedScriptAsync(script, outLog).ConfigureAwait(true);
@@ -346,11 +353,11 @@ public sealed class CleanupService : ICleanupService
             if (hr != 0) batchHr = hr;
             foreach (var (p, len) in chunk)
             {
-                if (!PathStillExists(p)) { ok++; bytes += len; continue; }
+                if (!FileOpsHelper.PathStillExists(p)) { ok++; bytes += len; continue; }
                 // 批内个别残留（被占用）：单独重试一次拿准确结果
                 try
                 {
-                    if (NativeRecycleBin.DeleteToRecycleBin(p) == 0 && !PathStillExists(p)) { ok++; bytes += len; }
+                    if (NativeRecycleBin.DeleteToRecycleBin(p) == 0 && !FileOpsHelper.PathStillExists(p)) { ok++; bytes += len; }
                     else failed++;
                 }
                 catch { failed++; }
@@ -363,8 +370,6 @@ public sealed class CleanupService : ICleanupService
             : null;
         return (ok, bytes, failed, note);
     }
-
-    private static bool PathStillExists(string p) => Directory.Exists(p) || File.Exists(p);
 
     private static IEnumerable<List<T>> Chunk<T>(IEnumerable<T> source, int size)
     {
@@ -449,12 +454,12 @@ public sealed class CleanupService : ICleanupService
 
 public interface IImScanService
 {
-    /// <summary>扫描微信久远文件（默认阈值来自设置，可覆盖）。</summary>
-    Task<List<ImFileItem>> ScanWeChatAsync(int oldDays, CancellationToken ct);
+    /// <summary>扫描微信久远文件（默认阈值来自设置，可覆盖）。progress 节流上报实时计数（进度条显示）。</summary>
+    Task<List<ImFileItem>> ScanWeChatAsync(int oldDays, IProgress<ScanProgress>? progress, CancellationToken ct);
     /// <summary>扫描 QQ 久远文件。</summary>
-    Task<List<ImFileItem>> ScanQQAsync(int oldDays, CancellationToken ct);
-    /// <summary>删除所选（回收站或永久，按设置）。</summary>
-    Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, CancellationToken ct);
+    Task<List<ImFileItem>> ScanQQAsync(int oldDays, IProgress<ScanProgress>? progress, CancellationToken ct);
+    /// <summary>删除所选（回收站或永久，按设置）。progress 逐文件上报（确定性进度条）。</summary>
+    Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, IProgress<DeleteProgress>? progress, CancellationToken ct);
 }
 
 /// <summary>
@@ -494,7 +499,7 @@ public sealed class ImScanService : IImScanService
     private static readonly string[] SkipDirNames =
         { "config", "db", "backup", "all users", "applet", "log", "logs", "message", "dbtemp" };
 
-    public Task<List<ImFileItem>> ScanWeChatAsync(int oldDays, CancellationToken ct) => Task.Run(() =>
+    public Task<List<ImFileItem>> ScanWeChatAsync(int oldDays, IProgress<ScanProgress>? progress, CancellationToken ct) => Task.Run(() =>
     {
         var result = new List<ImFileItem>();
         var roots = new[]
@@ -509,6 +514,7 @@ public sealed class ImScanService : IImScanService
             {
                 var accountName = Path.GetFileName(account);
                 if (SkipDirNames.Contains(accountName.ToLowerInvariant())) continue;
+                progress?.Report(new ScanProgress(result.Count, result.Count, 0));
                 var files = FileOpsHelper.CollectFiles(account, maxFiles: 20000, maxDepth: 6, SkipDirNames, ct);
                 foreach (var f in files)
                 {
@@ -528,6 +534,8 @@ public sealed class ImScanService : IImScanService
                         LastWrite = f.LastWriteTime
                     });
                 }
+                // 按账号节流上报：账号数有限（个位数-几十），逐账号刷新已足够感知进度
+                progress?.Report(new ScanProgress(result.Count, result.Count, result.Sum(x => x.SizeBytes)));
             }
         }
         result.Sort((a, b) => b.SizeBytes.CompareTo(a.SizeBytes));
@@ -535,7 +543,7 @@ public sealed class ImScanService : IImScanService
         return result;
     }, ct);
 
-    public Task<List<ImFileItem>> ScanQQAsync(int oldDays, CancellationToken ct) => Task.Run(() =>
+    public Task<List<ImFileItem>> ScanQQAsync(int oldDays, IProgress<ScanProgress>? progress, CancellationToken ct) => Task.Run(() =>
     {
         var result = new List<ImFileItem>();
         var root = Path.Combine(Documents, "Tencent Files");
@@ -562,28 +570,32 @@ public sealed class ImScanService : IImScanService
                     LastWrite = f.LastWriteTime
                 });
             }
+            progress?.Report(new ScanProgress(result.Count, result.Count, result.Sum(x => x.SizeBytes)));
         }
         result.Sort((a, b) => b.SizeBytes.CompareTo(a.SizeBytes));
         _log("info", $"QQ 扫描完成：{result.Count} 个久远文件（>{oldDays} 天）");
         return result;
     }, ct);
 
-    public async Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, CancellationToken ct)
+    public async Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, IProgress<DeleteProgress>? progress, CancellationToken ct)
     {
-        int ok = 0, failed = 0;
+        var list = paths as IList<string> ?? paths.ToList();
+        int ok = 0, failed = 0, done = 0;
         long bytes = 0;
         await Task.Run(() =>
         {
-            foreach (var p in paths)
+            foreach (var p in list)
             {
                 if (ct.IsCancellationRequested) break;
+                progress?.Report(new DeleteProgress(done, list.Count, Path.GetFileName(p), bytes));
                 try
                 {
-                    if (!File.Exists(p)) continue;
+                    if (!File.Exists(p)) { done++; continue; }
                     var len = new FileInfo(p).Length;
                     if (toRecycleBin)
                     {
-                        if (NativeRecycleBin.DeleteToRecycleBin(p) == 0) { ok++; bytes += len; } else failed++;
+                        // 返回 0 不一定代表删净（shell 静默失败/占用），与常规清理同口径补存在性复核
+                        if (NativeRecycleBin.DeleteToRecycleBin(p) == 0 && !FileOpsHelper.PathStillExists(p)) { ok++; bytes += len; } else failed++;
                     }
                     else
                     {
@@ -594,6 +606,7 @@ public sealed class ImScanService : IImScanService
                     }
                 }
                 catch { failed++; }
+                done++;
             }
         }).ConfigureAwait(true);
         _log("info", $"IM 文件删除完成：成功 {ok}，失败 {failed}，释放 {FormatHelper.Bytes(bytes)}（{(toRecycleBin ? "回收站" : "永久")}）");
@@ -604,17 +617,34 @@ public sealed class ImScanService : IImScanService
 public interface ILargeFileScanService
 {
     Task<List<char>> GetFixedDrivesAsync();
-    /// <summary>扫描指定分区中的大文件（跳过系统目录），按大小倒序。</summary>
-    Task<List<LargeFileInfo>> ScanAsync(char drive, int minMb, CancellationToken ct);
-    /// <summary>删除文件（回收站 / 永久）。</summary>
-    Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, CancellationToken ct);
+    /// <summary>扫描指定分区中的大文件（排除系统重要文件/目录），按大小倒序。progress 节流上报实时计数。</summary>
+    Task<List<LargeFileInfo>> ScanAsync(char drive, int minMb, IProgress<ScanProgress>? progress, CancellationToken ct);
+    /// <summary>删除文件（回收站 / 永久）。progress 逐文件上报（确定性进度条）。</summary>
+    Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, IProgress<DeleteProgress>? progress, CancellationToken ct);
 }
 
-/// <summary>大文件扫描器：全盘兜底清理的“询问式”入口。</summary>
+/// <summary>
+/// 大文件扫描器：全盘兜底清理的“询问式”入口。
+/// 系统重要文件双层排除（插件版新增，防教学机用户误删系统文件导致无法开机）：
+///  · 目录层：根层排除系统/程序/恢复/元数据目录（Windows/Program Files/ProgramData/Recovery/PerfLogs/Config.Msi/ESD/Drivers）；
+///    任意层排除纯系统目录名（windows/$recycle.bin/system volume information/recovery/config.msi）与 $ 开头元数据目录；
+///    任意层跳过 ReparsePoint（junction/符号链接：AppData 自指循环不穿透，系统链接目标不扫入）。
+///  · 文件层：排除虚拟内存/休眠/启动管理器等系统文件精确名（pagefile.sys 等，动则蓝屏/无法启动，无论多大都不列出）；
+///    排除 System+Hidden 属性组合的受保护系统文件。
+/// </summary>
 public sealed class LargeFileScanService : ILargeFileScanService
 {
+    /// <summary>根层排除（仅第一层目录名）：系统/程序/恢复/元数据目录。</summary>
     private static readonly string[] ExcludedRoots =
-        { "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information", "recovery" };
+        { "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information", "recovery", "perflogs", "config.msi", "esd", "drivers" };
+
+    /// <summary>任意层排除（纯系统目录名，防嵌套同名系统目录被扫入）。</summary>
+    private static readonly string[] ExcludedAnyDepth =
+        { "windows", "$recycle.bin", "system volume information", "recovery", "config.msi" };
+
+    /// <summary>文件级排除精确名：虚拟内存/休眠/启动管理器——删除直接导致无法开机或系统异常。</summary>
+    private static readonly HashSet<string> ExcludedFileNames = new(StringComparer.OrdinalIgnoreCase)
+        { "hiberfil.sys", "pagefile.sys", "swapfile.sys", "bootmgr", "bootmgr.efi", "bootsect.bak", "dumpstack.log", "dumpstack.log.tmp" };
 
     private readonly Action<string, string> _log;
     public LargeFileScanService(Action<string, string> log) => _log = log;
@@ -622,7 +652,7 @@ public sealed class LargeFileScanService : ILargeFileScanService
     public Task<List<char>> GetFixedDrivesAsync() => Task.Run(() =>
         DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType == DriveType.Fixed).Select(d => d.Name[0]).ToList());
 
-    public Task<List<LargeFileInfo>> ScanAsync(char drive, int minMb, CancellationToken ct) => Task.Run(() =>
+    public Task<List<LargeFileInfo>> ScanAsync(char drive, int minMb, IProgress<ScanProgress>? progress, CancellationToken ct) => Task.Run(() =>
     {
         var minBytes = (long)minMb * 1024 * 1024;
         var root = $"{drive}:\\";
@@ -630,55 +660,72 @@ public sealed class LargeFileScanService : ILargeFileScanService
         var stack = new Stack<string>();
         stack.Push(root);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var excluded = new HashSet<string>(ExcludedRoots, StringComparer.OrdinalIgnoreCase);
+        var rootExcluded = new HashSet<string>(ExcludedRoots, StringComparer.OrdinalIgnoreCase);
+        var anyExcluded = new HashSet<string>(ExcludedAnyDepth, StringComparer.OrdinalIgnoreCase);
+        int dirsScanned = 0;
 
         while (stack.Count > 0 && sw.ElapsedMilliseconds < 120_000 && results.Count < 800)
         {
             if (ct.IsCancellationRequested) break;
             var dir = stack.Pop();
+            dirsScanned++;
             try
             {
                 foreach (var f in new DirectoryInfo(dir).EnumerateFiles())
                 {
                     try
                     {
-                        if (f.Length >= minBytes)
-                            results.Add(new LargeFileInfo { Path = f.FullName, SizeBytes = f.Length, LastWrite = f.LastWriteTime });
+                        if (f.Length < minBytes) continue;
+                        // ---- 文件级系统重要文件排除 ----
+                        if (ExcludedFileNames.Contains(f.Name)) continue;                     // 虚拟内存/休眠/启动管理器
+                        var attrs = f.Attributes;
+                        if ((attrs & FileAttributes.ReparsePoint) != 0) continue;             // 符号链接本身不入清单
+                        if ((attrs & FileAttributes.System) != 0 && (attrs & FileAttributes.Hidden) != 0) continue; // 受保护系统文件
+                        results.Add(new LargeFileInfo { Path = f.FullName, SizeBytes = f.Length, LastWrite = f.LastWriteTime });
                     }
                     catch { }
                 }
                 foreach (var d in new DirectoryInfo(dir).EnumerateDirectories())
                 {
                     var name = d.Name;
-                    if (dir == root && excluded.Contains(name)) continue;
+                    if (dir == root ? rootExcluded.Contains(name) : anyExcluded.Contains(name)) continue;
                     if (name.StartsWith("$", StringComparison.Ordinal)) continue;
                     if (name.Equals("node_modules", StringComparison.OrdinalIgnoreCase)) continue;
+                    // ReparsePoint：junction/符号链接不入栈（自指循环 + 系统链接目标不穿透）
+                    if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                     stack.Push(d.FullName);
                 }
             }
             catch { /* 无权限跳过 */ }
+            // 节流上报：每 32 个目录一拍（全盘扫描可达数万目录，逐目录 report 会淹没 UI 消息泵）
+            if (progress != null && dirsScanned % 32 == 0)
+                progress.Report(new ScanProgress(dirsScanned, results.Count, results.Sum(r => r.SizeBytes)));
         }
         results = results.OrderByDescending(r => r.SizeBytes).ToList();
-        _log("info", $"大文件扫描完成：{drive}: 共 {results.Count} 个 ≥{minMb}MB（用时 {sw.ElapsedMilliseconds / 1000.0:0.#}s）");
+        progress?.Report(new ScanProgress(dirsScanned, results.Count, results.Sum(r => r.SizeBytes)));
+        _log("info", $"大文件扫描完成：{drive}: 共 {results.Count} 个 ≥{minMb}MB（用时 {sw.ElapsedMilliseconds / 1000.0:0.#}s，已排除系统重要文件）");
         return results;
     }, ct);
 
-    public async Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, CancellationToken ct)
+    public async Task<(int Ok, int Failed, long Bytes)> DeleteAsync(IEnumerable<string> paths, bool toRecycleBin, IProgress<DeleteProgress>? progress, CancellationToken ct)
     {
-        int ok = 0, failed = 0;
+        var list = paths as IList<string> ?? paths.ToList();
+        int ok = 0, failed = 0, done = 0;
         long bytes = 0;
         await Task.Run(() =>
         {
-            foreach (var p in paths)
+            foreach (var p in list)
             {
                 if (ct.IsCancellationRequested) break;
+                progress?.Report(new DeleteProgress(done, list.Count, Path.GetFileName(p), bytes));
                 try
                 {
-                    if (!File.Exists(p)) continue;
+                    if (!File.Exists(p)) { done++; continue; }
                     var len = new FileInfo(p).Length;
                     if (toRecycleBin)
                     {
-                        if (NativeRecycleBin.DeleteToRecycleBin(p) == 0) { ok++; bytes += len; } else failed++;
+                        // 返回 0 不一定代表删净（shell 静默失败/占用），与常规清理同口径补存在性复核
+                        if (NativeRecycleBin.DeleteToRecycleBin(p) == 0 && !FileOpsHelper.PathStillExists(p)) { ok++; bytes += len; } else failed++;
                     }
                     else
                     {
@@ -689,6 +736,7 @@ public sealed class LargeFileScanService : ILargeFileScanService
                     }
                 }
                 catch { failed++; }
+                done++;
             }
         }).ConfigureAwait(true);
         _log("info", $"大文件删除完成：成功 {ok}，失败 {failed}，释放 {FormatHelper.Bytes(bytes)}");

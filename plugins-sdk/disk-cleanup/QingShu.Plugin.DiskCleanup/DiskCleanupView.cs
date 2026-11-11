@@ -142,6 +142,11 @@ public sealed class DiskCleanupView : UserControl
         bar.SetBinding(ProgressBar.IsIndeterminateProperty, OneWay(nameof(CleanupViewModel.IsRegularBusy)));
         bar.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(CleanupViewModel.RegularBusyVis)));
 
+        // 清理阶段确定性进度条（目标级推进；扫描阶段隐藏走不定态条）
+        var cleanBar = new ProgressBar { Width = 140, VerticalAlignment = VerticalAlignment.Center, CornerRadius = new CornerRadius(2) };
+        cleanBar.SetBinding(ProgressBar.ValueProperty, OneWay(nameof(CleanupViewModel.RegularCleanProgress)));
+        cleanBar.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(CleanupViewModel.RegularCleanBarVis)));
+
         var cancelBtn = PlainButton("取消扫描", _vm.CancelRegularScanCommand);
         cancelBtn.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(CleanupViewModel.RegularBusyVis)));
 
@@ -151,6 +156,7 @@ public sealed class DiskCleanupView : UserControl
         toolbar.Children.Add(selectNone);
         toolbar.Children.Add(cleanBtn);
         toolbar.Children.Add(bar);
+        toolbar.Children.Add(cleanBar);
         toolbar.Children.Add(cancelBtn);
         toolbar.SetValue(Grid.RowProperty, 0);
 
@@ -261,6 +267,14 @@ public sealed class DiskCleanupView : UserControl
         statusRow.SetValue(Grid.RowProperty, 1);
         inner.Children.Add(statusRow);
 
+        // 删除确定性进度条（逐文件推进，删除中且已报出进度时显示）
+        inner.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var imDeleteBar = new ProgressBar { CornerRadius = new CornerRadius(2), Height = 6 };
+        imDeleteBar.SetBinding(ProgressBar.ValueProperty, OneWay(nameof(CleanupViewModel.ImDeleteProgress)));
+        imDeleteBar.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(CleanupViewModel.ImDeleteProgressVis)));
+        imDeleteBar.SetValue(Grid.RowProperty, 2);
+        inner.Children.Add(imDeleteBar);
+
         inner.SetValue(Grid.RowProperty, 2);
         grid.Children.Add(info);
         grid.Children.Add(toolbar);
@@ -327,6 +341,14 @@ public sealed class DiskCleanupView : UserControl
         statusRow.Children.Add(ring);
         statusRow.SetValue(Grid.RowProperty, 1);
         inner.Children.Add(statusRow);
+
+        // 删除确定性进度条（逐文件推进，删除中且已报出进度时显示）
+        inner.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var largeDeleteBar = new ProgressBar { CornerRadius = new CornerRadius(2), Height = 6 };
+        largeDeleteBar.SetBinding(ProgressBar.ValueProperty, OneWay(nameof(CleanupViewModel.LargeDeleteProgress)));
+        largeDeleteBar.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(CleanupViewModel.LargeDeleteProgressVis)));
+        largeDeleteBar.SetValue(Grid.RowProperty, 2);
+        inner.Children.Add(largeDeleteBar);
 
         inner.SetValue(Grid.RowProperty, 1);
         grid.Children.Add(toolbar);
