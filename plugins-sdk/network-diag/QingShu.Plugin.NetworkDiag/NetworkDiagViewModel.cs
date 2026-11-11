@@ -474,10 +474,18 @@ public partial class NetworkDiagViewModel : ObservableObject
             {
                 try
                 {
-                    if (File.Exists(auto) && Path.GetFileName(auto).StartsWith("QS-DIAG-", StringComparison.OrdinalIgnoreCase))
+                    if (File.Exists(auto) && IsAutoBackupReportPath(auto))
                     {
                         File.Delete(auto);
                         _log("info", $"[report] 正式报告已顶替自动兜底报告（已删除）：{auto}");
+                        // sidecar 基线摘要与 PDF 同名同生死：兜底版删除后其摘要一并移除，
+                        // 防下一份报告把已废弃的兜底版当对比基线（正式版 sidecar 已是最新基线）
+                        var sidecar = auto + ".summary.json";
+                        if (File.Exists(sidecar))
+                        {
+                            File.Delete(sidecar);
+                            _log("info", $"[report] 已同步移除兜底报告基线摘要：{sidecar}");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -491,6 +499,29 @@ public partial class NetworkDiagViewModel : ObservableObject
         return path;
     }
 
+    /// <summary>
+    /// 自动兜底报告路径校验（顶替删除前的防误删双保险）：
+    /// ① 文件名必须是 PdfReportService 的产出格式「网络诊断报告_*.pdf」——注意报告编号 QS-DIAG-*
+    ///   只存在于 PDF 内容与页脚，不是文件名前缀；历史上按 QS-DIAG- 前缀校验恒为 false，
+    ///   正式报告顶替时兜底报告从未被真实删除（Task 82 修复，TESTING 第 45 条同步修正）；
+    /// ② 全路径必须位于插件报告根目录（%LocalAppData%\QingShu.Toolkit\reports）之内。
+    /// </summary>
+    private static bool IsAutoBackupReportPath(string path)
+    {
+        try
+        {
+            var name = Path.GetFileName(path);
+            if (!name.StartsWith("网络诊断报告_", StringComparison.Ordinal) ||
+                !name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                return false;
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "QingShu.Toolkit", "reports");
+            var full = Path.GetFullPath(path);
+            return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
     private static string ModeTextOf(RunMode mode) => mode switch
     {
         RunMode.Full => "全面诊断",
@@ -502,15 +533,22 @@ public partial class NetworkDiagViewModel : ObservableObject
     {
         var list = new List<(int, string)>();
         foreach (var f in Items.Where(x => x.Status == CheckStatus.Fail))
-            list.Add((1, $"【{f.Name}】{f.Suggestion}"));
+            list.Add((1, $"【{f.Name}】{SuggestOf(f)}"));
         foreach (var w in Items.Where(x => x.Status == CheckStatus.Warning))
-            list.Add((2, $"【{w.Name}】{w.Suggestion}"));
+            list.Add((2, $"【{w.Name}】{SuggestOf(w)}"));
         var causes = _lastReport?.SlowCauses; // 独立方法内空流分析不继承调用方的非空守卫，需自证空安全
         if (causes is { Count: > 0 })
             list.Add((2, $"低速首要嫌疑：{causes[0].Title}——按“低速原因分析”清单逐项处置后复测对比。"));
         if (FixedCount > 0)
             list.Add((2, "已执行自动修复的项目建议在课后再次运行“快速体检”复核修复效果。"));
         list.Add((3, "建议每周运行一次全面诊断并留存报告，形成教室网络健康基线，便于故障回溯。"));
-        return list;
+        // 同文案去重：多项共用同一建议时只保留一条，防建议表灌水稀释重点（tuple 值等价即重复）。
+        return list.Distinct().ToList();
     }
+
+    /// <summary>建议文案兜底：检查项未给建议（如仅需观察的警告）时给出通用引导，报告建议表不留空行。</summary>
+    private static string SuggestOf(CheckItem x)
+        => string.IsNullOrWhiteSpace(x.Suggestion)
+            ? "建议在诊断列表展开该项查看实测证据，并按「综合推断」与责任归属提示处理。"
+            : x.Suggestion;
 }

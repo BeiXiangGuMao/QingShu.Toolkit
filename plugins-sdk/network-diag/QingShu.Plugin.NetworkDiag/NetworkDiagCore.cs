@@ -8,7 +8,9 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -1085,7 +1087,8 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         new NetworkChecks.ProxyDiffCheck(),
         new NetworkChecks.Port53Check(),
         new NetworkChecks.AuthClientCheck(),
-        new NetworkChecks.StackSelfTestCheck()
+        new NetworkChecks.StackSelfTestCheck(),
+        new NetworkChecks.TlsCertCheck()
     };
 
     /// <summary>逐项硬超时（秒）：坏网环境下慢超时检查不再拖住整个诊断列表（防「待检查」滞留）。</summary>
@@ -3395,6 +3398,76 @@ public static partial class NetworkChecks
             {
                 return CheckOutcome.Fail("本机协议栈自检失败",
                     "环回 TCP 都无法建立是 Winsock/LSP 损坏的典型症状（第三方网络软件/病毒破坏）：可执行一键修复中的「重置 Winsock」并重启。", $"异常：{ex.Message}");
+            }
+        }
+    }
+
+    // ---------------- HTTPS 证书链校验（TLS 拦截/中间盒探测） ----------------
+    // 罕见层（仅全面诊断）。internet.https 已覆盖「握手失败→FAIL」的连通面，本项进一步区分
+    // 证书异常的归属：自签/不受信任根/域名不匹配多为上网行为管理（TLS 解密网关）或透明劫持，
+    // 证书时间无效多为系统时钟错误。校园网普遍部署行为管理设备，证书被替换属可解释现象，
+    // 故判级上限为 WARN 不判 FAIL（避免把正常的安全设备误报成故障）。
+    public sealed class TlsCertCheck : CheckBase
+    {
+        public override string Id => "rare.tls_cert";
+        public override string Name => "HTTPS 证书链校验";
+        public override CheckCategory Category => CheckCategory.Rare;
+
+        public override Task<CheckOutcome> RunAsync(CheckContext ctx, CancellationToken ct)
+        {
+            // 证据收集在自定义校验回调里完成并放行握手（恒返回 true）：返回 false 会直接抛
+            // AuthenticationException 丢掉链错误明细，放行后可拿到完整证书与链状态再判级。
+            var policyErrors = SslPolicyErrors.None;
+            var chainNotes = new List<string>();
+            try
+            {
+                using var client = new TcpClient();
+                client.ConnectAsync("www.baidu.com", 443).WaitAsync(TimeSpan.FromSeconds(8), ct)
+                    .ConfigureAwait(false).GetAwaiter().GetResult();
+                using var ssl = new SslStream(client.GetStream(), leaveInnerStreamOpen: false,
+                    (sender, cert, chain, errors) =>
+                    {
+                        policyErrors = errors;
+                        if (chain?.ChainStatus != null)
+                            foreach (var st in chain.ChainStatus)
+                                if (st.Status != X509ChainStatusFlags.NoError && !string.IsNullOrEmpty(st.StatusInformation))
+                                    chainNotes.Add(st.StatusInformation.Trim());
+                        return true;
+                    });
+                ssl.AuthenticateAsClientAsync("www.baidu.com").WaitAsync(TimeSpan.FromSeconds(8), ct)
+                    .ConfigureAwait(false).GetAwaiter().GetResult();
+
+                var details = new List<string>
+                {
+                    ssl.RemoteCertificate is X509Certificate c
+                        ? $"证书主体：{c.Subject}；签发者：{c.Issuer}"
+                        : "未获取到对端证书"
+                };
+                if (policyErrors == SslPolicyErrors.None && chainNotes.Count == 0)
+                    return Task.FromResult(CheckOutcome.Pass("HTTPS 证书链校验通过", details.ToArray()));
+
+                if (policyErrors != SslPolicyErrors.None) details.Add($"校验标记：{policyErrors}");
+                if (chainNotes.Count > 0) details.Add("链状态：" + string.Join("；", chainNotes.Take(3)));
+                if (policyErrors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch))
+                    details.Add("证书域名与访问目标不匹配：TLS 解密网关或劫持设备的典型特征。");
+
+                bool timeInvalid = chainNotes.Any(n => n.IndexOf("time", StringComparison.OrdinalIgnoreCase) >= 0)
+                                   || ssl.RemoteCertificate is X509Certificate2 c2 &&
+                                      (c2.NotAfter < DateTime.Now || c2.NotBefore > DateTime.Now);
+                var (head, tail) = timeInvalid
+                    ? ("HTTPS 证书时间无效（已过期或未生效）",
+                       "多与系统时钟偏差有关：结合「系统时钟校准」检查项校准时间后重测。")
+                    : ("HTTPS 证书不受信任（疑似 TLS 解密/自签）",
+                       "本校若部署上网行为管理（TLS 解密网关），此现象属正常，安装其根证书后即消失；未部署则可能存在中间人劫持，请反馈信息中心核查出口设备。");
+                return Task.FromResult(CheckOutcome.Warn(head, tail, details.ToArray()));
+            }
+            catch (Exception ex)
+            {
+                // 连不上/握手未完成：连通面结论由 internet.https 负责，本项只做「能握手时」的证书深度校验
+                var msg = (ex.Message ?? "").Trim();
+                if (msg.Length > 90) msg = msg[..90] + "…";
+                return Task.FromResult(CheckOutcome.Skip(
+                    $"443 连接或 TLS 握手未完成，证书链校验无法进行（连通结论见「HTTPS / TLS 连通」项）：{msg}"));
             }
         }
     }

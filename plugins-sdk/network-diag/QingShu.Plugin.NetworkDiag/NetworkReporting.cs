@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -92,6 +93,8 @@ public sealed class NetworkReportData
     public List<SlowCause> SlowCauses { get; set; } = new();
     /// <summary>网络拓扑快照（诊断实测自动生成；无快照时为 null，报告不渲染拓扑节）。</summary>
     public NetworkTopology? Topology { get; set; }
+    /// <summary>上一份报告基线（sidecar JSON 读取；无历史报告时为 null，对比行不渲染）。</summary>
+    public ReportBaseline? Baseline { get; set; }
 }
 
 // ================= 设备信息探测（宿主 Services/HardwareProbeService.cs 同源移植） =================
@@ -283,6 +286,10 @@ public sealed class PdfReportService : IPdfReportService
             var file = Path.Combine(dir,
                 $"网络诊断报告_{Sanitize(data.Meta.DeviceTag)}_{DateTime.Now:yyyyMMdd-HHmmss}.pdf");
 
+            // 历史基线对比（插件版新增）：生成前读最近一份 sidecar 作为上一份报告快照渲染进对比行；
+            // sidecar 与 PDF 同名（.pdf 后追加 .summary.json），随 PDF 同生共死（顶替删除时同步删除）。
+            data.Baseline = ReadLatestBaseline(dir);
+
             Document.Create(container =>
             {
                 container.Page(page =>
@@ -309,6 +316,7 @@ public sealed class PdfReportService : IPdfReportService
                     });
                 });
             }).GeneratePdf(file);
+            WriteBaselineSidecar(file, data);
 
             return file;
         });
@@ -318,6 +326,74 @@ public sealed class PdfReportService : IPdfReportService
         foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
         return string.IsNullOrWhiteSpace(name) ? "未命名设备" : name;
     }
+
+    // ---------- 历史基线对比（sidecar JSON 摘要，随报告自动维护） ----------
+
+    /// <summary>
+    /// 读取最近一份报告 sidecar（递归全部日期目录按修改时间取最新）。
+    /// 无历史或单份损坏时跳过继续找更早的，全部不可用返回 null——对比是增强不是主流程，
+    /// 任何 sidecar 异常不得影响 PDF 报告本体的生成与交付。
+    /// </summary>
+    private static ReportBaseline? ReadLatestBaseline(string reportRoot)
+    {
+        try
+        {
+            var candidates = Directory.EnumerateFiles(reportRoot, "*.pdf.summary.json", SearchOption.AllDirectories)
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTime);
+            foreach (var f in candidates)
+            {
+                try
+                {
+                    var json = File.ReadAllText(f.FullName);
+                    var b = JsonSerializer.Deserialize<ReportBaseline>(json, BaselineJsonOptions);
+                    if (b != null && !string.IsNullOrEmpty(b.ReportId)) return b;
+                }
+                catch { } // 单份损坏跳过，继续找更早的
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>把本次报告的计数与评分写入 sidecar（供下一份报告对比基线；失败不影响报告交付）。</summary>
+    private static void WriteBaselineSidecar(string pdfPath, NetworkReportData data)
+    {
+        try
+        {
+            int pass = 0, warn = 0, fail = 0, fixedN = 0;
+            foreach (var r in data.Results)
+            {
+                switch (r.Status)
+                {
+                    case CheckStatus.Pass: pass++; break;
+                    case CheckStatus.Warning: warn++; break;
+                    case CheckStatus.Fail: fail++; break;
+                    case CheckStatus.Fixed: fixedN++; break;
+                }
+            }
+            var snapshot = new ReportBaseline
+            {
+                ReportId = data.Meta.ReportId,
+                GeneratedAt = data.Meta.GeneratedAt,
+                ModeText = data.Meta.ModeText,
+                Pass = pass + fixedN,   // 与报告 PassCount 口径一致（已修复并入通过）
+                Warn = warn,
+                Fail = fail,
+                Fixed = fixedN,
+                Score = ReportScoring.Calculate(data.Results).Score
+            };
+            File.WriteAllText(pdfPath + ".summary.json", JsonSerializer.Serialize(snapshot, BaselineJsonOptions));
+        }
+        catch { } // sidecar 失败不影响 PDF 交付，只是下一份少了对比
+    }
+
+    private static readonly JsonSerializerOptions BaselineJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
 
     // ================= 页眉 =================
     private static void ComposeHeader(IContainer c, NetworkReportData data)
@@ -462,6 +538,24 @@ public sealed class PdfReportService : IPdfReportService
     private static void ComposeSummarySection(ColumnDescriptor col, NetworkReportData data)
     {
         SectionTitle(col, "二、诊断结论概览");
+        var score = ReportScoring.Calculate(data.Results);
+        // 健康评分（插件版新增）：0-100 单值 + 四档评级，扣分规则透明可复核（右侧列明扣分明细）
+        col.Item().PaddingTop(8).Row(row =>
+        {
+            row.AutoItem().Background(score.Bg).Border(0.8f).BorderColor(score.Color)
+                .PaddingVertical(7).PaddingHorizontal(12).AlignMiddle().Text(t =>
+                {
+                    t.DefaultTextStyle(x => x.FontSize(17).SemiBold().FontColor(score.Color));
+                    t.Span($"{score.Score}");
+                    t.Span(" / 100").FontSize(9).FontColor("#6E6E73");
+                });
+            row.RelativeItem().PaddingLeft(12).Column(c =>
+            {
+                c.Item().Text($"健康评级：{score.Grade}（评分 = 100 - 未通过×15 - 警告×5；已修复不扣分，跳过不计入）")
+                    .FontSize(9).SemiBold().FontColor("#1D1D1F");
+                c.Item().PaddingTop(2).Text($"扣分明细：{score.DeductionLine}").FontSize(8.5f).FontColor("#6E6E73");
+            });
+        });
         int pass = 0, warn = 0, fail = 0, fixedCount = 0, skip = 0;
         foreach (var r in data.Results)
         {
@@ -505,7 +599,31 @@ public sealed class PdfReportService : IPdfReportService
                 conclusion += $"另有 {skip} 项因环境不适用自动跳过，未计入统计。";
         }
         conclusion += "全部证据的最终综合判断见下方「综合推断（最终判断）」一节。";
-        col.Item().PaddingTop(8).PaddingBottom(2).Text(conclusion).FontSize(9.5f).LineHeight(1.6f);
+        col.Item().PaddingTop(8).PaddingBottom(2).Text(t =>
+        {
+            t.DefaultTextStyle(x => x.FontSize(9.5f).LineHeight(1.6f).FontColor("#1D1D1F"));
+            t.Span($"本次健康评分 {score.Score} 分（{score.Grade}）。")
+                .SemiBold().FontColor(score.Color);
+            t.Span(conclusion);
+        });
+
+        // 历史基线对比（插件版新增）：与最近一份 sidecar 快照对比计数与评分，量化「变好/变坏」；
+        // 首份报告无历史基线时不渲染本行。方向以评分为准（计数明细随行列出）。
+        if (data.Baseline is { } baseLine)
+        {
+            int passNow = pass + fixedCount;
+            var (dirWord, dirColor) = score.Score > baseLine.Score ? ("较上一份改善", "#248A3D")
+                : score.Score < baseLine.Score ? ("较上一份下降", "#D70015") : ("与上一份持平", "#6E6E73");
+            col.Item().PaddingTop(6).Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(8.8f).LineHeight(1.55f).FontColor("#48484A"));
+                t.Span("与上一份报告对比：").SemiBold().FontColor("#1D1D1F");
+                t.Span($"（{Empty(baseLine.ReportId, "历史报告")}，{baseLine.GeneratedAt:MM-dd HH:mm}" +
+                       (string.IsNullOrEmpty(baseLine.ModeText) ? "" : $"，{baseLine.ModeText}") + "）");
+                t.Span($"通过 {baseLine.Pass}→{passNow} · 警告 {baseLine.Warn}→{warn} · 未通过 {baseLine.Fail}→{fail} · 评分 {baseLine.Score}→{score.Score} ");
+                t.Span($"（{dirWord}）").SemiBold().FontColor(dirColor);
+            });
+        }
     }
 
     private static void Chip(RowDescriptor row, string textColor, string bgColor, string label, int count)
@@ -927,6 +1045,77 @@ public sealed class PdfReportService : IPdfReportService
         col.Item().PaddingTop(6).Text("本报告由青枢工具箱在本机自动生成，全部诊断数据仅在本地采集与留存，不包含任何云端上传行为。诊断时间戳以本机系统时钟为准。")
             .FontSize(8).FontColor("#8E8E93").LineHeight(1.5f);
     }
+}
+
+// ================= 报告健康评分（插件版新增，纯函数无 IO） =================
+
+// 动机：结论概览此前只有「通过/警告/未通过」计数，教师与信息中心需要自行换算严重程度。
+// 评分把计数折算成 0-100 单一数值 + 四档评级，扣分规则透明可复核（报告中列明扣分明细）：
+//   未通过 -15/项（阻断性故障）、警告 -5/项（隐患）、已修复不扣分（已闭环）、跳过不计入。
+// 评分随 PDF 与 sidecar 落盘，供历史基线对比（与上一份报告的「改善/下降/持平」判定）。
+
+/// <summary>健康评分结果（全部字段直接可渲染）。</summary>
+public sealed class HealthScore
+{
+    public int Score { get; init; }
+    /// <summary>评级：优 / 良 / 中 / 差。</summary>
+    public string Grade { get; init; } = "";
+    /// <summary>评级前景色（优 绿 / 良 蓝 / 中 橙 / 差 红，与报告色板一致）。</summary>
+    public string Color { get; init; } = "";
+    /// <summary>评级背景色（同上）。</summary>
+    public string Bg { get; init; } = "";
+    /// <summary>扣分明细一行（无扣分项时为「无扣分项」）。</summary>
+    public string DeductionLine { get; init; } = "";
+}
+
+public static class ReportScoring
+{
+    /// <summary>未通过扣分/项（阻断性故障）。</summary>
+    public const int PenaltyFail = 15;
+    /// <summary>警告扣分/项（隐患）。</summary>
+    public const int PenaltyWarn = 5;
+
+    public static HealthScore Calculate(IReadOnlyList<CheckItem> results)
+    {
+        int fail = 0, warn = 0, fixedN = 0;
+        foreach (var r in results)
+        {
+            switch (r.Status)
+            {
+                case CheckStatus.Fail: fail++; break;
+                case CheckStatus.Warning: warn++; break;
+                case CheckStatus.Fixed: fixedN++; break;
+            }
+        }
+        int score = Math.Clamp(100 - fail * PenaltyFail - warn * PenaltyWarn, 0, 100);
+        var (grade, color, bg) = score switch
+        {
+            >= 90 => ("优", "#248A3D", "#E9F9EE"),
+            >= 75 => ("良", "#0062CC", "#E8F2FF"),
+            >= 60 => ("中", "#C93400", "#FFF4E5"),
+            _ => ("差", "#D70015", "#FFEBEA")
+        };
+        var parts = new List<string>();
+        if (fail > 0) parts.Add($"未通过 {fail} 项（-{fail * PenaltyFail}）");
+        if (warn > 0) parts.Add($"警告 {warn} 项（-{warn * PenaltyWarn}）");
+        var deduction = parts.Count == 0 ? "无扣分项" : string.Join(" · ", parts);
+        if (fixedN > 0) deduction += $"；已修复 {fixedN} 项不扣分（已闭环）";
+        return new HealthScore { Score = score, Grade = grade, Color = color, Bg = bg, DeductionLine = deduction };
+    }
+}
+
+/// <summary>上一份报告基线快照（sidecar JSON，与 PDF 同名 .pdf.summary.json，同生共死）。</summary>
+public sealed class ReportBaseline
+{
+    public string ReportId { get; set; } = "";
+    public DateTime GeneratedAt { get; set; }
+    public string ModeText { get; set; } = "";
+    /// <summary>通过数（已修复并入，与报告 PassCount 口径一致）。</summary>
+    public int Pass { get; set; }
+    public int Warn { get; set; }
+    public int Fail { get; set; }
+    public int Fixed { get; set; }
+    public int Score { get; set; }
 }
 
 // ================= 报告综合推断引擎（宿主 Services/Reporting/ReportInference.cs 同源移植） =================
