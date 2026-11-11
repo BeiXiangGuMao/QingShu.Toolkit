@@ -72,6 +72,9 @@ public sealed class PluginManager : IPluginManager
 
     public string KeyFingerprint => PluginSigning.Fingerprint;
 
+    /// <summary>运行集变化（任一插件加载成功 / 卸载完成 / 退出收尾开始）后触发（后台线程，订阅方须自行调度回 UI 线程）。</summary>
+    public event Action? RuntimesChanged;
+
     /// <summary>运行中插件：目录名 → 运行时句柄。</summary>
     private readonly Dictionary<string, RuntimePlugin> _runtime = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>启用表：目录名 → 是否启用（缺省 true）。</summary>
