@@ -167,6 +167,19 @@ public sealed partial class MainWindow : Window
             NavigateToPage(page);
     }
 
+    /// <summary>
+    /// 清空 Frame 返回栈：本壳无返回语义（NavView 无返回按钮，也无 BackRequested 处理），
+    /// 而 Frame.Navigate 每次都会把当前页压入 BackStack 且条目永不消费——所有 VM 均为
+    /// Transient，旧页整棵控件树（含其 VM 与扫描结果集合）被历史条目持有无法 GC，
+    /// 挨个切换模块内存线性上涨（用户实测实锤）。每次导航后清栈，旧页立即失去引用可回收；
+    /// 旧页 Unloaded→Vm.Dispose 仍在卸载时照常执行，不受影响。
+    /// </summary>
+    private void ClearBackStack()
+    {
+        try { if (ContentFrame.BackStack.Count > 0) ContentFrame.BackStack.Clear(); }
+        catch { /* 导航过程中 Frame 不可用时尽力而为 */ }
+    }
+
     public void NavigateToPage(Type pageType)
     {
         // 内置页被外移插件接管（manifest.navTag 对上）：内容改挂插件视图，导航项原位不动。
@@ -180,6 +193,7 @@ public sealed partial class MainWindow : Window
 
         if (ContentFrame.CurrentSourcePageType == pageType) return;
         ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+        ClearBackStack();
         _navSyncing = true;
         SelectNavItemByPage(pageType);
         _navSyncing = false;
@@ -199,6 +213,7 @@ public sealed partial class MainWindow : Window
             if (builtin == null) return;
             if (ContentFrame.CurrentSourcePageType == builtin.PageType) return;
             ContentFrame.Navigate(builtin.PageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            ClearBackStack();
             _navSyncing = true;
             SelectNavItem(tag);
             _navSyncing = false;
@@ -207,6 +222,7 @@ public sealed partial class MainWindow : Window
 
         _currentPluginNavTag = tag;
         ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+        ClearBackStack();
         _navSyncing = true;
         SelectNavItem(tag);
         _navSyncing = false;

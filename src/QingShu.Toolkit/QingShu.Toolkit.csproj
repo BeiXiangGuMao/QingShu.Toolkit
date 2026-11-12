@@ -41,10 +41,10 @@
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!--
       版本策略（Beta 阶段）：展示版本带 -beta 后缀（经 InformationalVersion 自动进入 AppVersion.DisplayText），
-      程序集数字版本自动取前缀 1.2.0，更新比较 Version.Parse(AppVersion.Text) 不受影响。
-      转正时改为如 <Version>1.3.0</Version> 即可，展示后缀自动消失。
+      程序集数字版本自动取前缀 1.3.0，更新比较 Version.Parse(AppVersion.Text) 不受影响。
+      转正时改为如 <Version>1.4.0</Version> 即可，展示后缀自动消失。
     -->
-    <Version>1.2.0-beta</Version>
+    <Version>1.3.0-beta</Version>
     <Copyright>版权所有 © 2026 BeiXiangGuMao</Copyright>
     <AssemblyName>QingShu.Toolkit</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
