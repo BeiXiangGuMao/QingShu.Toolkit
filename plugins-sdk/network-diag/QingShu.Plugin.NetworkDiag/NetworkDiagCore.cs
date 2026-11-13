@@ -1754,7 +1754,7 @@ public static partial class NetworkChecks
             };
 
             if (stats.AllLost)
-                return CheckOutcome.Fail($"网关 {gw} 完全不通", "本机到路由器/三层交换机之间断开：请检查网线、交换机端口，或重启教室路由器后重试。", canFix: true, details.ToArray());
+                return CheckOutcome.Fail($"网关 {gw} 完全不通", "本机到路由器/三层交换机之间断开：请检查网线、交换机端口，或重启教室路由器后重试。", details.ToArray());
             if (stats.LossPct > 20)
                 return CheckOutcome.Fail($"网关丢包严重（{stats.LossPct:0.#}%）", "网线老化/水晶头接触不良/AP 过载的典型表现：先换一根网线或换一个端口，仍异常则报修。", details.ToArray());
             if (stats.AvgMs > ctx.Settings.LatencyFailMs)
@@ -3592,10 +3592,13 @@ public sealed class NetworkRepairService : INetworkRepairService
                 "写入单个注册表值 DODownloadMode=100（旁路模式，非导入 .reg 文件），阻止系统向局域网/互联网上传更新分片占满上行。还原：删除该值即恢复默认。", true, false,
                 new[] { "speed.delivopt" }));
 
-        if (Has("speed.nic_rate") && SharedTrue("nic.powersave"))
+        // 节能托管：只看本次诊断的共享键（写入点 NicRateCheck 全双工探测 + 两次探查仅记线索不判级，
+        // 两项都可能 Pass）——若仍要求 Has("speed.nic_rate") 在 Failed 列表，节能开启而速率正常时
+        // 修复动作永不入计划，与 hardware.nic_probe 线索「可用一键修复关闭网卡节能」的承诺脱节。
+        if (SharedTrue("nic.powersave"))
             plan.Add(new RepairAction("nic_powersave_off", "关闭网卡节能托管",
                 "禁止系统为省电降低网卡性能（AllowComputerToTurnOffDevice=Disabled），避免课中网卡休眠导致的瞬时卡顿。", true, false,
-                new[] { "speed.nic_rate" }));
+                new[] { "speed.nic_rate", "hardware.nic_probe" }));
 
         if (Has("speed.nic_rate") && SharedTrue("nic.rate.low"))
             plan.Add(new RepairAction("adapter_reset", $"网卡重协商（{(adapterName.Length > 0 ? adapterName : "主网卡")}）",

@@ -98,8 +98,27 @@ public partial class LargeFileVm : ObservableObject
     public string Name => Item.Name;
     public string PathText => Item.Dir;
     public string ExtText => Item.Ext;
+    /// <summary>按扩展名归类的人类可读类型名（模板徽章展示，帮助快速判断可删性）。</summary>
+    public string KindText => KindOf(Item.Ext);
     public string SizeText => FormatHelper.Bytes(Item.SizeBytes);
     public string TimeText => Item.LastWrite.ToString("yyyy-MM-dd HH:mm");
+
+    /// <summary>扩展名 → 类型徽章文案（覆盖机房常见大文件；未知扩展名回退原始后缀或「其他」）。</summary>
+    public static string KindOf(string ext) => ext switch
+    {
+        ".MP4" or ".AVI" or ".MKV" or ".MOV" or ".WMV" or ".FLV" or ".M4V" or ".TS" or ".WEBM" => "视频",
+        ".MP3" or ".WAV" or ".FLAC" or ".M4A" or ".APE" or ".OGG" => "音频",
+        ".ZIP" or ".RAR" or ".7Z" or ".TAR" or ".GZ" or ".BZ2" or ".XZ" => "压缩包",
+        ".ISO" or ".IMG" or ".VHD" or ".VHDX" or ".GHO" or ".WIM" => "镜像",
+        ".VMDK" or ".VDI" or ".QCOW2" => "虚拟机磁盘",
+        ".EXE" or ".MSI" or ".MSIX" => "安装包",
+        ".DOC" or ".DOCX" or ".PDF" or ".PPT" or ".PPTX" or ".XLS" or ".XLSX" => "文档",
+        ".BAK" or ".DMP" or ".EML" => "备份/转储",
+        ".PST" or ".OST" => "邮件存档",
+        ".DB" or ".MDF" or ".NDF" or ".LDF" or ".ACCDB" => "数据库",
+        "" => "无后缀",
+        _ => ext.TrimStart('.').ToLowerInvariant() + " 文件"
+    };
 
     [ObservableProperty] private bool _isSelected;
 }
@@ -395,7 +414,7 @@ public partial class CleanupViewModel : ObservableObject
             UpdateImSelected();
             WeChatStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
-                : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
+                : $"发现 {files.Count} 个久远文件（{files.Select(f => f.Account).Distinct().Count()} 个账号）· 共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已按账号分组、默认全选，请逐项确认后删除。";
         }
         catch (OperationCanceledException) { WeChatStatus = "扫描已取消。"; }
         catch (Exception ex) { WeChatStatus = $"扫描失败：{ex.Message}"; }
@@ -430,7 +449,7 @@ public partial class CleanupViewModel : ObservableObject
             UpdateImSelected();
             QqStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
-                : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
+                : $"发现 {files.Count} 个久远文件（{files.Select(f => f.Account).Distinct().Count()} 个账号）· 共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已按账号分组、默认全选，请逐项确认后删除。";
         }
         catch (OperationCanceledException) { QqStatus = "扫描已取消。"; }
         catch (Exception ex) { QqStatus = $"扫描失败：{ex.Message}"; }
@@ -584,7 +603,7 @@ public partial class CleanupViewModel : ObservableObject
             if (_ctsLarge.IsCancellationRequested) { LargeStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             LargeFiles = new ObservableCollection<LargeFileVm>(files.Take(200).Select(f => new LargeFileVm(f)));
             UpdateLargeSelected();
-            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
+            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件 · 合计 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}，展示前 {LargeFiles.Count} 个最大的。请勾选确认后删除。";
         }
         catch (OperationCanceledException) { LargeStatus = "扫描已取消。"; }
         catch (Exception ex) { LargeStatus = $"扫描失败：{ex.Message}"; }

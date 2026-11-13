@@ -502,7 +502,12 @@ public sealed class DiskCleanupView : UserControl
     </Grid.ColumnDefinitions>
     <CheckBox IsChecked=""{{Binding IsSelected, Mode=TwoWay}}"" VerticalAlignment=""Center"" MinWidth=""0""/>
     <StackPanel Grid.Column=""1"" Spacing=""1"">
-      <TextBlock Text=""{{Binding Name}}"" Style=""{{StaticResource CaptionTextBlock}}"" Foreground=""{{ThemeResource TextPrimaryBrush}}"" FontWeight=""SemiBold""/>
+      <StackPanel Orientation=""Horizontal"" Spacing=""8"">
+        <TextBlock Text=""{{Binding Name}}"" Style=""{{StaticResource CaptionTextBlock}}"" Foreground=""{{ThemeResource TextPrimaryBrush}}"" FontWeight=""SemiBold""/>
+        <Border Background=""{{ThemeResource InfoChipFillBrush}}"" CornerRadius=""4"" Padding=""5,0"">
+          <TextBlock Text=""{{Binding KindText}}"" Foreground=""{{ThemeResource InfoTextBrush}}"" FontSize=""10""/>
+        </Border>
+      </StackPanel>
       <TextBlock Text=""{{Binding PathText}}"" Style=""{{StaticResource MonoTextBlock}}"" TextTrimming=""CharacterEllipsis""/>
     </StackPanel>
     <TextBlock Grid.Column=""2"" Text=""{{Binding TimeText}}"" Style=""{{StaticResource CaptionTextBlock}}"" VerticalAlignment=""Center"" HorizontalAlignment=""Right""/>
@@ -518,7 +523,12 @@ public sealed class DiskCleanupView : UserControl
     </Grid.ColumnDefinitions>
     <CheckBox IsChecked=""{{Binding IsSelected, Mode=TwoWay}}"" VerticalAlignment=""Center"" MinWidth=""0""/>
     <StackPanel Grid.Column=""1"" Spacing=""1"">
-      <TextBlock Text=""{{Binding Name}}"" FontSize=""12"" FontWeight=""SemiBold""/>
+      <StackPanel Orientation=""Horizontal"" Spacing=""8"">
+        <TextBlock Text=""{{Binding Name}}"" FontSize=""12"" FontWeight=""SemiBold""/>
+        <Border Background=""#1A0062CC"" CornerRadius=""4"" Padding=""5,0"">
+          <TextBlock Text=""{{Binding KindText}}"" Foreground=""#FF0062CC"" FontSize=""10""/>
+        </Border>
+      </StackPanel>
       <TextBlock Text=""{{Binding PathText}}"" FontSize=""11.5"" FontFamily=""Consolas"" TextTrimming=""CharacterEllipsis"" Opacity=""0.85""/>
     </StackPanel>
     <TextBlock Grid.Column=""2"" Text=""{{Binding TimeText}}"" FontSize=""12"" Opacity=""0.72"" VerticalAlignment=""Center"" HorizontalAlignment=""Right""/>
