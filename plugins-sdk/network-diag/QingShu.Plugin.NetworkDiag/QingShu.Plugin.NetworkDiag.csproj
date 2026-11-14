@@ -22,6 +22,8 @@
     <AssemblyName>QingShu.Plugin.NetworkDiag</AssemblyName>
     <RootNamespace>QingShu.Plugin.NetworkDiag</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 正式版（stable 分支）：与宿主同口径定义 STABLE_BUILD，编译期剔除实验性功能（门户自动登录，NetworkDiagCore 内 #if 守护） -->
+    <DefineConstants>STABLE_BUILD</DefineConstants>
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <!--
