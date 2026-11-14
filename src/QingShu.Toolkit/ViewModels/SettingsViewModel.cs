@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Update;
@@ -15,6 +16,9 @@ public partial class SettingsViewModel : ObservableObject
     private readonly ISettingsService _settings;
     private readonly IUpdateService _update;
     private readonly ILogService _log;
+
+    /// <summary>门户自动登录（实验性）设置组可见性：预览版（main）恒可见；正式版（stable 分支，STABLE_BUILD）整组收起。</summary>
+    public bool PortalAutoLoginSectionVisible => AppBuildProfile.ExperimentalEnabled;
 
     [ObservableProperty] private int _themeIndex;          // 0=跟随系统 1=浅色 2=深色
     [ObservableProperty] private bool _useAcrylic;

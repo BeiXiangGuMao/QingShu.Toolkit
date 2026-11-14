@@ -803,7 +803,8 @@ public static class SpeedTestHelper
     }
 }
 
-// ================= 城域网门户自动登录（宿主 Helpers/PortalAutoLoginHelper 同源移植） =================
+#if !STABLE_BUILD
+// ================= 城域网门户自动登录（宿主 Helpers/PortalAutoLoginHelper 同源移植，正式版剔除） =================
 
 /// <summary>
 /// 城域网认证门户“自动登录”（实验性）：
@@ -963,6 +964,7 @@ public static class PortalAutoLoginHelper
         catch { return url; }
     }
 }
+#endif
 
 // ================= 诊断共享上下文与检查基座（宿主 Services/Network/CheckContext.cs 同源移植） =================
 
@@ -3568,10 +3570,15 @@ public sealed class NetworkRepairService : INetworkRepairService
 
         if (Has("portal.detect") || Has("portal.expiry"))
         {
+#if !STABLE_BUILD
             var st = _settings.Current;
             var autoHint = st.PortalAutoLogin && st.PortalUsername.Length > 0 && st.PortalPassword.Length > 0
                 ? "已开启自动登录：一键修复将直接提交认证表单，并用连通性复核验证；失败时自动回退浏览器人工登录。"
                 : "调起默认浏览器打开检测到的认证门户；在 设置 → 网络诊断 配置账号并开启自动登录后，可免每次手动登录。";
+#else
+            // 正式版（STABLE_BUILD）：实验性自动登录整体剔除，仅保留浏览器人工登录引导
+            const string autoHint = "调起默认浏览器打开检测到的认证门户。";
+#endif
             var openPortal = new RepairAction("open_portal", "打开城域网认证页面",
                 autoHint,
                 false, false, new[] { "portal.detect", "portal.expiry" })
@@ -3702,6 +3709,7 @@ public sealed class NetworkRepairService : INetworkRepairService
                 if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var portal))
                     return (false, "未检测到认证门户且未配置：请手动在浏览器打开认证页，或在 设置 → 网络诊断 中填写门户地址。");
 
+#if !STABLE_BUILD
                 // 实验性自动登录：配置了账号密码时先尝试直接提交认证表单，失败回退浏览器
                 var s = _settings.Current;
                 if (s.PortalAutoLogin && s.PortalUsername.Length > 0 && s.PortalPassword.Length > 0)
@@ -3714,6 +3722,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                 }
                 Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
                 return (true, $"已在默认浏览器打开 {portal}（提示：在 设置 → 网络诊断 配置账号并开启自动登录，可免每次手动登录）");
+#else
+                // 正式版（STABLE_BUILD）：仅保留浏览器人工登录路径
+                Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
+                return (true, $"已在默认浏览器打开 {portal}");
+#endif
             }
             default:
                 return (false, $"动作 {action.Id} 不属于普通权限类别");

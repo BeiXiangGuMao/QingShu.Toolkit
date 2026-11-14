@@ -7,6 +7,8 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
+#if !STABLE_BUILD
+// 正式版（stable 分支，STABLE_BUILD）编译期整体剔除：实验性功能不进正式版产物
 namespace QingShu.Toolkit.Helpers;
 
 /// <summary>
@@ -167,3 +169,4 @@ public static class PortalAutoLoginHelper
         catch { return url; }
     }
 }
+#endif

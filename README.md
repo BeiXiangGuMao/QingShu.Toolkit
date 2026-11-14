@@ -121,6 +121,13 @@ QingShu.Toolkit/
 └── docs/                            # BUILD / DESIGN / RELEASE / TESTING
 ```
 
+## 分支模型
+
+- **`main`（预览版）**：日常开发线，版本带 `-beta` 后缀，实验性功能全量保留；
+- **`stable`（正式版）**：预览版砍掉实验性功能后的产物——`STABLE_BUILD` 编译开关在编译期剔除
+  （当前仅：城域网门户自动登录），版本号无后缀，正式发布走此分支；
+- 版本推进与合并纪律见 **docs/RELEASE.md** 第五章。
+
 ## 构建
 
 ```bash
