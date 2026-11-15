@@ -191,9 +191,11 @@ harness 化后发布包默认自带七个插件（gala 主控/被控 + 弹窗拦
 ### 5.1 剔除机制（STABLE_BUILD 编译开关）
 
 - stable 分支的宿主 csproj 在 `DefineConstants` 追加 `STABLE_BUILD`（网络诊断插件 csproj 同步定义）；
-- 源码中以 `#if !STABLE_BUILD` 守护实验性代码（当前清单仅一项：城域网门户自动登录——
-  宿主 `Helpers/PortalAutoLoginHelper`、修复路径与设置组，插件 `NetworkDiagCore` 同源实现），
-  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 const 开关收敛；
+- 源码中以 `#if !STABLE_BUILD` 守护实验性代码。当前清单两项：
+  ①城域网门户自动登录——宿主 `Helpers/PortalAutoLoginHelper`、修复路径与设置组，插件 `NetworkDiagCore` 同源实现；
+  ②U盘工具——stable 构建下导航入口隐藏、插件不自动加载（静默跳过）、手动加载明确拒绝，
+  预览版导航标注「U盘工具（实验性）」；
+  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 const 开关收敛（ExperimentalEnabled / UsbToolEnabled）；
 - 剔除发生在**编译期**：正式版产物中没有实验性功能的代码与入口，而非"隐藏但仍在"；
   预览版（main）不定义 STABLE_BUILD，两分支共享同一份带守护的源码，合并零冲突。
 

@@ -83,7 +83,7 @@
                 <NavigationViewItem Tag="popupguard" Content="弹窗拦截">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Tag="usb" Content="U盘工具">
+                <NavigationViewItem Tag="usb" Content="U盘工具（实验性）">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="MapDrive" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem Tag="plugins" Content="插件管理">

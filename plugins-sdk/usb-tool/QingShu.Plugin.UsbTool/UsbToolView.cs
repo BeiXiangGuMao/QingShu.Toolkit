@@ -79,8 +79,18 @@ public sealed class UsbToolView : UserControl
             TextWrapping = TextWrapping.Wrap
         };
         ApplyStyle(subtitle, "PageSubtitleTextBlock");
+        var expBar = new InfoBar
+        {
+            Title = "实验性功能",
+            Message = "U盘工具当前为实验性功能：正式版（stable）暂不包含。已覆盖「U盘已识别但资源管理器不显示」的常见根因修复；遇到问题欢迎通过日志页反馈。",
+            IsOpen = true,
+            IsClosable = false,
+            Severity = InfoBarSeverity.Informational,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
         header.Children.Add(title);
         header.Children.Add(subtitle);
+        header.Children.Add(expBar);
         header.SetValue(Grid.RowProperty, 0);
 
         // ---- 设备选择卡 ----

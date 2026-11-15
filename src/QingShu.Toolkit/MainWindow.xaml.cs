@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using QingShu.Toolkit.Interop;
+using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Plugins;
@@ -281,7 +282,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void ApplyBuiltInVisibility()
     {
-        var disabled = _settings.Current.DisabledBuiltIns ?? new List<string>();
+        var disabled = new List<string>(_settings.Current.DisabledBuiltIns ?? new List<string>());
+        // 实验性功能（正式版剔除）：stable 构建强制隐藏 U盘工具入口，并参与「当前页回退」选择
+        if (!AppBuildProfile.UsbToolEnabled) disabled.Add("usb");
 
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
         {
