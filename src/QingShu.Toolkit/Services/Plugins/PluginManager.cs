@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using QingShu.Toolkit.Models;
 using System.Threading;
 using System.Threading.Tasks;
 using QingShu.Toolkit.Services.Logging;
@@ -209,6 +210,11 @@ public sealed class PluginManager : IPluginManager
             var verify = VerifyFull(folder, folderName);
             if (!verify.Ok || verify.Manifest == null) throw new InvalidOperationException(verify.ErrorText);
             var manifest = verify.Manifest;
+
+            // 实验性功能门禁：正式版（stable 构建，STABLE_BUILD）不加载 U盘工具插件。
+            // 导航入口已在 MainWindow 隐藏，此处兜底拒绝手动加载（插件页触发时给出明确原因）。
+            if (manifest.NavTag == "usb" && !AppBuildProfile.UsbToolEnabled)
+                throw new InvalidOperationException("U盘工具为实验性功能：正式版构建不包含（预览版 main 可用）。");
 
             bool enabledNow;
             lock (_sync) { enabledNow = !_enabled.TryGetValue(folderName, out var en) || en; }
@@ -480,6 +486,15 @@ public sealed class PluginManager : IPluginManager
         try
         {
             var entries = await ScanAsync().ConfigureAwait(false);
+            // 实验性功能门禁：正式版自动加载阶段静默跳过 U盘工具（不产生错误日志误报），
+            // 与 LoadAsync 的显式拒绝形成双保险——自动路径安静、手动路径有明确文案。
+            if (!AppBuildProfile.UsbToolEnabled)
+            {
+                int skipped = entries.Count(e => e.Manifest?.NavTag == "usb");
+                entries = entries.Where(e => e.Manifest?.NavTag != "usb").ToList();
+                if (skipped > 0)
+                    _log.App(LogLevel.Info, "plugin", $"正式版构建跳过实验性插件 {skipped} 个（U盘工具）");
+            }
             foreach (var e in entries.Where(e => e.Enabled
                          && (e.VerifyState == PluginVerifyState.Ok || e.VerifyState == PluginVerifyState.Unsigned)
                          && !e.Loaded))

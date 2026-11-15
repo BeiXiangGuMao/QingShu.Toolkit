@@ -51,6 +51,8 @@ param(
     [switch]$SkipBuild,
     [switch]$PackOnly,
     [switch]$NoMsix,
+    # 关闭 R2R 启动预编译（默认开启；产物体积敏感/更新下载慢时使用）
+    [switch]$NoR2R,
     [string]$SdkBin
 )
 
@@ -74,11 +76,15 @@ Write-Host "==> 版本 $version  标签 $Tag  预发布=$isPrerelease" -Foregrou
 # ---- 2. 构建 ----
 $publishDir = Join-Path $ProjectDir "bin\publish\win-x64"
 if (-not $SkipBuild) {
-    Write-Host "==> dotnet publish（Release / win-x64 / 自包含）..." -ForegroundColor Cyan
+    # R2R 预编译（默认开）：启动阶段少跑 JIT，教学机 HDD/低配 CPU 上首帧与首交互明显加快；
+    # 代价是产物与 ZIP 体积增大约 30-40%，更新下载敏感的场合可加 -NoR2R 关闭。
+    $r2rArgs = @()
+    if (-not $NoR2R) { $r2rArgs += '-p:PublishReadyToRun=true' }
+    Write-Host "==> dotnet publish（Release / win-x64 / 自包含$(if (-not $NoR2R) { '，R2R 预编译提速启动' })）..." -ForegroundColor Cyan
     dotnet publish $csproj.FullName -c Release -r win-x64 `
         --self-contained true -p:WindowsAppSDKSelfContained=true `
         -p:Platform=x64 -p:TargetFramework=net8.0-windows10.0.19041.0 `
-        -o $publishDir
+        @r2rArgs -o $publishDir
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败（exit=$LASTEXITCODE）" }
 } else {
     Write-Host "==> 跳过构建，使用现有 $publishDir" -ForegroundColor Yellow

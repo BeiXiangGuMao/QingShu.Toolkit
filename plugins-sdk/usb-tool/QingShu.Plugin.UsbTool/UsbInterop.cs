@@ -56,6 +56,28 @@ internal static class WmiHelper
             catch { }
             return list;
         });
+
+    /// <summary>带命名空间的 WMI 查询（如 root\Microsoft\Windows\Storage 的 MSFT_Disk 脱机/只读状态）。全部在后台线程执行。</summary>
+    public static Task<List<T>> QueryAsync<T>(string ns, string wql, Func<ManagementObject, T> selector)
+        => Task.Run(() =>
+        {
+            var list = new List<T>();
+            try
+            {
+                using var searcher = new ManagementObjectSearcher(ns, wql);
+                foreach (var o in searcher.Get())
+                {
+                    if (o is ManagementObject mo)
+                    {
+                        try { list.Add(selector(mo)); }
+                        catch { }
+                        mo.Dispose();
+                    }
+                }
+            }
+            catch { }
+            return list;
+        });
 }
 
 /// <summary>

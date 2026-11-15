@@ -99,7 +99,9 @@ public partial class DashboardViewModel : ObservableObject, IDisposable
 
     private async Task RefreshLiveAsync()
     {
-        if (_sampling) return;
+        // 窗口失焦/最小化时暂停采样（App.IsWindowActive 由 MainWindow.Activated 维护）：
+        // 后台挂着的仪表盘不再空耗 CPU/计数器，恢复焦点后下一拍自动继续
+        if (_sampling || !App.IsWindowActive) return;
         _sampling = true;
         try
         {

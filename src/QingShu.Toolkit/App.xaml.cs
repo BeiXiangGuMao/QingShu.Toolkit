@@ -31,6 +31,12 @@ public partial class App : Application
     /// <summary>仪表盘“开始诊断”跨页标记。</summary>
     public static bool PendingDiagAutostart;
 
+    /// <summary>
+    /// 窗口焦点状态（MainWindow.Activated 维护）：失焦/最小化时页面级定时采样暂停。
+    /// 默认 true：构造期首拍采样不空过，Activated 首事件后即为真实状态。
+    /// </summary>
+    public static bool IsWindowActive = true;
+
     public App()
     {
         InitializeComponent();
@@ -65,7 +71,8 @@ public partial class App : Application
         log.App(LogLevel.Info, "app", $"青枢工具箱 v{AppVersion.DisplayText} 启动",
             new { os = Environment.OSVersion.VersionString, x64 = Environment.Is64BitProcess, admin = ElevationHelper.IsCurrentUserAdmin() });
         Services.GetRequiredService<ISettingsService>();
-        log.PruneOldLogs();
+        // 旧日志清理移出启动关键路径：磁盘 IO 不再阻塞首帧（只删超期文件，与后续写日志不冲突）
+        _ = Task.Run(log.PruneOldLogs);
 
         Services.GetRequiredService<IPowerService>().Start();
         Services.GetRequiredService<IPopupBlockerService>().Start();

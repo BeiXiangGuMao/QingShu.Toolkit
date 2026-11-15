@@ -23,6 +23,9 @@
             <TextBlock Text="U盘工具" Style="{StaticResource PageTitleTextBlock}" />
             <TextBlock Text="修复与查杀二合一，直连物理盘扇区做硬件级检测：表面坏区扫描、扩容盘鉴别、写速度实测；查杀覆盖U盘蠕虫的 autorun 自启、伪装文档、快捷方式劫持等落盘特征；修复提供设备栈重置、文件系统查错到分区表重建。只对 USB 设备生效，绝不触碰系统盘。"
                        Style="{StaticResource PageSubtitleTextBlock}" MaxWidth="860" HorizontalAlignment="Left" />
+            <InfoBar Title="实验性功能"
+                     Message="U盘工具当前为实验性功能：正式版（stable）暂不包含。已覆盖「U盘已识别但资源管理器不显示」的常见根因修复；遇到问题欢迎通过日志页反馈。"
+                     IsOpen="True" IsClosable="False" Severity="Informational" Margin="0,4,0,0" />
         </StackPanel>
 
         <!-- 设备选择卡 -->

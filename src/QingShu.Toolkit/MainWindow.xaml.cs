@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using QingShu.Toolkit.Interop;
+using QingShu.Toolkit.Models;
 using QingShu.Toolkit.Services;
 using QingShu.Toolkit.Services.Logging;
 using QingShu.Toolkit.Services.Plugins;
@@ -85,6 +86,9 @@ public sealed partial class MainWindow : Window
             PopupCountText.Text = $"拦截 {count}");
         PopupCountText.Text = $"拦截 {_popup.BlockedCount}";
         _update.StatusChanged += OnUpdateStatus;
+
+        // 焦点状态维护：失焦/最小化时仪表盘暂停 3s 采样（恢复后下一拍自动继续），降常驻 CPU/IO
+        Activated += (_, e) => App.IsWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;
 
         // 外移插件运行集变化（后台线程触发）：回 UI 线程统一协调导航接管与内置服务挂起/恢复。
         // AutoLoadEnabledAsync 完成时（启动阶段）与手动加载/卸载时都会触发
@@ -281,7 +285,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void ApplyBuiltInVisibility()
     {
-        var disabled = _settings.Current.DisabledBuiltIns ?? new List<string>();
+        var disabled = new List<string>(_settings.Current.DisabledBuiltIns ?? new List<string>());
+        // 实验性功能（正式版剔除）：stable 构建强制隐藏 U盘工具入口，并参与「当前页回退」选择
+        if (!AppBuildProfile.UsbToolEnabled) disabled.Add("usb");
 
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
         {

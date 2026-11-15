@@ -718,8 +718,8 @@ public sealed class UsbScanService : IUsbScanService
 
 public interface IUsbRepairService
 {
-    /// <summary>按设备当前状态生成修复清单（危险项默认不勾选）。</summary>
-    Task<List<UsbFixAction>> BuildPlanAsync(UsbDrive drive);
+    /// <summary>按设备当前状态（含可见性诊断）生成修复计划：动作清单 + 诊断结论。</summary>
+    Task<UsbRepairPlan> BuildPlanAsync(UsbDrive drive);
     /// <summary>执行选中的修复：普通动作本进程完成，管理类合并为一次 UAC。</summary>
     Task RunAsync(UsbDrive drive, IReadOnlyList<UsbFixAction> actions, IProgress<UsbFixAction>? progress, CancellationToken ct);
     /// <summary>重建分区表并快速格式化（破坏性，调用方必须已完成二次确认）。</summary>
@@ -733,15 +733,27 @@ public interface IUsbRepairService
 /// </summary>
 public sealed class UsbRepairService : IUsbRepairService
 {
-    public async Task<List<UsbFixAction>> BuildPlanAsync(UsbDrive drive)
+    public async Task<UsbRepairPlan> BuildPlanAsync(UsbDrive drive)
     {
+        // 可见性诊断（只读：WMI + 注册表）：按实际状态生成针对性修复动作，
+        // 诊断结论同步呈现到「检测结论」区——「识别到设备但资源管理器不显示」的
+        // 六类根因（脱机 / 无盘符分区 / 无分区 / RAW / 策略隐藏 / 过滤器遗留）逐项可判。
+        var diag = await UsbVisibilityDiag.DiagnoseAsync(drive).ConfigureAwait(false);
+        var outcomes = UsbVisibilityDiag.ToOutcomes(diag);
+
         var plan = new List<UsbFixAction>
         {
             new("refresh_volume", "更新设备与卷配置",
-                "刷新系统对该U盘的容量/分区缓存（IOCTL_DISK_UPDATE_PROPERTIES），修复容量显示异常与盘符残影。", false, false),
-            new("device_reset", "重置U盘设备栈",
-                "禁用并重新启用 USB 存储设备（PnP 级重新枚举），修复识别异常、盘符丢失、设备假死。", true, false)
+                "刷新系统对该U盘的容量/分区缓存（IOCTL_DISK_UPDATE_PROPERTIES），修复容量显示异常与盘符残影。", false, false)
         };
+
+        if (diag.Offline)
+            plan.Add(new UsbFixAction("online_disk", "联机磁盘（当前脱机）",
+                "diskpart 将脱机磁盘重新联机：磁盘管理中「脱机」的盘，资源管理器不会显示其任何卷。需要管理员。", true, false));
+
+        if (diag.PartitionCount > 0 && diag.LetterlessPartitions > 0)
+            plan.Add(new UsbFixAction("assign_letter", "重建盘符映射",
+                "对全部「未分配盘符的分区」重新分配盘符（PowerShell Storage 模块优先，diskpart 兜底）——修复「识别到设备但没有盘符」的最常见根因。需要管理员。", true, false));
 
         var main = drive.Volumes.OrderByDescending(v => v.TotalBytes).FirstOrDefault();
         if (main != null)
@@ -751,14 +763,29 @@ public sealed class UsbRepairService : IUsbRepairService
             plan.Add(new UsbFixAction("clear_readonly", "清除软件写保护",
                 "diskpart 清除磁盘/卷级只读策略（针对误设只读导致无法写入的情况；硬件写保护开关无效）。需要管理员。", true, false));
         }
-        else
+
+        if (diag.HasPolicyHide)
         {
-            plan.Add(new UsbFixAction("assign_letter", "重建盘符映射",
-                "diskpart 对该盘第一分区重新分配盘符，修复「识别到设备但没有盘符」。需要管理员。", true, false));
+            plan.Add(new UsbFixAction("clear_nodrives_user", "清除盘符隐藏策略（当前用户）",
+                "删除 HKCU 的 NoDrives/NoViewOnDrive 策略：机房管理常用的「隐藏盘符」策略正是「U盘在但资源管理器不显示」的元凶之一。无需管理员。", false, false));
+            plan.Add(new UsbFixAction("clear_nodrives_machine", "清除盘符隐藏策略（全机）",
+                "删除 HKLM 的 NoDrives/NoViewOnDrive 策略（值不存在视为成功）。需要管理员。", true, false));
+            plan.Add(new UsbFixAction("restart_explorer", "重启资源管理器",
+                "策略清除后资源管理器需重启才重新显示盘符：结束并自动拉起 explorer.exe（桌面会闪一下，已打开的文件夹窗口会关闭），默认不勾选。", false, false, defaultSelected: false));
         }
 
-        foreach (var a in plan) a.IsSelected = !a.Risky;
-        return await Task.FromResult(plan).ConfigureAwait(false);
+        if (diag.PartitionCount > 0 && (diag.LetterlessPartitions > 0 || diag.RawFileSystems.Count > 0))
+            plan.Add(new UsbFixAction("shell_refresh", "刷新资源管理器设备缓存",
+                "向 Shell 发送驱动器变更通知，强制资源管理器重读盘符列表（盘符分配后未立即出现的轻量兜底）。", false, false));
+
+        plan.Add(new UsbFixAction("device_reset", "重置U盘设备栈",
+            "禁用并重新启用 USB 存储设备（PnP 级重新枚举），修复识别异常、盘符丢失、设备假死。需要管理员。", true, false));
+
+        if (diag.HasFilters)
+            plan.Add(new UsbFixAction("cleanup_filters", "清理存储类过滤器（深度，需重启）",
+                "仅移除磁盘/卷类 UpperFilters/LowerFilters 中的第三方条目（PartMgr/fvevol/volsnap 等微软内置保留），改写前自动备份注册表到临时目录；第三方过滤器（虚拟光驱/加密软件遗留）是「设备识别但无法访问」的经典原因，清理后需重启生效。需要管理员，默认不勾选。", true, true));
+
+        return await Task.FromResult(new UsbRepairPlan(plan, outcomes)).ConfigureAwait(false);
     }
 
     public async Task RunAsync(UsbDrive drive, IReadOnlyList<UsbFixAction> actions, IProgress<UsbFixAction>? progress, CancellationToken ct)
@@ -773,13 +800,28 @@ public sealed class UsbRepairService : IUsbRepairService
             progress?.Report(a);
             try
             {
-                bool ok = a.Id switch
+                bool ok;
+                switch (a.Id)
                 {
-                    "refresh_volume" => NativeStorageIo.TryUpdateDiskProperties(drive.PhysicalPath),
-                    _ => false
-                };
+                    case "refresh_volume":
+                        ok = NativeStorageIo.TryUpdateDiskProperties(drive.PhysicalPath);
+                        break;
+                    case "shell_refresh":
+                        NativeShell.NotifyShellDriveChange();
+                        ok = true;
+                        break;
+                    case "clear_nodrives_user":
+                        ok = UsbVisibilityDiag.ClearUserPolicy();
+                        break;
+                    case "restart_explorer":
+                        ok = await RestartExplorerAsync().ConfigureAwait(false);
+                        break;
+                    default:
+                        ok = false;
+                        break;
+                }
                 a.Status = ok ? "Ok" : "Fail";
-                a.Output = ok ? "已刷新设备配置。" : "刷新失败（设备可能已离线）。";
+                a.Output = ok ? NormalOkText(a.Id) : NormalFailText(a.Id);
             }
             catch (Exception ex) { a.Status = "Fail"; a.Output = ex.Message; }
             progress?.Report(a);
@@ -841,6 +883,36 @@ public sealed class UsbRepairService : IUsbRepairService
         return action;
     }
 
+    // ---------------- 普通权限辅助动作 ----------------
+
+    /// <summary>重启资源管理器：策略清除/盘符重建后让 Shell 立即重新显示驱动器。</summary>
+    private static async Task<bool> RestartExplorerAsync()
+    {
+        await ProcessRunner.RunAsync("taskkill /f /im explorer.exe >nul 2>&1", timeoutMs: 15_000).ConfigureAwait(false);
+        await Task.Delay(800).ConfigureAwait(false);
+        await ProcessRunner.RunAsync("start explorer.exe", timeoutMs: 15_000).ConfigureAwait(false);
+        // 拉起后稍候再确认进程存在：explorer 通常 1-2 秒内完成重启
+        await Task.Delay(1500).ConfigureAwait(false);
+        return Process.GetProcessesByName("explorer").Length > 0;
+    }
+
+    private static string NormalOkText(string id) => id switch
+    {
+        "refresh_volume" => "已刷新设备配置。",
+        "shell_refresh" => "已通知资源管理器刷新驱动器列表。",
+        "clear_nodrives_user" => "已清除当前用户的盘符隐藏策略（重启资源管理器后生效）。",
+        "restart_explorer" => "资源管理器已重启，请检查盘符是否恢复显示。",
+        _ => "执行成功。"
+    };
+
+    private static string NormalFailText(string id) => id switch
+    {
+        "refresh_volume" => "刷新失败（设备可能已离线）。",
+        "clear_nodrives_user" => "清除失败（注册表写入被拒绝）。",
+        "restart_explorer" => "资源管理器未能自动拉起，请手动打开任意文件夹即可触发重启。",
+        _ => "执行失败。"
+    };
+
     // ---------------- 提权脚本 ----------------
 
     private static string Truncate(string s, int n) => string.IsNullOrEmpty(s) || s.Length <= n ? s : s[..n] + "…";
@@ -888,13 +960,46 @@ public sealed class UsbRepairService : IUsbRepairService
                     sb.AppendLine($"diskpart /s \"{dp}\" >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 }
+                case "online_disk":
+                {
+                    var dp = WriteDiskPartScript(ts, "online",
+                        $"select disk {drive.DiskIndex}",
+                        "online disk");
+                    sb.AppendLine($"diskpart /s \"{dp}\" >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    break;
+                }
                 case "assign_letter":
                 {
+                    // v2：PowerShell Storage 模块优先——对「全部无盘符分区」分配盘符（旧版仅 partition 1，
+                    // 多分区或 partition 1 非数据分区时失效）；Storage 模块不可用/执行失败回退 diskpart
                     var dp = WriteDiskPartScript(ts, "assign",
                         $"select disk {drive.DiskIndex}",
                         "select partition 1",
                         "assign");
-                    sb.AppendLine($"diskpart /s \"{dp}\" >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    var ps = "$ErrorActionPreference='Stop'; Get-Partition -DiskNumber " + drive.DiskIndex
+                        + " -ErrorAction Stop | Where-Object { -not $_.DriveLetter } | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop; "
+                        + "if ((Get-Partition -DiskNumber " + drive.DiskIndex + " | Where-Object { -not $_.DriveLetter }).Count -eq 0) { exit 0 } else { exit 1 }";
+                    sb.AppendLine($"powershell -NoProfile -Command \"{ps}\" >nul 2>&1 && (echo ##OK##{a.Id}) || (diskpart /s \"{dp}\" >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id})");
+                    break;
+                }
+                case "clear_nodrives_machine":
+                {
+                    // NoDrives / NoViewOnDrive 值不存在视为成功（无策略即达标）；删除失败才 FAIL
+                    sb.AppendLine("set QSU=1");
+                    foreach (var v in new[] { "NoDrives", "NoViewOnDrive" })
+                    {
+                        sb.AppendLine("reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\" /v " + v
+                            + " >nul 2>&1 && (reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\" /v " + v + " /f >nul 2>&1 || set QSU=0)");
+                    }
+                    sb.AppendLine($"if %QSU%==1 (echo ##OK##{a.Id}) else (echo ##FAIL##{a.Id})");
+                    break;
+                }
+                case "cleanup_filters":
+                {
+                    // 深度修复：仅移除第三方过滤器条目（partmgr/fvevol/volsnap/partsnap 等微软内置保留），
+                    // 改写前整键 reg export 备份到 %TEMP%；改写动作全部成功与否以标记行回报，需重启生效。
+                    var ps2 = "$known=@('partmgr','partsnap','fvevol','volsnap'); foreach ($p in @('HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4D36E967-E325-11CE-BFC1-08002BE10318}','HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{71A27CDD-812A-11D0-BEC7-08002BE2092F}')) { if (-not (Test-Path $p)) { continue }; & reg.exe export ($p -replace '^HKLM:','HKLM') (Join-Path $env:TEMP 'qingshu-filter-backup.reg') /y > $null 2>&1; foreach ($v in @('UpperFilters','LowerFilters')) { $val = Get-ItemPropertyValue -Path $p -Name $v -ErrorAction SilentlyContinue; if ($val) { $arr=@($val); $keep=@($arr | Where-Object { $known -contains $_.ToLowerInvariant() }); if ($keep.Count -lt $arr.Count) { Set-ItemProperty -Path $p -Name $v -Value $keep -Type MultiString } } } }; exit 0";
+                    sb.AppendLine($"powershell -NoProfile -Command \"{ps2}\" >nul 2>&1 && (echo ##OK##{a.Id}) || (echo ##FAIL##{a.Id})");
                     break;
                 }
                 case "rebuild_partition":

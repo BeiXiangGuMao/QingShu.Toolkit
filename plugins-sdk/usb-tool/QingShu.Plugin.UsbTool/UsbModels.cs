@@ -52,15 +52,26 @@ public sealed record UsbCheckOutcome(string Title, string Status, string Summary
 /// <summary>扩容盘写校验的单点结果。</summary>
 public sealed record CapacityProbe(long Offset, bool WriteOk, bool VerifyOk, string Note);
 
+/// <summary>
+/// 修复计划（v0.2.0）：动作清单 + 可见性诊断结论。
+/// 「已识别但资源管理器不显示」的六类根因（脱机/无盘符分区/无分区/RAW/策略隐藏/过滤器遗留）
+/// 以 UsbCheckOutcome 形式同步呈现，动作按诊断结果按需生成（不脱机不生成联机动作等）。
+/// </summary>
+public sealed record UsbRepairPlan(
+    IReadOnlyList<UsbFixAction> Actions,
+    IReadOnlyList<UsbCheckOutcome> Diagnosis);
+
 /// <summary>查杀发现的一条可疑项。Level: Malicious / Suspicious。</summary>
 public sealed record UsbThreat(string FilePath, string Level, string Reason, string Detail);
 
 /// <summary>U盘修复动作（可绑定行模型，宿主 UsbRepairService 内嵌类同源移植）。</summary>
 public sealed partial class UsbFixAction : ObservableObject
 {
-    public UsbFixAction(string id, string title, string detail, bool needsAdmin, bool risky)
+    public UsbFixAction(string id, string title, string detail, bool needsAdmin, bool risky, bool? defaultSelected = null)
     {
         Id = id; Title = title; Detail = detail; NeedsAdmin = needsAdmin; Risky = risky;
+        // 默认勾选 = 非危险项；可用 defaultSelected 显式覆盖（如「重启资源管理器」默认不勾）
+        IsSelected = defaultSelected ?? !risky;
     }
 
     public string Id { get; }
