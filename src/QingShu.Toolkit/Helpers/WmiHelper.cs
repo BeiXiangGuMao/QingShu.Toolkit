@@ -24,7 +24,7 @@ public static class WmiHelper
             var list = new List<T>();
             try
             {
-                using var searcher = new ManagementObjectSearcher(new ObjectQuery(wql), EnumOpts());
+                using var searcher = new ManagementObjectSearcher(wql) { Options = EnumOpts() };
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -44,7 +44,7 @@ public static class WmiHelper
         {
             try
             {
-                using var searcher = new ManagementObjectSearcher(new ObjectQuery(wql), EnumOpts());
+                using var searcher = new ManagementObjectSearcher(wql) { Options = EnumOpts() };
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)

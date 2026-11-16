@@ -199,7 +199,7 @@ harness 化后发布包默认自带七个插件（gala 主控/被控 + 弹窗拦
   ①城域网门户自动登录——宿主 `Helpers/PortalAutoLoginHelper`、修复路径与设置组，插件 `NetworkDiagCore` 同源实现；
   ②U盘工具——stable 构建下导航入口隐藏、插件不自动加载（静默跳过）、手动加载明确拒绝，
   预览版导航标注「U盘工具（实验性）」；
-  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 const 开关收敛（ExperimentalEnabled / UsbToolEnabled）；
+  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 static readonly 开关收敛（ExperimentalEnabled / UsbToolEnabled；const 在固定构建形态下折叠会触发 CS0162 不可达警告，readonly 运行期等价，剔除机制本体为 #if STABLE_BUILD 源级守护）；
 - 剔除发生在**编译期**：正式版产物中没有实验性功能的代码与入口，而非"隐藏但仍在"；
   预览版（main）不定义 STABLE_BUILD，两分支共享同一份带守护的源码，合并零冲突。
 
