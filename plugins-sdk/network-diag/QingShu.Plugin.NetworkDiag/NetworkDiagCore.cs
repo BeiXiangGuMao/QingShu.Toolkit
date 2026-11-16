@@ -386,7 +386,7 @@ public static class WmiHelper
     /// （Win32_PnPSignedDriver / Win32_PnPEntity 全表枚举）在低配机/杀软环境可能挂数十秒，
     /// 超出诊断逐项硬超时后遗留任务变孤儿继续占线程。枚举超时抛异常 → 外层 catch 返回已
     /// 获取部分，检查项按「信息不可得」降级，孤儿任务最迟 20 秒自终止（内存防御一环）。</summary>
-    private static EnumerationOptions EnumOpts()
+    private static System.Management.EnumerationOptions EnumOpts()
         => new() { Timeout = TimeSpan.FromSeconds(20) };
 
     public static Task<List<T>> QueryAsync<T>(string wql, Func<ManagementObject, T> selector)
@@ -997,8 +997,6 @@ public sealed class CheckContext
 
     private readonly Dictionary<string, object> _shared = new();
 
-    public void SetShared<T>(string key, T value) => _shared[key] = value!;
-    public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public void SetShared<T>(string key, T value) => _shared[key] = value!;
     public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public bool SharedBool(string key) => GetShared<bool>(key);

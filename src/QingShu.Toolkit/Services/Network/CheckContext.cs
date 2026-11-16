@@ -33,8 +33,6 @@ public sealed class CheckContext
 
     public void SetShared<T>(string key, T value) => _shared[key] = value!;
     public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
-    public void SetShared<T>(string key, T value) => _shared[key] = value!;
-    public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public bool SharedBool(string key) => GetShared<bool>(key);
     /// <summary>键是否已被写入：区分「实测为 false」与「本会话根本没测」（复核会话孤立跑某项时，
     /// 前置项写入的外网/认证结论缺失 ≠ 结论为否——据此防「认证已过期」一类假红）。</summary>
