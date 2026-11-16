@@ -999,7 +999,21 @@ public sealed class CheckContext
 
     public void SetShared<T>(string key, T value) => _shared[key] = value!;
     public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
+    public void SetShared<T>(string key, T value) => _shared[key] = value!;
+    public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public bool SharedBool(string key) => GetShared<bool>(key);
+    /// <summary>键是否已被写入：区分「实测为 false」与「本会话根本没测」（复核会话孤立跑某项时，
+    /// 前置项写入的外网/认证结论缺失 ≠ 结论为否——据此防「认证已过期」一类假红）。</summary>
+    public bool HasShared(string key) => _shared.ContainsKey(key);
+    /// <summary>布尔型共享键终值快照（修复后复核用）：nic.powersave / delivopt.p2p 等写入点
+    /// 均只在「异常态成立」时写 true，快照缺键 = 终态正常，供 VM 做动作目标终态实测判定。</summary>
+    public Dictionary<string, bool> SharedBoolSnapshot()
+    {
+        var snap = new Dictionary<string, bool>();
+        foreach (var kv in _shared)
+            if (kv.Value is bool b) snap[kv.Key] = b;
+        return snap;
+    }
 }
 
 /// <summary>单项检查接口。所有检查实现均为无状态，可安全复用。</summary>
@@ -1028,6 +1042,9 @@ public abstract class CheckBase : ICheck
 
 // ================= 诊断编排器（宿主 Services/Network/NetworkDiagnosticService.cs 同源移植） =================
 
+/// <summary>修复后复核结果：检查项快照 + 复检会话布尔共享键终值（动作目标终态实测判定用）。</summary>
+public sealed record ReverifyReport(List<CheckItem> Items, Dictionary<string, bool> SharedSnapshot);
+
 public interface INetworkDiagnosticService
 {
     /// <summary>生成一次运行的检查计划（全新 CheckItem 实例）。</summary>
@@ -1035,8 +1052,9 @@ public interface INetworkDiagnosticService
     /// <summary>执行计划：逐项更新 CheckItem 状态（ObservableObject，UI 自动刷新），并写入会话日志。</summary>
     Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
         IProgress<SpeedProgress>? speedProgress = null);
-    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）。</summary>
-    Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
+    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）；
+    /// SharedSnapshot 为复检会话布尔共享键终值（nic.powersave 等），供调用方实测动作目标终态（复检 Pass 不代表目标达成时拦回）。</summary>
+    Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
     CheckContext? LastContext { get; }
 }
 
@@ -1275,10 +1293,10 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     /// PowerShell 非终止错误会假成功——调用方必须以本方法实测结果决定检查项是否翻「已修复」。
     /// 与 ExecuteAsync 共用逐项硬超时护栏；独立会话日志留档（类别 reverify），不产出诊断报告。
     /// </summary>
-    public async Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
+    public async Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
     {
         var results = new List<CheckItem>();
-        if (checkIds.Count == 0) return results;
+        if (checkIds.Count == 0) return new ReverifyReport(results, new Dictionary<string, bool>());
 
         var session = DiagSessionLog.Begin(_logRoot);
         try
@@ -1337,7 +1355,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                     new { ms = sw.ElapsedMilliseconds, details = outcome.Details });
             }
             session.Write(LogLevel.Info, "reverify", "修复后复核完成");
-            return results;
+            return new ReverifyReport(results, ctx.SharedBoolSnapshot());
         }
         finally
         {
@@ -2231,7 +2249,13 @@ public static partial class NetworkChecks
                 var details = new List<string> { $"门户 {s.PortalBaseUrl} TCP 探测: {(tcp.Ok ? $"可达（{tcp.ElapsedMs} ms）" : tcp.Error)}", $"外网连通: {(internetOk ? "正常" : "不通")}" };
 
                 if (tcp.Ok && !internetOk)
-                    return CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray());
+                    // internet.http.ok 的写入点在本会话更早的 portal.detect / internet.http——复核会话若
+                    // 孤立跑本项（前置项未跑或超时中止），键缺失 ≠ 外网不通，不能据此判「认证已过期」假红
+                    // （2026-11 审查实锤：open_portal 复检批里 portal.detect 超时会连带本项假红，与
+                    // portal.detect 的实测绿结论自相矛盾）
+                    return ctx.HasShared("internet.http.ok")
+                        ? CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray())
+                        : CheckOutcome.Warn("门户可达，但本次复核会话无外网实测依据", "孤立复核无法判定认证状态（外网连通结论未在本会话产生）；请重新运行完整诊断获取准确结论。", details.ToArray());
                 if (tcp.Ok && internetOk)
                     return CheckOutcome.Pass("门户可达且外网正常，认证状态良好。", details.ToArray());
                 if (!tcp.Ok && internetOk)
@@ -3782,12 +3806,22 @@ public sealed class NetworkRepairService : INetworkRepairService
                     var detailText = detailLine != null
                         ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
                         : null;
+                    // FAIL 行带原因后缀（如「##FAIL##enable_adapter 主网卡名称不可得，动作未执行」）时
+                    // 把原因提为主文案，不再落「可能取消了 UAC」的误导兜底
+                    var failPrefix = $"##FAIL##{a.Id}";
+                    var failReason = failLine != null
+                        && failLine.Trim().StartsWith(failPrefix, StringComparison.Ordinal)
+                        && failLine.Trim().Length > failPrefix.Length
+                            ? failLine.Trim().Substring(failPrefix.Length).Trim()
+                            : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
                     a.Output = okLine != null
                         ? "执行成功"
                         : detailText != null
                             ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
-                            : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                            : failReason != null
+                                ? $"执行失败：{failReason}"
+                                : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -3908,7 +3942,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"ipconfig /renew >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "enable_adapter":
-                    sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    // 空网卡名时显式 FAIL 带原因，不再拼出 `set interface ""` 静默报错被吞后误判「可能取消了 UAC」
+                    if (adapterName.Length > 0)
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    else
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     break;
                 case "resync_clock":
                     // 失败回退：先启动 Windows 时间服务再重试一次。旧写法 net time \\\\localhost /set /y
@@ -3939,6 +3977,10 @@ public sealed class NetworkRepairService : INetworkRepairService
                         // 链式：主 DNS 设置失败即 FAIL，不再执行次要操作，避免被 add 次 DNS 的成功掩盖成 OK
                         sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1 && netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
+                    }
                     break;
                 case "tcp_autotuning":
                     // 两条都必须成功：主设置（autotuninglevel）失败不能被次设置（rss）成功掩盖成 OK
@@ -3959,8 +4001,13 @@ public sealed class NetworkRepairService : INetworkRepairService
                     if (adapterName.Length > 0)
                     {
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" disable >nul 2>&1");
-                        sb.AppendLine("timeout /t 3 /nobreak >nul 2>&1");
+                        // timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）会立即报错失效；ping 延时无此依赖
+                        sb.AppendLine("ping -n 4 127.0.0.1 >nul");
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 default:

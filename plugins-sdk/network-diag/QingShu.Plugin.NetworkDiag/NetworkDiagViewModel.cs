@@ -349,8 +349,8 @@ public partial class NetworkDiagViewModel : ObservableObject
                     // 认证表单后也给门户服务端数秒入账时间（原 800ms 入账延时职责移交此处），延后再测防假阴性
                     var settle = okActions.Any(a => a.Id is "renew_dhcp" or "adapter_reset" or "enable_adapter" or "open_portal") ? 4000 : 1000;
                     await Task.Delay(settle, _ctsRepair.Token).ConfigureAwait(true);
-                    var reItems = await _diag.ReverifyAsync(reIds, _ctsRepair.Token).ConfigureAwait(true);
-                    foreach (var re in reItems)
+                    var reReport = await _diag.ReverifyAsync(reIds, _ctsRepair.Token).ConfigureAwait(true);
+                    foreach (var re in reReport.Items)
                     {
                         var orig = Items.FirstOrDefault(i => i.Id == re.Id);
                         if (orig is null) continue;
@@ -375,6 +375,24 @@ public partial class NetworkDiagViewModel : ObservableObject
                             orig.Summary = $"修复动作已执行（该项复核未执行：{re.Summary}）";
                         }
                     }
+
+                    // 动作目标终态实测：nic_powersave_off 的关联检查（speed.nic_rate / hardware.nic_probe）
+                    // 对「节能托管开启」只记线索不判级——复检 Pass 不代表节能真的关了。以复检会话共享键
+                    // 终值兜底：nic.powersave 仍为 true 时把已被翻绿的关联项拦回，如实报告终态未达成，
+                    // 杜绝「修复动作成功但节能照旧」的误绿（2026-11 审查实锤，唯一判级不覆盖修复目标的动作）
+                    if (okActions.Any(a => a.Id == "nic_powersave_off")
+                        && reReport.SharedSnapshot.TryGetValue("nic.powersave", out var psOn) && psOn)
+                    {
+                        foreach (var orig in Items.Where(i => (i.Id == "speed.nic_rate" || i.Id == "hardware.nic_probe")
+                                                              && i.Status == CheckStatus.Fixed))
+                        {
+                            rePass = Math.Max(0, rePass - 1);
+                            reBad++;
+                            orig.Status = CheckStatus.Warning;
+                            orig.Summary = "修复动作已执行，但复检实测节能托管仍为开启（命令层已显式传播退出码仍失败，多为驱动/系统层拒绝该设置）";
+                            orig.Suggestion = "可在设备管理器 → 网卡属性 → 电源管理手动取消「允许计算机关闭此设备以节约电源」；仍无效多为驱动限制，可更新网卡驱动。";
+                        }
+                    }
                 }
 
                 foreach (var a in okActions.Where(a => noReverify.Contains(a.Id)))
@@ -393,6 +411,10 @@ public partial class NetworkDiagViewModel : ObservableObject
                 Recount();
                 // 修复后重建拓扑：Fixed 与复核后状态映射回拓扑健康档，断点定位随实测结果收敛
                 Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
+
+                // 修复清单按复检后状态重建：复检通过/无复核语义翻绿的项不再挂着可重试，剩余问题生成新计划
+                // （先于终态提示执行——BuildRepairPlan 会写 RepairHint，随后被下方终态文案覆盖）
+                BuildRepairPlan();
 
                 RepairHint = reIds.Count > 0
                     ? $"修复执行完毕：复检通过 {rePass} 项"

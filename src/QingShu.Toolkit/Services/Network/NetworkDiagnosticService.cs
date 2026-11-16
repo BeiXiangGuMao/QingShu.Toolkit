@@ -9,6 +9,9 @@ using QingShu.Toolkit.Services.Logging;
 
 namespace QingShu.Toolkit.Services.Network;
 
+/// <summary>修复后复核结果：检查项快照 + 复检会话布尔共享键终值（动作目标终态实测判定用）。</summary>
+public sealed record ReverifyReport(List<CheckItem> Items, Dictionary<string, bool> SharedSnapshot);
+
 public interface INetworkDiagnosticService
 {
     /// <summary>生成一次运行的检查计划（全新 CheckItem 实例）。</summary>
@@ -16,8 +19,9 @@ public interface INetworkDiagnosticService
     /// <summary>执行计划：逐项更新 CheckItem 状态（ObservableObject，UI 自动刷新），并写入会话日志。</summary>
     Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
         IProgress<SpeedProgress>? speedProgress = null);
-    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）。</summary>
-    Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
+    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）；
+    /// SharedSnapshot 为复检会话布尔共享键终值（nic.powersave 等），供调用方实测动作目标终态（复检 Pass 不代表目标达成时拦回）。</summary>
+    Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
     CheckContext? LastContext { get; }
 }
 
@@ -251,10 +255,10 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     /// PowerShell 非终止错误会假成功——调用方必须以本方法实测结果决定检查项是否翻「已修复」。
     /// 与 ExecuteAsync 共用逐项硬超时护栏；独立会话日志留档（类别 reverify），不产出诊断报告。
     /// </summary>
-    public async Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
+    public async Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
     {
         var results = new List<CheckItem>();
-        if (checkIds.Count == 0) return results;
+        if (checkIds.Count == 0) return new ReverifyReport(results, new Dictionary<string, bool>());
 
         var session = _log.BeginDiagSession();
         try
@@ -313,7 +317,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                     new { ms = sw.ElapsedMilliseconds, details = outcome.Details });
             }
             session.Write(LogLevel.Info, "reverify", "修复后复核完成");
-            return results;
+            return new ReverifyReport(results, ctx.SharedBoolSnapshot());
         }
         finally
         {

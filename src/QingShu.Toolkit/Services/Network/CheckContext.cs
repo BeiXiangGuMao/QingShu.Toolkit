@@ -33,7 +33,21 @@ public sealed class CheckContext
 
     public void SetShared<T>(string key, T value) => _shared[key] = value!;
     public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
+    public void SetShared<T>(string key, T value) => _shared[key] = value!;
+    public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public bool SharedBool(string key) => GetShared<bool>(key);
+    /// <summary>键是否已被写入：区分「实测为 false」与「本会话根本没测」（复核会话孤立跑某项时，
+    /// 前置项写入的外网/认证结论缺失 ≠ 结论为否——据此防「认证已过期」一类假红）。</summary>
+    public bool HasShared(string key) => _shared.ContainsKey(key);
+    /// <summary>布尔型共享键终值快照（修复后复核用）：nic.powersave / delivopt.p2p 等写入点
+    /// 均只在「异常态成立」时写 true，快照缺键 = 终态正常，供 VM 做动作目标终态实测判定。</summary>
+    public Dictionary<string, bool> SharedBoolSnapshot()
+    {
+        var snap = new Dictionary<string, bool>();
+        foreach (var kv in _shared)
+            if (kv.Value is bool b) snap[kv.Key] = b;
+        return snap;
+    }
 }
 
 /// <summary>单项检查接口。所有检查实现均为无状态，可安全复用。</summary>

@@ -203,12 +203,22 @@ public sealed class NetworkRepairService : INetworkRepairService
                     var detailText = detailLine != null
                         ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
                         : null;
+                    // FAIL 行带原因后缀（如「##FAIL##enable_adapter 主网卡名称不可得，动作未执行」）时
+                    // 把原因提为主文案，不再落「可能取消了 UAC」的误导兜底
+                    var failPrefix = $"##FAIL##{a.Id}";
+                    var failReason = failLine != null
+                        && failLine.Trim().StartsWith(failPrefix, StringComparison.Ordinal)
+                        && failLine.Trim().Length > failPrefix.Length
+                            ? failLine.Trim().Substring(failPrefix.Length).Trim()
+                            : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
                     a.Output = okLine != null
                         ? "执行成功"
                         : detailText != null
                             ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
-                            : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                            : failReason != null
+                                ? $"执行失败：{failReason}"
+                                : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -329,7 +339,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"ipconfig /renew >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "enable_adapter":
-                    sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    // 空网卡名时显式 FAIL 带原因，不再拼出 `set interface ""` 静默报错被吞后误判「可能取消了 UAC」
+                    if (adapterName.Length > 0)
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    else
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     break;
                 case "resync_clock":
                     // 失败回退：先启动 Windows 时间服务再重试一次。旧写法 net time \\\\localhost /set /y
@@ -360,6 +374,10 @@ public sealed class NetworkRepairService : INetworkRepairService
                         // 链式：主 DNS 设置失败即 FAIL，不再执行次要操作，避免被 add 次 DNS 的成功掩盖成 OK
                         sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1 && netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
+                    }
                     break;
                 case "tcp_autotuning":
                     // 两条都必须成功：主设置（autotuninglevel）失败不能被次设置（rss）成功掩盖成 OK
@@ -380,8 +398,13 @@ public sealed class NetworkRepairService : INetworkRepairService
                     if (adapterName.Length > 0)
                     {
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" disable >nul 2>&1");
-                        sb.AppendLine("timeout /t 3 /nobreak >nul 2>&1");
+                        // timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）会立即报错失效；ping 延时无此依赖
+                        sb.AppendLine("ping -n 4 127.0.0.1 >nul");
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 default:

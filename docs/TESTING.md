@@ -142,6 +142,10 @@
 71. 网卡驱动检查超时根治（hardware.nic_pnp）：逐卡 WMI 慢类查询（Win32_PnPEntity/Win32_PnPSignedDriver 各查 N 次 = N 次全表枚举，教学低配机 25 秒硬超时必触顶，且该检查纯本机 WMI 与网络无关）改为一次全网络类查询+内存匹配；检查硬超时升 40 秒；超时提示区分网络类与本机类原因（不再误导「多为网络无应答」）；WMI 枚举统一 20 秒硬超时（孤儿任务封顶，超出后按「信息不可得」降级）
 72. 服务启动修复证据链（start_net_services v2）：Windows PowerShell 5.1 的 Get-Service 无 StartType 属性改用 Get-CimInstance Win32_Service StartMode 判禁用；启动后复核状态；失败明细（逐服务：已被禁用/启动失败/启动后未保持运行/不存在，ASCII 标记防编码歧义）经 ##DETAIL## 行映射为可读文案并入修复动作输出，不再一句笼统 FAIL；服务被禁用时按引导联系信息中心解锁启动类型
 73. 内存防御收尾（切换标签页内存持续升高）：插件导航页 Unloaded 先退订 VM.PropertyChanged 再释放 VM；复测口径——1.4.0-beta 反复切换全部标签页 20 轮后，任务管理器内存应回到切换前水平上下（.NET GC 滞后允许小幅波动），而非持续单调上涨；此前 main 已有 ClearBackStack + Unloaded Dispose + VM Transient 链路（若旧版本实测请先升级）
+74. 复检终态实测防误绿（nic_powersave_off）：ReverifyAsync 返回 ReverifyReport（检查项快照+复检会话布尔共享键终值）；nic_powersave_off 的关联检查（speed.nic_rate/hardware.nic_probe）对节能开启只记线索不判级、复检 Pass 不代表目标达成——共享键 nic.powersave 仍为 true 时把被翻绿项拦回为警告并给出手动处置路径（设备管理器电源管理页）；其余动作复检语义不受影响
+75. portal.expiry 孤立复检防假红：internet.http.ok 键缺失（复核会话孤立跑本项，如前置 portal.detect 超时中止）时改判警告「门户可达，但本次复核会话无外网实测依据」，不再与 portal.detect 的实测绿结论自相矛盾；诊断主流程（Full 模式 detect 先行写入）原语义保留
+76. 提权动作空网卡名显式失败：enable_adapter/adapter_reset/dns_set_public 在主网卡名称不可得时生成带原因的 FAIL 行（此前要么静默无标记被解析端误判「可能取消了 UAC」、要么拼出空名命令报错被吞）；FAIL 行带原因后缀时解析端把原因提为主文案
+77. adapter_reset 延时改 ping：timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）立即报错失效改 ping -n 4 127.0.0.1；修复完成后修复清单按复检后状态重建（复检通过/无复核语义翻绿的项不再挂着可重试，剩余问题生成新计划）
 
 ## C. 已知边界（设计使然，非缺陷）
 
