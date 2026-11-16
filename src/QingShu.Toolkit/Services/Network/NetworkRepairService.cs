@@ -197,8 +197,18 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var okLine = lines.FirstOrDefault(l => l.Contains($"##OK##{a.Id}"));
                     var failLine = lines.FirstOrDefault(l => l.Contains($"##FAIL##{a.Id}"));
+                    // ##DETAIL##<动作id>;name:MARK…：动作级失败明细（start_net_services 逐服务原因，
+                    // ASCII 标记防编码歧义）——失败时映射为可读文案并入动作输出证据，不再一句笼统 FAIL
+                    var detailLine = lines.FirstOrDefault(l => l.TrimStart().StartsWith($"##DETAIL##{a.Id};"));
+                    var detailText = detailLine != null
+                        ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
+                        : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
-                    a.Output = okLine != null ? "执行成功" : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                    a.Output = okLine != null
+                        ? "执行成功"
+                        : detailText != null
+                            ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
+                            : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -216,6 +226,25 @@ public sealed class NetworkRepairService : INetworkRepairService
         }
 
         session.Write(LogLevel.Info, "repair", "修复流程结束");
+    }
+
+    /// <summary>##DETAIL## 明细的 ASCII 标记 → 用户可读文案（服务名保留原文，未知标记原样透出）。</summary>
+    private static string LocalizeServiceDetail(string raw)
+    {
+        var parts = raw.Split(';');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            if (p.EndsWith(":DISABLED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":DISABLED".Length)] + "：已被禁用（需信息中心解锁启动类型）";
+            else if (p.EndsWith(":FAILED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":FAILED".Length)] + "：启动失败（权限不足或依赖服务异常）";
+            else if (p.EndsWith(":NOT_RUNNING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":NOT_RUNNING".Length)] + "：启动后未保持运行";
+            else if (p.EndsWith(":MISSING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":MISSING".Length)] + "：服务不存在（系统精简或被移除）";
+        }
+        return string.Join("；", parts);
     }
 
     private async Task<(bool Ok, string Output)> RunNormalAsync(RepairAction action)
@@ -314,9 +343,16 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "start_net_services":
-                    // 仅启动未运行的网络基础服务；被禁用（StartType=Disabled）的跳过计为失败，不改启动类型。
-                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL
-                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; foreach($s in $ids){ $svc=Get-Service -Name $s -ErrorAction SilentlyContinue; if($svc -and $svc.Status -ne 'Running'){ if($svc.StartType -eq 'Disabled'){ $bad++ } else { try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500 }catch{ $bad++ } } } }; exit $bad\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 仅启动未运行的网络基础服务；被禁用的跳过计为失败，不改启动类型。
+                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL。
+                    // v2（2026-11）：Windows PowerShell 5.1 的 Get-Service 返回对象没有 StartType 属性
+                    // （.NET Framework 的 ServiceController 无此成员，PS 6+ 才加入），恒 $null → 禁用判断
+                    // 恒不成立 → 禁用服务也走 Start-Service 后异常失败；且 `>nul 2>&1` 把细节全吞，失败时
+                    // 无「哪个服务、为什么没起来」的证据。现改 Get-CimInstance Win32_Service 的 StartMode
+                    // 判禁用（PS 5.1 可用）、启动后复核状态，失败明细以 ##DETAIL##<动作id>;服务:标记 行随
+                    // stdout 进 outLog 供宿主解析（powershell 行不再 >nul；脚本内部全部静默无噪音，
+                    // 明细用 ASCII 标记杜绝编码歧义）；退出码语义不变。
+                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; $det=@(); $svcs=@{}; Get-CimInstance Win32_Service | ForEach-Object { if($ids -contains $_.Name){ $svcs[$_.Name]=$_ } }; foreach($s in $ids){ $sc=Get-Service -Name $s -ErrorAction SilentlyContinue; if(-not $sc){ $bad++; $det+=$s+':MISSING'; continue }; if($sc.Status -eq 'Running'){ continue }; if($svcs.ContainsKey($s) -and $svcs[$s].StartMode -eq 'Disabled'){ $bad++; $det+=$s+':DISABLED'; continue }; try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500; if((Get-Service -Name $s).Status -ne 'Running'){ $bad++; $det+=$s+':NOT_RUNNING' } }catch{ $bad++; $det+=$s+':FAILED' } }; if($det.Count -gt 0){ Write-Output ('##DETAIL##" + a.Id + ";' + ($det -join ';')) }; exit $bad\" && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "dns_set_public":
                     if (adapterName.Length > 0)

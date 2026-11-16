@@ -81,7 +81,8 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly Dictionary<string, int> TimeoutOverrides = new()
     {
         ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
-        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30,
+        ["hardware.nic_pnp"] = 40
     };
 
     private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
@@ -183,7 +184,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                         outcome = await runTask.ConfigureAwait(true); // 正常完成；异常由此抛出统一接住
                     else
                         outcome = CheckOutcome.Fail($"检查超时（超过 {timeoutSec} 秒已强制中止）",
-                            "该检查等待响应过久（多为网络无应答），已中止此项以保证其余检查不被卡住；请结合网关/DNS/外网连通项结论定位。",
+                            "该检查等待响应过久，已中止此项以保证其余检查不被卡住：网络连通类检查多为网络无应答，本机信息类检查（WMI/注册表/服务查询）多为系统繁忙或 WMI 响应慢，非网络问题；请结合网关/DNS/外网连通项结论定位。",
                             $"超时阈值：{timeoutSec} 秒");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

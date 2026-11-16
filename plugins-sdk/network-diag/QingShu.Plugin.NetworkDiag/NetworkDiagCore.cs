@@ -382,13 +382,20 @@ internal static class WmiScopes
 /// </summary>
 public static class WmiHelper
 {
+    /// <summary>WMI 枚举统一 20 秒硬超时：ManagementObjectSearcher 默认无超时，个别慢类
+    /// （Win32_PnPSignedDriver / Win32_PnPEntity 全表枚举）在低配机/杀软环境可能挂数十秒，
+    /// 超出诊断逐项硬超时后遗留任务变孤儿继续占线程。枚举超时抛异常 → 外层 catch 返回已
+    /// 获取部分，检查项按「信息不可得」降级，孤儿任务最迟 20 秒自终止（内存防御一环）。</summary>
+    private static EnumerationOptions EnumOpts()
+        => new() { Timeout = TimeSpan.FromSeconds(20) };
+
     public static Task<List<T>> QueryAsync<T>(string wql, Func<ManagementObject, T> selector)
         => Task.Run(() =>
         {
             var list = new List<T>();
             try
             {
-                using var searcher = new ManagementObjectSearcher(wql);
+                using var searcher = new ManagementObjectSearcher(new ObjectQuery(wql), EnumOpts());
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -412,7 +419,7 @@ public static class WmiHelper
             var list = new List<T>();
             try
             {
-                using var searcher = new ManagementObjectSearcher(scope, wql);
+                using var searcher = new ManagementObjectSearcher(scope, wql, EnumOpts());
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -432,7 +439,7 @@ public static class WmiHelper
         {
             try
             {
-                using var searcher = new ManagementObjectSearcher(wql);
+                using var searcher = new ManagementObjectSearcher(new ObjectQuery(wql), EnumOpts());
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -1097,7 +1104,8 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly Dictionary<string, int> TimeoutOverrides = new()
     {
         ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
-        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30, ["hardware.nic_probe"] = 40
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30,
+        ["hardware.nic_probe"] = 40, ["hardware.nic_pnp"] = 40
     };
 
     private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
@@ -1200,7 +1208,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                         outcome = await runTask.ConfigureAwait(true); // 正常完成；异常由此抛出统一接住
                     else
                         outcome = CheckOutcome.Fail($"检查超时（超过 {timeoutSec} 秒已强制中止）",
-                            "该检查等待响应过久（多为网络无应答），已中止此项以保证其余检查不被卡住；请结合网关/DNS/外网连通项结论定位。",
+                            "该检查等待响应过久，已中止此项以保证其余检查不被卡住：网络连通类检查多为网络无应答，本机信息类检查（WMI/注册表/服务查询）多为系统繁忙或 WMI 响应慢，非网络问题；请结合网关/DNS/外网连通项结论定位。",
                             $"超时阈值：{timeoutSec} 秒");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -1415,6 +1423,40 @@ public static partial class NetworkChecks
 
             var details = new List<string>();
             string? problem = null;
+
+            // 批量预查（慢查询根治 2026-11）：Win32_PnPEntity / Win32_PnPSignedDriver 均无索引，
+            // WHERE PNPDeviceID / DeviceID 过滤在 WMI 侧仍是全表枚举——逐卡查询 N 次 = N 次全枚举，
+            // Win32_PnPSignedDriver（全机签名驱动，数百条复杂对象）单次即数秒到数十秒，低配教学机
+            // 上本检查 25 秒硬超时必触顶（用户实测「网卡硬件与驱动状态检查超时（超过 25 秒已强制
+            // 中止）」，且该检查是纯本机 WMI 查询与网络无关——旧超时文案「多为网络无应答」是误导）。
+            // 改为「一次全网络类查询 + 内存匹配」：总枚举从 N×全表 降到各 1 次（PNPClass='Net'
+            // 过滤已被 hardware.nic_probe 同款查询实测可行）；WmiHelper 自身另有 20 秒枚举硬超时
+            // 兜底，检查硬超时同步升 40 秒（TimeoutOverrides）。预查漏掉的个别非 Net 类设备按
+            // 「无记录」静默降级，不误报。
+            var errMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in await WmiHelper.QueryAsync(
+                "SELECT PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPClass='Net'",
+                mo => new
+                {
+                    Id = (mo["PNPDeviceID"]?.ToString() ?? "").Trim(),
+                    Err = Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(e.Id) && !errMap.ContainsKey(e.Id)) errMap[e.Id] = e.Err;
+            }
+
+            var drvMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in await WmiHelper.QueryAsync(
+                "SELECT DeviceID, DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceClass='NET'",
+                mo => new
+                {
+                    Id = (mo["DeviceID"]?.ToString() ?? "").Trim(),
+                    Text = $"{mo["DriverVersion"]} ({mo["DriverDate"]})"
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(d.Id) && !drvMap.ContainsKey(d.Id)) drvMap[d.Id] = d.Text;
+            }
+
             foreach (var a in adapters)
             {
                 var statusText = a.Status switch
@@ -1430,30 +1472,27 @@ public static partial class NetworkChecks
                 if (a.Status == 5 && (ctx.Primary == null || ctx.Primary.Description.Contains(a.Name.Split(' ')[0])))
                     problem ??= $"{a.Name}: 网卡已被禁用";
 
-                // PnP 错误码 + 驱动信息
+                // PnP 错误码 + 驱动信息（预查结果内存匹配，O(1)，不再逐卡发起 WMI 慢类查询）
                 if (!string.IsNullOrEmpty(a.Pnp))
                 {
-                    var escaped = a.Pnp.Replace("\\", "\\\\");
-                    var err = await WmiHelper.QueryAsync(
-                        $"SELECT ConfigManagerErrorCode, Name FROM Win32_PnPEntity WHERE PNPDeviceID='{escaped}'",
-                        mo => Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)).ConfigureAwait(false);
-                    if (err.Count > 0 && err[0] != 0)
+                    var pnpId = a.Pnp.Trim();
+                    if (errMap.TryGetValue(pnpId, out var errCode))
                     {
-                        var errText = err[0] switch
+                        if (errCode != 0)
                         {
-                            1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
-                            28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
-                            _ => $"配置管理器错误码 {err[0]}"
-                        };
-                        details.Add($"⚠ {a.Name} 设备异常: {errText}");
-                        problem ??= $"{a.Name}: {errText}";
-                    }
-                    else if (err.Count > 0)
-                    {
-                        var drv = await WmiHelper.QueryAsync(
-                            $"SELECT DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceID='{escaped}'",
-                            mo => $"{mo["DriverVersion"]} ({mo["DriverDate"]})").ConfigureAwait(false);
-                        if (drv.Count > 0) details.Add($"{a.Name} 驱动: {drv[0]}");
+                            var errText = errCode switch
+                            {
+                                1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
+                                28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
+                                _ => $"配置管理器错误码 {errCode}"
+                            };
+                            details.Add($"⚠ {a.Name} 设备异常: {errText}");
+                            problem ??= $"{a.Name}: {errText}";
+                        }
+                        else if (drvMap.TryGetValue(pnpId, out var drvText))
+                        {
+                            details.Add($"{a.Name} 驱动: {drvText}");
+                        }
                     }
                 }
             }
@@ -3737,8 +3776,18 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var okLine = lines.FirstOrDefault(l => l.Contains($"##OK##{a.Id}"));
                     var failLine = lines.FirstOrDefault(l => l.Contains($"##FAIL##{a.Id}"));
+                    // ##DETAIL##<动作id>;name:MARK…：动作级失败明细（start_net_services 逐服务原因，
+                    // ASCII 标记防编码歧义）——失败时映射为可读文案并入动作输出证据，不再一句笼统 FAIL
+                    var detailLine = lines.FirstOrDefault(l => l.TrimStart().StartsWith($"##DETAIL##{a.Id};"));
+                    var detailText = detailLine != null
+                        ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
+                        : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
-                    a.Output = okLine != null ? "执行成功" : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                    a.Output = okLine != null
+                        ? "执行成功"
+                        : detailText != null
+                            ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
+                            : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -3756,6 +3805,25 @@ public sealed class NetworkRepairService : INetworkRepairService
         }
 
         session.Write(LogLevel.Info, "repair", "修复流程结束");
+    }
+
+    /// <summary>##DETAIL## 明细的 ASCII 标记 → 用户可读文案（服务名保留原文，未知标记原样透出）。</summary>
+    private static string LocalizeServiceDetail(string raw)
+    {
+        var parts = raw.Split(';');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            if (p.EndsWith(":DISABLED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":DISABLED".Length)] + "：已被禁用（需信息中心解锁启动类型）";
+            else if (p.EndsWith(":FAILED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":FAILED".Length)] + "：启动失败（权限不足或依赖服务异常）";
+            else if (p.EndsWith(":NOT_RUNNING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":NOT_RUNNING".Length)] + "：启动后未保持运行";
+            else if (p.EndsWith(":MISSING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":MISSING".Length)] + "：服务不存在（系统精简或被移除）";
+        }
+        return string.Join("；", parts);
     }
 
     private async Task<(bool Ok, string Output)> RunNormalAsync(RepairAction action)
@@ -3854,9 +3922,16 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "start_net_services":
-                    // 仅启动未运行的网络基础服务；被禁用（StartType=Disabled）的跳过计为失败，不改启动类型。
-                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL
-                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; foreach($s in $ids){ $svc=Get-Service -Name $s -ErrorAction SilentlyContinue; if($svc -and $svc.Status -ne 'Running'){ if($svc.StartType -eq 'Disabled'){ $bad++ } else { try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500 }catch{ $bad++ } } } }; exit $bad\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 仅启动未运行的网络基础服务；被禁用的跳过计为失败，不改启动类型。
+                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL。
+                    // v2（2026-11）：Windows PowerShell 5.1 的 Get-Service 返回对象没有 StartType 属性
+                    // （.NET Framework 的 ServiceController 无此成员，PS 6+ 才加入），恒 $null → 禁用判断
+                    // 恒不成立 → 禁用服务也走 Start-Service 后异常失败；且 `>nul 2>&1` 把细节全吞，失败时
+                    // 无「哪个服务、为什么没起来」的证据。现改 Get-CimInstance Win32_Service 的 StartMode
+                    // 判禁用（PS 5.1 可用）、启动后复核状态，失败明细以 ##DETAIL##<动作id>;服务:标记 行随
+                    // stdout 进 outLog 供宿主解析（powershell 行不再 >nul；脚本内部全部静默无噪音，
+                    // 明细用 ASCII 标记杜绝编码歧义）；退出码语义不变。
+                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; $det=@(); $svcs=@{}; Get-CimInstance Win32_Service | ForEach-Object { if($ids -contains $_.Name){ $svcs[$_.Name]=$_ } }; foreach($s in $ids){ $sc=Get-Service -Name $s -ErrorAction SilentlyContinue; if(-not $sc){ $bad++; $det+=$s+':MISSING'; continue }; if($sc.Status -eq 'Running'){ continue }; if($svcs.ContainsKey($s) -and $svcs[$s].StartMode -eq 'Disabled'){ $bad++; $det+=$s+':DISABLED'; continue }; try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500; if((Get-Service -Name $s).Status -ne 'Running'){ $bad++; $det+=$s+':NOT_RUNNING' } }catch{ $bad++; $det+=$s+':FAILED' } }; if($det.Count -gt 0){ Write-Output ('##DETAIL##" + a.Id + ";' + ($det -join ';')) }; exit $bad\" && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "dns_set_public":
                     if (adapterName.Length > 0)
