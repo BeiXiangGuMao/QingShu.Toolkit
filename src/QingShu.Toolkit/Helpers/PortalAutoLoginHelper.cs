@@ -16,13 +16,16 @@ namespace QingShu.Toolkit.Helpers;
 ///  1. 拉取门户页面（跟随重定向 / 自动识别 iframe 内嵌登录页）
 ///  2. 解析 HTML 表单：用户名输入框（text/tel/email/number）、密码输入框（password）、隐藏字段原样保留
 ///  3. 按表单 method/action 以 urlencoded 方式提交账号密码（不执行任何 JS —— 纯 JS 渲染的门户无法支持，会明确返回原因）
-///  4. 提交后用 NCSI 探测复核真实连通性（唯一可信判据）
 /// 安全说明：账号密码仅从本机 config.json 读取；日志与返回消息不含密码。
+/// 不内置登录后连通性复核（2026-11 用户需求删除）：校园网常拦截或延迟放行 NCSI 探测域名，提交后
+/// 立即复核易假阴性（明明登录成功却报「账号可能输错」并回退浏览器）；是否真正在线由修复完成后的
+/// 自动复核（portal.detect 用全新快照重跑）统一实测判定。
 /// 门户形态千差万别，本助手是“尽力而为”：失败一律回退为打开浏览器人工登录。
 /// </summary>
 public static class PortalAutoLoginHelper
 {
-    public sealed record AutoLoginResult(bool Submitted, bool VerifiedOnline, string Message);
+    // Submitted=表单已提交（不承诺已在线：登录后连通性复核已删除，在线与否由修复后自动复核判定）
+    public sealed record AutoLoginResult(bool Submitted, string Message);
 
     private static readonly HttpClient Client = new(new HttpClientHandler
     {
@@ -34,9 +37,6 @@ public static class PortalAutoLoginHelper
     {
         Timeout = TimeSpan.FromSeconds(12)
     };
-
-    private const string NcsiUrl = "http://www.msftconnecttest.com/connecttest.txt";
-    private const string NcsiExpected = "Microsoft Connect Test";
 
     public static async Task<AutoLoginResult> TryLoginAsync(string portalUrl, string username, string password, CancellationToken ct)
     {
@@ -67,7 +67,7 @@ public static class PortalAutoLoginHelper
             }
 
             if (form.PasswordField.Length == 0 || form.UserField.Length == 0)
-                return new AutoLoginResult(false, false,
+                return new AutoLoginResult(false,
                     "自动登录失败：门户页面未找到标准登录表单（可能为纯 JS 渲染或扫码登录），已回退为浏览器人工登录。");
 
             // 3) 组装并提交
@@ -94,21 +94,19 @@ public static class PortalAutoLoginHelper
             }
             _ = await post.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-            // 4) NCSI 复核（唯一可信判据：真的能拿到预期内容才算登录成功）
-            await Task.Delay(800, ct).ConfigureAwait(false); // 给门户服务端一点入账时间
-            var verify = await NetworkProbeHelper.HttpAsync(NcsiUrl, followRedirect: false, readBody: true).ConfigureAwait(false);
-            if (verify.Ok && verify.StatusCode == 200 && verify.BodySnippet.Contains(NcsiExpected, StringComparison.Ordinal))
-                return new AutoLoginResult(true, true, $"自动登录成功：已提交认证并通过连通性复核（{verify.ElapsedMs} ms）。");
-            return new AutoLoginResult(true, false,
-                $"自动登录已提交（门户响应 HTTP {(int)post.StatusCode}），但连通性复核未通过：账号可能输错、已在线别处登录或门户需要验证码。已回退为浏览器人工登录。");
+            // 4) 不做登录后连通性复核（2026-11 用户需求删除）：提交即返回。原 NCSI 复核在校园网
+            //    常拦截/延迟放行 NCSI 域名的环境下易假阴性（明明登录成功却报「账号可能输错」并回退
+            //    浏览器）；是否真正在线由修复完成后的自动复核（portal.detect 重跑）统一实测判定。
+            return new AutoLoginResult(true,
+                $"已提交认证表单（门户响应 HTTP {(int)post.StatusCode}）；是否真正在线以修复完成后的自动复核/重新诊断为准。");
         }
         catch (OperationCanceledException)
         {
-            return new AutoLoginResult(false, false, "自动登录超时，已回退为浏览器人工登录。");
+            return new AutoLoginResult(false, "自动登录超时，已回退为浏览器人工登录。");
         }
         catch (Exception ex)
         {
-            return new AutoLoginResult(false, false, $"自动登录异常（{ex.Message}），已回退为浏览器人工登录。");
+            return new AutoLoginResult(false, $"自动登录异常（{ex.Message}），已回退为浏览器人工登录。");
         }
     }
 

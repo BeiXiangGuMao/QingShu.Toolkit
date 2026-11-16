@@ -345,8 +345,9 @@ public partial class NetworkDiagViewModel : ObservableObject
                 if (reIds.Count > 0)
                 {
                     RepairHint = "修复动作已执行，正在复核修复效果（用全新网络快照重跑关联检查）…";
-                    // 断网类动作（DHCP 续租 / 网卡启停 / 重协商）后协议栈需数秒收敛，延后再测
-                    var settle = okActions.Any(a => a.Id is "renew_dhcp" or "adapter_reset" or "enable_adapter") ? 4000 : 1000;
+                    // 断网类动作（DHCP 续租 / 网卡启停 / 重协商）后协议栈需数秒收敛；open_portal 提交
+                    // 认证表单后也给门户服务端数秒入账时间（原 800ms 入账延时职责移交此处），延后再测防假阴性
+                    var settle = okActions.Any(a => a.Id is "renew_dhcp" or "adapter_reset" or "enable_adapter" or "open_portal") ? 4000 : 1000;
                     await Task.Delay(settle, _ctsRepair.Token).ConfigureAwait(true);
                     var reItems = await _diag.ReverifyAsync(reIds, _ctsRepair.Token).ConfigureAwait(true);
                     foreach (var re in reItems)

@@ -108,7 +108,7 @@ public sealed class NetworkRepairService : INetworkRepairService
 #if !STABLE_BUILD
             var st = _settings.Current;
             var autoHint = st.PortalAutoLogin && st.PortalUsername.Length > 0 && st.PortalPassword.Length > 0
-                ? "已开启自动登录：一键修复将直接提交认证表单，并用连通性复核验证；失败时自动回退浏览器人工登录。"
+                ? "已开启自动登录：一键修复将直接提交认证表单；是否真正在线由修复完成后的自动复核实测判定，无法提交时自动回退浏览器人工登录。"
                 : "调起默认浏览器打开检测到的认证门户；在 设置 → 网络诊断 配置账号并开启自动登录后，可免每次手动登录。";
 #else
             // 正式版（STABLE_BUILD）：实验性自动登录整体剔除，仅保留浏览器人工登录引导
@@ -252,12 +252,12 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var r = await PortalAutoLoginHelper.TryLoginAsync(
                         portal.ToString(), s.PortalUsername, s.PortalPassword, CancellationToken.None).ConfigureAwait(true);
-                    if (r.VerifiedOnline) return (true, r.Message);
-                    // 提交但连通性复核未通过 → 标记失败而非成功：此前返回 true 把动作标绿「成功」，
-                    // 网络实际仍未通，是「修复后没有用」的另一感知来源；浏览器照常打开供人工登录，
-                    // 认证是否成功由修复后自动复核（portal.detect 重跑）给出真实结论。
+                    // 动作只承诺「把认证页带到面前」：表单提交成功或浏览器已打开均计成功（登录后 NCSI
+                    // 连通性复核已删除——校园网常拦截/延迟放行 NCSI 域名，提交后立即复核易假阴性）；
+                    // 是否真正在线由修复完成后的自动复核（portal.detect 重跑）给出实测结论。
+                    if (r.Submitted) return (true, r.Message);
                     Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
-                    return (false, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工登录；完成登录后重新诊断复核。");
+                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工登录；完成登录后重新诊断复核。");
                 }
                 Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
                 return (true, $"已在默认浏览器打开 {portal}（提示：在 设置 → 网络诊断 配置账号并开启自动登录，可免每次手动登录）");
