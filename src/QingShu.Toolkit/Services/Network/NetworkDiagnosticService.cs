@@ -16,6 +16,8 @@ public interface INetworkDiagnosticService
     /// <summary>执行计划：逐项更新 CheckItem 状态（ObservableObject，UI 自动刷新），并写入会话日志。</summary>
     Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
         IProgress<SpeedProgress>? speedProgress = null);
+    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）。</summary>
+    Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
     CheckContext? LastContext { get; }
 }
 
@@ -240,5 +242,81 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         session.Write(LogLevel.Info, "session",
             $"诊断完成：通过 {report.PassCount} / 警告 {report.WarnCount} / 未通过 {report.FailCount} / 跳过 {report.SkipCount}");
         return report;
+    }
+
+    /// <summary>
+    /// 修复后复核（闭环验证）：用全新网络快照（网卡/Wi-Fi 重新探测）重跑指定检查项，返回最新结果。
+    /// 动作「执行成功」（命令退出码）不等于「问题已解决」——如 flushdns 对 DNS 服务器本身不可用无效、
+    /// PowerShell 非终止错误会假成功——调用方必须以本方法实测结果决定检查项是否翻「已修复」。
+    /// 与 ExecuteAsync 共用逐项硬超时护栏；独立会话日志留档（类别 reverify），不产出诊断报告。
+    /// </summary>
+    public async Task<List<CheckItem>> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
+    {
+        var results = new List<CheckItem>();
+        if (checkIds.Count == 0) return results;
+
+        var session = _log.BeginDiagSession();
+        try
+        {
+            var adapters = NetworkProbeHelper.GetAllAdapters();
+            var primary = NetworkProbeHelper.GetPrimaryAdapter();
+            var wifi = primary is { IsWireless: true } ? await NetworkProbeHelper.GetWifiInfoAsync().ConfigureAwait(true) : null;
+            var ctx = new CheckContext
+            {
+                Settings = _settings.Current,
+                Log = session,
+                Ct = ct,
+                Adapters = adapters,
+                Primary = primary,
+                Wifi = wifi
+            };
+
+            var impl = OrderedChecks.ToDictionary(c => c.Id, c => c);
+            session.Write(LogLevel.Info, "reverify", $"修复后复核开始：共 {checkIds.Count} 项", checkIds.ToArray());
+            foreach (var id in checkIds)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!impl.TryGetValue(id, out var check)) continue;
+                var item = new CheckItem(id, check.Name, check.Category);
+                CheckOutcome outcome;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var timeoutSec = TimeoutFor(id);
+                    var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    linked.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+                    var runTask = check.RunAsync(ctx, linked.Token);
+                    var done = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(timeoutSec + 3))).ConfigureAwait(true);
+                    if (done == runTask)
+                        outcome = await runTask.ConfigureAwait(true);
+                    else
+                        outcome = CheckOutcome.Fail($"复核超时（超过 {timeoutSec} 秒已强制中止）",
+                            "该项复核等待响应过久，已中止以保证其余复核不被卡住；请重新运行诊断以最新结果为准。");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException)
+                {
+                    outcome = CheckOutcome.Fail("复核超时（已强制中止）", "该项复核内部无响应被强制中止；请重新运行诊断以最新结果为准。");
+                }
+                catch (Exception ex)
+                {
+                    outcome = CheckOutcome.Fail($"复核执行异常：{ex.Message}", "该项复核出现未预期错误；请重新运行诊断以最新结果为准。");
+                }
+                sw.Stop();
+                item.Status = outcome.Status;
+                item.Summary = outcome.Summary;
+                item.Suggestion = outcome.Suggestion;
+                item.Details = outcome.Details;
+                results.Add(item);
+                session.Write(LogLevel.Info, $"reverify.{id}", $"[{outcome.Status}] {outcome.Summary}",
+                    new { ms = sw.ElapsedMilliseconds, details = outcome.Details });
+            }
+            session.Write(LogLevel.Info, "reverify", "修复后复核完成");
+            return results;
+        }
+        finally
+        {
+            session.Dispose();
+        }
     }
 }

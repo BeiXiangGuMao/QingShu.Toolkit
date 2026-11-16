@@ -28,7 +28,7 @@
 | `Services/Network/*`（编排 + 46 项检查 + 会话日志 + 拓扑构建） | `NetworkDiagCore.cs` | 诊断引擎三模式计划 + 逐项硬超时 + 一键修复计划（管理类合并一次 UAC）+ NetworkTopologyBuilder 纯函数构建；插件版新增三项：IP 地址冲突检测（ip.conflict）、网络硬件探查（hardware.nic_probe）与 HTTPS 证书链校验（rare.tls_cert，TLS 解密/自签 vs 时钟错误判别） |
 | `Services/Reporting/PdfReportService.cs`、`Services/Reporting/ReportInference.cs`、`Services/HardwareProbeService.cs` | `NetworkReporting.cs` | QuestPDF 正式报告模板（中文注册字体/编号按日累计/健康评分/历史基线对比/分层明细/修复记录/综合推断/分级处置建议；sidecar 基线摘要随 PDF 同生共死）+ 设备事实探测（序列号/MachineGuid/CPU/内存/网卡） |
 | `ISettingsService` 诊断域字段 + Last* 五项 | `NetworkDiagSettings.cs` | 插件私有 settings.json（原子写/损坏回退默认）+ 宿主 config.json 一次性迁移 + 诊断设置只读镜像刷新 |
-| `ViewModels/NetworkDiagViewModel.cs` | `NetworkDiagViewModel.cs` | VM 全量移植；诊断/修复/报告/探测四服务对接插件实现；设置对接插件 store；日志适配 `Action<string,string>`；护栏原样（诊断与修复取消源分立、修复成功转 Fixed、open_portal 不翻转、winsock 标注重启生效、修复后重建拓扑、修复提权中禁重开诊断） |
+| `ViewModels/NetworkDiagViewModel.cs` | `NetworkDiagViewModel.cs` | VM 全量移植；诊断/修复/报告/探测四服务对接插件实现；设置对接插件 store；日志适配 `Action<string,string>`；护栏原样（诊断与修复取消源分立、修复后自动复核闭环——复检通过才转 Fixed 且未通过时保留红/黄并把证据更新为复检实测、winsock/arp_clear 无立即复核语义并标注原因、修复后重建拓扑、修复提权中禁重开诊断） |
 | `Views/NetworkDiagnosticsPage.xaml` + `.xaml.cs`（373 + 272 行） | `NetworkDiagView.cs` | 纯代码 UI 七行逐区对应：页头 → 进度卡 → 实时测速卡 → 低速原因分析卡 → 网络拓扑 Canvas 卡 → 检查结果列表 → 修复 + 导出双卡；PDF 导出五字段 ContentDialog 逐字对应 |
 | ——（本批新增） | `NetworkDiagPlugin.cs`、`plugin.json.template` | 插件入口与清单（navTag = network，接管「网络诊断」导航页） |
 
@@ -105,6 +105,10 @@ Get-ChildItem plugins-sdk/network-diag/QingShu.Plugin.NetworkDiag/bin -Recurse -
 - 只读诊断为主：全部检查项为探测/读取类操作（WMI / 注册表只读 / ping / tracert / HTTP 探测 /
   下载测速只读不落盘不上传），不改系统配置。
 - 一键修复安全铁律与内置页逐字一致：管理类操作合并为一次 UAC 提权批处理（1223 哨兵回传）、
-  危险项（需重启/谨慎）默认不勾选、open_portal 成功不翻转认证状态、winsock 重置标注重启生效、
-  修复与诊断取消源分立互不误伤。
+  危险项（需重启/谨慎）默认不勾选、open_portal 自动登录复核未通过时动作标「失败」（浏览器仍打开）、
+  winsock 重置标注重启生效、修复与诊断取消源分立互不误伤。
+- 修复后自动复核（闭环）：对执行成功的动作用全新网络快照重跑关联检查，实测通过才标「已修复」，
+  未通过保留红/黄并把证据更新为复检实测（动作「执行成功」≠「问题已解决」：flushdns 对 DNS 服务器
+  本身不可用无效、PowerShell 非终止错误会假成功）；winsock（需重启生效）与 ARP 清缓存（表项需流量
+  重新学习）两项无立即复核语义，按原因翻转注明。
 - 无新增宿主接口依赖：仅契约接口（IQToolkitPlugin / IQToolkitNavPageProvider / IPluginContext）。

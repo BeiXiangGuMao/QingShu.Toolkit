@@ -134,10 +134,14 @@ public sealed class NetworkRepairService : INetworkRepairService
                 "写入单个注册表值 DODownloadMode=100（旁路模式，非导入 .reg 文件），阻止系统向局域网/互联网上传更新分片占满上行。还原：删除该值即恢复默认。", true, false,
                 new[] { "speed.delivopt" }));
 
-        if (Has("speed.nic_rate") && SharedTrue("nic.powersave"))
+        // 节能托管：只看本次诊断的共享键（写入点 NicRateCheck 全双工探测，会话内即发现即给修复）——
+        // 若仍要求 Has("speed.nic_rate") 在 Failed 列表，节能开启而速率正常时修复动作永不入计划
+        //（与插件侧 0b95a22 可达性修复同口径，此处补同步；hardware.nic_probe 宿主无此检查项，含于
+        // RelatedCheckIds 供同源对齐，合并/复核循环按 Id 匹配不到时天然跳过）。
+        if (SharedTrue("nic.powersave"))
             plan.Add(new RepairAction("nic_powersave_off", "关闭网卡节能托管",
                 "禁止系统为省电降低网卡性能（AllowComputerToTurnOffDevice=Disabled），避免课中网卡休眠导致的瞬时卡顿。", true, false,
-                new[] { "speed.nic_rate" }));
+                new[] { "speed.nic_rate", "hardware.nic_probe" }));
 
         if (Has("speed.nic_rate") && SharedTrue("nic.rate.low"))
             plan.Add(new RepairAction("adapter_reset", $"网卡重协商（{(adapterName.Length > 0 ? adapterName : "主网卡")}）",
@@ -249,8 +253,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     var r = await PortalAutoLoginHelper.TryLoginAsync(
                         portal.ToString(), s.PortalUsername, s.PortalPassword, CancellationToken.None).ConfigureAwait(true);
                     if (r.VerifiedOnline) return (true, r.Message);
+                    // 提交但连通性复核未通过 → 标记失败而非成功：此前返回 true 把动作标绿「成功」，
+                    // 网络实际仍未通，是「修复后没有用」的另一感知来源；浏览器照常打开供人工登录，
+                    // 认证是否成功由修复后自动复核（portal.detect 重跑）给出真实结论。
                     Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
-                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工确认。");
+                    return (false, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工登录；完成登录后重新诊断复核。");
                 }
                 Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
                 return (true, $"已在默认浏览器打开 {portal}（提示：在 设置 → 网络诊断 配置账号并开启自动登录，可免每次手动登录）");
@@ -326,7 +333,12 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine("reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization\" /v DODownloadMode /t REG_DWORD /d 100 /f >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "nic_powersave_off":
-                    sb.AppendLine("powershell -NoProfile -Command \"Get-NetAdapterPowerManagement | Where-Object {$_.AllowComputerToTurnOffDevice -eq 'Enabled'} | Set-NetAdapterPowerManagement -AllowComputerToTurnOffDevice Disabled\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 退出码必须传播：Windows PowerShell 5.1 里 Set-NetAdapterPowerManagement 的非终止错误
+                    // 不会改变 powershell.exe 退出码，旧写法无论成败恒返回 0 → && 恒成立 → 修复恒显「成功」，
+                    // 实际可能什么都没改（复检「节能托管：开启」依旧，用户感知「修复后没有用」）。现语义：
+                    // 查询失败 → FAIL；成功关闭 ≥1 个适配器 → OK；全部关闭失败 → FAIL；
+                    // 本就没有「已启用」项（终态已达成，幂等）→ OK。
+                    sb.AppendLine("powershell -NoProfile -Command \"$n=0; $f=0; try{ $list=Get-NetAdapterPowerManagement -ErrorAction Stop }catch{ exit 2 }; foreach($p in $list){ if($p.AllowComputerToTurnOffDevice -eq 'Enabled'){ try{ Set-NetAdapterPowerManagement -InputObject $p -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop; $n++ }catch{ $f++ } } }; if($n -gt 0){exit 0}elseif($f -gt 0){exit 1}else{exit 0}\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "adapter_reset":
                     if (adapterName.Length > 0)

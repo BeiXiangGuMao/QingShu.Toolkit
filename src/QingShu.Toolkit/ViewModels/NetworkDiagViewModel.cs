@@ -306,27 +306,79 @@ public partial class NetworkDiagViewModel : ObservableObject
         {
             await _repair.RunAsync(selected, progress, _ctsRepair.Token).ConfigureAwait(true);
 
-            // 修复成功 → 对应检查项转「已修复」：打通 Fixed 状态链路（计数芯片/绿勾/PDF 样式此前均已支持，
-            // 但全工程从未写入该状态，导致修复后列表永远停在红/黄、无闭环反馈）。
-            // open_portal 的成功仅代表门户已打开，认证是否成功须复诊确认，不翻转；
-            // winsock 重置需重启才生效，翻转文案特别标注。
+            // 修复后闭环复核：动作「执行成功」（命令退出码）≠「问题已解决」——flushdns 对 DNS 服务器
+            // 本身不可用这类根因无效、PowerShell 非终止错误会假成功，旧逻辑按动作成功直接把检查项
+            // 翻「已修复」（绿），用户重新诊断又变红，感知「修复后没有用」。现对执行成功的动作用
+            // 全新网络快照重跑其关联检查，按实测结果诚实收敛：通过才翻绿，未通过保留红/黄并更新为
+            // 最新实测证据。winsock 重置需重启才生效（复核必然不通过）、arp_clear 清缓存后网关表项
+            // 要等真实流量才重新学习（立即复检必假红）——两项不立即复核，保留翻转并注明原因。
             if (!IsRunning) // 用户已重开诊断则不动新列表
             {
-                foreach (var a in selected.Where(a => a.Status == RepairStatus.Ok && a.Id != "open_portal"))
+                var okActions = selected.Where(a => a.Status == RepairStatus.Ok).ToList();
+                var noReverify = new[] { "winsock_reset", "arp_clear" };
+                var reIds = okActions.Where(a => !noReverify.Contains(a.Id))
+                                     .SelectMany(a => a.RelatedCheckIds).Distinct().ToList();
+
+                int rePass = 0, reBad = 0;
+                if (reIds.Count > 0)
                 {
-                    var suffix = a.Id == "winsock_reset" ? "，重启计算机后生效" : "";
+                    RepairHint = "修复动作已执行，正在复核修复效果（用全新网络快照重跑关联检查）…";
+                    // 断网类动作（DHCP 续租 / 网卡启停 / 重协商）后协议栈需数秒收敛，延后再测
+                    var settle = okActions.Any(a => a.Id is "renew_dhcp" or "adapter_reset" or "enable_adapter") ? 4000 : 1000;
+                    await Task.Delay(settle, _ctsRepair.Token).ConfigureAwait(true);
+                    var reItems = await _diag.ReverifyAsync(reIds, _ctsRepair.Token).ConfigureAwait(true);
+                    foreach (var re in reItems)
+                    {
+                        var orig = Items.FirstOrDefault(i => i.Id == re.Id);
+                        if (orig is null) continue;
+                        if (re.Status == CheckStatus.Pass)
+                        {
+                            rePass++;
+                            orig.Status = CheckStatus.Fixed;
+                            orig.Summary = $"已修复，复检通过：{re.Summary}";
+                            orig.Suggestion = "";
+                            orig.Details = re.Details;
+                        }
+                        else if (re.Status is CheckStatus.Warning or CheckStatus.Fail)
+                        {
+                            reBad++;
+                            orig.Status = re.Status;
+                            orig.Summary = $"修复动作已执行，但复检仍未通过：{re.Summary}";
+                            orig.Suggestion = re.Suggestion;
+                            orig.Details = re.Details;
+                        }
+                        else
+                        {
+                            orig.Summary = $"修复动作已执行（该项复核未执行：{re.Summary}）";
+                        }
+                    }
+                }
+
+                foreach (var a in okActions.Where(a => noReverify.Contains(a.Id)))
+                {
+                    var note = a.Id == "winsock_reset"
+                        ? "重置 Winsock 目录，重启计算机后生效"
+                        : "清除 ARP 缓存；网关表项将随正常网络访问自动重新学习";
                     foreach (var item in Items.Where(i => a.RelatedCheckIds.Contains(i.Id)
                                                           && i.Status is CheckStatus.Warning or CheckStatus.Fail))
                     {
                         item.Status = CheckStatus.Fixed;
-                        item.Summary = $"已执行修复（{a.Title}{suffix}）";
+                        item.Summary = $"已执行修复（{note}）";
                     }
                 }
+
                 Recount();
-                // 修复后重建拓扑：Fixed 状态映射为绿色「正常」，断点定位随实际修复结果收敛
+                // 修复后重建拓扑：Fixed 与复核后状态映射回拓扑健康档，断点定位随实测结果收敛
                 Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
+
+                RepairHint = reIds.Count > 0
+                    ? $"修复执行完毕：复检通过 {rePass} 项"
+                      + (reBad > 0 ? $"，仍有 {reBad} 项未通过（列表已更新为最新实测证据，请按建议处置；涉及校园网侧问题请报修信息中心）" : "")
+                      + (okActions.Any(a => a.Id == "winsock_reset") ? "；Winsock 重置需重启计算机后生效" : "") + "。"
+                    : okActions.Count > 0
+                        ? "修复执行完毕；已执行动作无需立即复核（Winsock 需重启生效 / ARP 表项将自动重新学习），建议稍后重新诊断确认。"
+                        : "修复执行完毕，但本次没有动作执行成功（状态与输出见修复清单）；可重试或重新诊断后处理。";
             }
-            RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
         }
         catch (OperationCanceledException)
         {
