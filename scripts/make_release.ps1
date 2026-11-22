@@ -15,6 +15,9 @@
       # 只打包不上传（先本地验收 zip / msix / cer）
       .\scripts\make_release.ps1 -PackOnly
 
+      # 发布纯宿主包（跳过默认插件装载与自动构建；插件可后补）
+      .\scripts\make_release.ps1 -PackOnly -SkipPlugins
+
       # 本机安装 MSIX（自动提权导入证书 → 安装；解决 0x800B0109 证书不受信任）
       .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-<版本>.msix
 
@@ -33,6 +36,11 @@
 .PARAMETER SkipBuild
     跳过 dotnet publish，直接使用现有发布目录打包（适合反复上传调试）。
 
+.PARAMETER SkipPlugins
+    跳过默认插件装载（含自动构建）。缺省：装载前自动构建 bin 下无产物的插件工程
+    （dotnet build 失败即中止发布），并从插件工程根的 plugin.json.template 装载 plugin.json；
+    正式版构建（宿主 csproj 定义 STABLE_BUILD）自动剔除实验性插件 qingshu.plugin.usbtool。
+
 .PARAMETER PackOnly
     只构建并打包，不创建 Release（上传前本地验收）。
 
@@ -49,6 +57,7 @@ param(
     [string]$Tag,
     [switch]$Stable,
     [switch]$SkipBuild,
+    [switch]$SkipPlugins,
     [switch]$PackOnly,
     [switch]$NoMsix,
     # 关闭 R2R 启动预编译（默认开启；产物体积敏感/更新下载慢时使用）
@@ -93,10 +102,15 @@ if (-not (Test-Path (Join-Path $publishDir "QingShu.Toolkit.exe"))) {
     throw "发布目录缺少 QingShu.Toolkit.exe，请先构建（或去掉 -SkipBuild）"
 }
 
-# ---- 2.5 默认插件装载（harness 风格：发布包自带 plugins\；更新器 robocopy /e 增量不删，
+# ---- 2.5 默认插件装载（自动构建 + harness 风格：发布包自带 plugins\；更新器 robocopy /e 增量不删，
 #      用户自装插件与已改配置不受更新影响）。仅补缺失文件：重复打包不会覆盖已改的 plugin.json。
+#      bin 下无构建产物时自动 dotnet build（2026-11 实测：文档发布流程未提"先构建插件"，照跑 7 插件全跳过），
+#      构建失败即中止发布——宁可不发不发残缺包，-SkipPlugins 可显式发布纯宿主包。
+#      plugin.json 从插件工程根的 plugin.json.template 装载（插件工程未设 CopyToOutputDirectory，
+#      bin 下无该文件——旧口径从 bin 找 template 永远落空，装载出的插件缺清单无法加载）。
 #      SdkRoot = 插件工程所在子目录（galamaster/galaagent 在 gala-dispatch，弹窗拦截在 popup-guard，
 #      U盘工具在 usb-tool，磁盘清理在 disk-cleanup，系统优化在 optimize，网络诊断在 network-diag）。
+$isStableBuild = (($projXml.Project.PropertyGroup | ForEach-Object { $_.DefineConstants } | Where-Object { $_ } | Select-Object -First 1) -match '(^|;)\s*STABLE_BUILD\s*(;|$)')
 $defaultPlugins = @(
     @{ Id = "qingshu.galamaster"; Sdk = "QingShu.Plugin.GalaMaster";  SdkRoot = "plugins-sdk\gala-dispatch" },
     @{ Id = "qingshu.galaagent";  Sdk = "QingShu.Plugin.GalaAgent";   SdkRoot = "plugins-sdk\gala-dispatch" },
@@ -106,31 +120,54 @@ $defaultPlugins = @(
     @{ Id = "qingshu.plugin.optimize"; Sdk = "QingShu.Plugin.Optimize"; SdkRoot = "plugins-sdk\optimize" },
     @{ Id = "qingshu.plugin.networkdiag"; Sdk = "QingShu.Plugin.NetworkDiag"; SdkRoot = "plugins-sdk\network-diag" }
 )
-foreach ($dp in $defaultPlugins) {
-    $binRoot = Join-Path (Join-Path $RepoRoot $dp.SdkRoot) "$($dp.Sdk)\bin"
-    $srcDll = Get-ChildItem $binRoot -Recurse -Filter "$($dp.Sdk).dll" -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
-    if (-not $srcDll) {
-        Write-Host "    · 未找到 $($dp.Sdk) 构建产物，跳过默认装载（先构建插件再打包即可带上）" -ForegroundColor Yellow
-        continue
-    }
-    $target = Join-Path $publishDir "plugins\$($dp.Id)"
-    New-Item -ItemType Directory -Force $target | Out-Null
-    $staged = 0
-    foreach ($f in @($srcDll.FullName,
-                     [IO.Path]::ChangeExtension($srcDll.FullName, ".pdb"),
-                     (Join-Path $srcDll.DirectoryName "plugin.json.template"))) {
-        if (-not (Test-Path $f)) { continue }
-        $dstName = (Get-Item $f).Name -replace '\.template$', ''
-        $dst = Join-Path $target $dstName
-        if (-not (Test-Path $dst)) {
-            Copy-Item $f $dst -Force
-            $staged++
-        }
-    }
-    Write-Host ("    · 默认插件 {0}：装载 {1} 个文件 → {2}" -f $dp.Id, $staged, $target) -ForegroundColor DarkCyan
+if ($isStableBuild) {
+    # 正式版（STABLE_BUILD 剔除口径）：U盘工具为实验性功能（AppBuildProfile.UsbToolEnabled=false，
+    # 宿主导航入口隐藏/自动加载静默跳过/手动加载明确拒绝三重门禁），正式包不装载其插件文件
+    # ——与"正式版=预览版砍掉实验性功能的产物、编译期整体剔除"哲学一致（docs/RELEASE.md 第五章）。
+    $defaultPlugins = @($defaultPlugins | Where-Object { $_.Id -ne "qingshu.plugin.usbtool" })
+    Write-Host "    正式版构建（STABLE_BUILD）：实验性插件 qingshu.plugin.usbtool 不入包（宿主已编译期剔除该功能）" -ForegroundColor DarkGray
 }
-Write-Host "    注：装载的默认插件无 plugin.sig，宿主按可选签名策略直接放行加载；如需官方签名徽章，装载后运行 tools\plugin-sign.ps1 -PluginFolder <插件目录> 重签。" -ForegroundColor DarkGray
+function Find-PluginDll([string]$binRoot, [string]$sdk) {
+    Get-ChildItem $binRoot -Recurse -Filter "$sdk.dll" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+}
+if ($SkipPlugins) {
+    Write-Host "==> 跳过默认插件装载（-SkipPlugins：发布纯宿主包，插件可后补）" -ForegroundColor Yellow
+} else {
+    # 显式传 QingshuHome：宿主 §2 已 publish 完成，指向 $publishDir——命令行传参必生效，
+    # 不受 MSBuild 节点复用按旧值求值影响（与 build_all_plugins.ps1 同口径；
+    # 插件 csproj 另有五级探测兜底，显式传参后不依赖兜底）
+    $hostHome = (Resolve-Path $publishDir).Path
+    foreach ($dp in $defaultPlugins) {
+        $binRoot = Join-Path (Join-Path $RepoRoot $dp.SdkRoot) "$($dp.Sdk)\bin"
+        $srcDll = Find-PluginDll $binRoot $dp.Sdk
+        if (-not $srcDll) {
+            Write-Host "    · $($dp.Sdk)：bin 下无构建产物，自动 dotnet build（Release，QingshuHome=$hostHome）..." -ForegroundColor Cyan
+            dotnet build (Join-Path (Join-Path $RepoRoot $dp.SdkRoot) "$($dp.Sdk)\$($dp.Sdk).csproj") -c Release -v minimal --nologo -p:QingshuHome="$hostHome"
+            if ($LASTEXITCODE -ne 0) { throw "插件构建失败：$($dp.Sdk)（exit=$LASTEXITCODE）。修复后重跑；或加 -SkipPlugins 显式发布无插件包。" }
+            $srcDll = Find-PluginDll $binRoot $dp.Sdk
+            if (-not $srcDll) { throw "插件构建完成但未找到产物：$($dp.Sdk)（检查 $binRoot）" }
+        }
+        $target = Join-Path $publishDir "plugins\$($dp.Id)"
+        New-Item -ItemType Directory -Force $target | Out-Null
+        $staged = 0
+        # plugin.json.template 与插件 csproj 同级（工程根），装载时落为 plugin.json
+        $tpl = Join-Path (Join-Path (Join-Path $RepoRoot $dp.SdkRoot) $dp.Sdk) "plugin.json.template"
+        foreach ($f in @($srcDll.FullName,
+                         [IO.Path]::ChangeExtension($srcDll.FullName, ".pdb"),
+                         $tpl)) {
+            if (-not (Test-Path $f)) { continue }
+            $dstName = (Get-Item $f).Name -replace '\.template$', ''
+            $dst = Join-Path $target $dstName
+            if (-not (Test-Path $dst)) {
+                Copy-Item $f $dst -Force
+                $staged++
+            }
+        }
+        Write-Host ("    · 默认插件 {0}：装载 {1} 个文件 → {2}" -f $dp.Id, $staged, $target) -ForegroundColor DarkCyan
+    }
+    Write-Host "    注：装载的默认插件无 plugin.sig，宿主按可选签名策略直接放行加载；如需官方签名徽章，装载后运行 tools\plugin-sign.ps1 -PluginFolder <插件目录> 重签。" -ForegroundColor DarkGray
+}
 
 # ---- 3. 打包 ----
 $zipPath = Join-Path $RepoRoot "QingShu.Toolkit-$version.zip"
