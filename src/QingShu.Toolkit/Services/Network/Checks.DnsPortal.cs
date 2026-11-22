@@ -277,7 +277,13 @@ public static partial class NetworkChecks
                 var details = new List<string> { $"门户 {s.PortalBaseUrl} TCP 探测: {(tcp.Ok ? $"可达（{tcp.ElapsedMs} ms）" : tcp.Error)}", $"外网连通: {(internetOk ? "正常" : "不通")}" };
 
                 if (tcp.Ok && !internetOk)
-                    return CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray());
+                    // internet.http.ok 的写入点在本会话更早的 portal.detect / internet.http——复核会话若
+                    // 孤立跑本项（前置项未跑或超时中止），键缺失 ≠ 外网不通，不能据此判「认证已过期」假红
+                    // （2026-11 审查实锤：open_portal 复检批里 portal.detect 超时会连带本项假红，与
+                    // portal.detect 的实测绿结论自相矛盾）
+                    return ctx.HasShared("internet.http.ok")
+                        ? CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray())
+                        : CheckOutcome.Warn("门户可达，但本次复核会话无外网实测依据", "孤立复核无法判定认证状态（外网连通结论未在本会话产生）；请重新运行完整诊断获取准确结论。", details.ToArray());
                 if (tcp.Ok && internetOk)
                     return CheckOutcome.Pass("门户可达且外网正常，认证状态良好。", details.ToArray());
                 if (!tcp.Ok && internetOk)

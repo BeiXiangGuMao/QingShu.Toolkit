@@ -108,7 +108,7 @@ public sealed class NetworkRepairService : INetworkRepairService
 #if !STABLE_BUILD
             var st = _settings.Current;
             var autoHint = st.PortalAutoLogin && st.PortalUsername.Length > 0 && st.PortalPassword.Length > 0
-                ? "已开启自动登录：一键修复将直接提交认证表单，并用连通性复核验证；失败时自动回退浏览器人工登录。"
+                ? "已开启自动登录：一键修复将直接提交认证表单；是否真正在线由修复完成后的自动复核实测判定，无法提交时自动回退浏览器人工登录。"
                 : "调起默认浏览器打开检测到的认证门户；在 设置 → 网络诊断 配置账号并开启自动登录后，可免每次手动登录。";
 #else
             // 正式版（STABLE_BUILD）：实验性自动登录整体剔除，仅保留浏览器人工登录引导
@@ -134,10 +134,14 @@ public sealed class NetworkRepairService : INetworkRepairService
                 "写入单个注册表值 DODownloadMode=100（旁路模式，非导入 .reg 文件），阻止系统向局域网/互联网上传更新分片占满上行。还原：删除该值即恢复默认。", true, false,
                 new[] { "speed.delivopt" }));
 
-        if (Has("speed.nic_rate") && SharedTrue("nic.powersave"))
+        // 节能托管：只看本次诊断的共享键（写入点 NicRateCheck 全双工探测，会话内即发现即给修复）——
+        // 若仍要求 Has("speed.nic_rate") 在 Failed 列表，节能开启而速率正常时修复动作永不入计划
+        //（与插件侧 0b95a22 可达性修复同口径，此处补同步；hardware.nic_probe 宿主无此检查项，含于
+        // RelatedCheckIds 供同源对齐，合并/复核循环按 Id 匹配不到时天然跳过）。
+        if (SharedTrue("nic.powersave"))
             plan.Add(new RepairAction("nic_powersave_off", "关闭网卡节能托管",
                 "禁止系统为省电降低网卡性能（AllowComputerToTurnOffDevice=Disabled），避免课中网卡休眠导致的瞬时卡顿。", true, false,
-                new[] { "speed.nic_rate" }));
+                new[] { "speed.nic_rate", "hardware.nic_probe" }));
 
         if (Has("speed.nic_rate") && SharedTrue("nic.rate.low"))
             plan.Add(new RepairAction("adapter_reset", $"网卡重协商（{(adapterName.Length > 0 ? adapterName : "主网卡")}）",
@@ -193,8 +197,28 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var okLine = lines.FirstOrDefault(l => l.Contains($"##OK##{a.Id}"));
                     var failLine = lines.FirstOrDefault(l => l.Contains($"##FAIL##{a.Id}"));
+                    // ##DETAIL##<动作id>;name:MARK…：动作级失败明细（start_net_services 逐服务原因，
+                    // ASCII 标记防编码歧义）——失败时映射为可读文案并入动作输出证据，不再一句笼统 FAIL
+                    var detailLine = lines.FirstOrDefault(l => l.TrimStart().StartsWith($"##DETAIL##{a.Id};"));
+                    var detailText = detailLine != null
+                        ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
+                        : null;
+                    // FAIL 行带原因后缀（如「##FAIL##enable_adapter 主网卡名称不可得，动作未执行」）时
+                    // 把原因提为主文案，不再落「可能取消了 UAC」的误导兜底
+                    var failPrefix = $"##FAIL##{a.Id}";
+                    var failReason = failLine != null
+                        && failLine.Trim().StartsWith(failPrefix, StringComparison.Ordinal)
+                        && failLine.Trim().Length > failPrefix.Length
+                            ? failLine.Trim().Substring(failPrefix.Length).Trim()
+                            : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
-                    a.Output = okLine != null ? "执行成功" : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                    a.Output = okLine != null
+                        ? "执行成功"
+                        : detailText != null
+                            ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
+                            : failReason != null
+                                ? $"执行失败：{failReason}"
+                                : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -212,6 +236,25 @@ public sealed class NetworkRepairService : INetworkRepairService
         }
 
         session.Write(LogLevel.Info, "repair", "修复流程结束");
+    }
+
+    /// <summary>##DETAIL## 明细的 ASCII 标记 → 用户可读文案（服务名保留原文，未知标记原样透出）。</summary>
+    private static string LocalizeServiceDetail(string raw)
+    {
+        var parts = raw.Split(';');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            if (p.EndsWith(":DISABLED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":DISABLED".Length)] + "：已被禁用（需信息中心解锁启动类型）";
+            else if (p.EndsWith(":FAILED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":FAILED".Length)] + "：启动失败（权限不足或依赖服务异常）";
+            else if (p.EndsWith(":NOT_RUNNING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":NOT_RUNNING".Length)] + "：启动后未保持运行";
+            else if (p.EndsWith(":MISSING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":MISSING".Length)] + "：服务不存在（系统精简或被移除）";
+        }
+        return string.Join("；", parts);
     }
 
     private async Task<(bool Ok, string Output)> RunNormalAsync(RepairAction action)
@@ -248,9 +291,12 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var r = await PortalAutoLoginHelper.TryLoginAsync(
                         portal.ToString(), s.PortalUsername, s.PortalPassword, CancellationToken.None).ConfigureAwait(true);
-                    if (r.VerifiedOnline) return (true, r.Message);
+                    // 动作只承诺「把认证页带到面前」：表单提交成功或浏览器已打开均计成功（登录后 NCSI
+                    // 连通性复核已删除——校园网常拦截/延迟放行 NCSI 域名，提交后立即复核易假阴性）；
+                    // 是否真正在线由修复完成后的自动复核（portal.detect 重跑）给出实测结论。
+                    if (r.Submitted) return (true, r.Message);
                     Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
-                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工确认。");
+                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工登录；完成登录后重新诊断复核。");
                 }
                 Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
                 return (true, $"已在默认浏览器打开 {portal}（提示：在 设置 → 网络诊断 配置账号并开启自动登录，可免每次手动登录）");
@@ -293,7 +339,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"ipconfig /renew >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "enable_adapter":
-                    sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    // 空网卡名时显式 FAIL 带原因，不再拼出 `set interface ""` 静默报错被吞后误判「可能取消了 UAC」
+                    if (adapterName.Length > 0)
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    else
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     break;
                 case "resync_clock":
                     // 失败回退：先启动 Windows 时间服务再重试一次。旧写法 net time \\\\localhost /set /y
@@ -307,15 +357,26 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "start_net_services":
-                    // 仅启动未运行的网络基础服务；被禁用（StartType=Disabled）的跳过计为失败，不改启动类型。
-                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL
-                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; foreach($s in $ids){ $svc=Get-Service -Name $s -ErrorAction SilentlyContinue; if($svc -and $svc.Status -ne 'Running'){ if($svc.StartType -eq 'Disabled'){ $bad++ } else { try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500 }catch{ $bad++ } } } }; exit $bad\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 仅启动未运行的网络基础服务；被禁用的跳过计为失败，不改启动类型。
+                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL。
+                    // v2（2026-11）：Windows PowerShell 5.1 的 Get-Service 返回对象没有 StartType 属性
+                    // （.NET Framework 的 ServiceController 无此成员，PS 6+ 才加入），恒 $null → 禁用判断
+                    // 恒不成立 → 禁用服务也走 Start-Service 后异常失败；且 `>nul 2>&1` 把细节全吞，失败时
+                    // 无「哪个服务、为什么没起来」的证据。现改 Get-CimInstance Win32_Service 的 StartMode
+                    // 判禁用（PS 5.1 可用）、启动后复核状态，失败明细以 ##DETAIL##<动作id>;服务:标记 行随
+                    // stdout 进 outLog 供宿主解析（powershell 行不再 >nul；脚本内部全部静默无噪音，
+                    // 明细用 ASCII 标记杜绝编码歧义）；退出码语义不变。
+                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; $det=@(); $svcs=@{}; Get-CimInstance Win32_Service | ForEach-Object { if($ids -contains $_.Name){ $svcs[$_.Name]=$_ } }; foreach($s in $ids){ $sc=Get-Service -Name $s -ErrorAction SilentlyContinue; if(-not $sc){ $bad++; $det+=$s+':MISSING'; continue }; if($sc.Status -eq 'Running'){ continue }; if($svcs.ContainsKey($s) -and $svcs[$s].StartMode -eq 'Disabled'){ $bad++; $det+=$s+':DISABLED'; continue }; try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500; if((Get-Service -Name $s).Status -ne 'Running'){ $bad++; $det+=$s+':NOT_RUNNING' } }catch{ $bad++; $det+=$s+':FAILED' } }; if($det.Count -gt 0){ Write-Output ('##DETAIL##" + a.Id + ";' + ($det -join ';')) }; exit $bad\" && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "dns_set_public":
                     if (adapterName.Length > 0)
                     {
                         // 链式：主 DNS 设置失败即 FAIL，不再执行次要操作，避免被 add 次 DNS 的成功掩盖成 OK
                         sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1 && netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 case "tcp_autotuning":
@@ -326,14 +387,24 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine("reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization\" /v DODownloadMode /t REG_DWORD /d 100 /f >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "nic_powersave_off":
-                    sb.AppendLine("powershell -NoProfile -Command \"Get-NetAdapterPowerManagement | Where-Object {$_.AllowComputerToTurnOffDevice -eq 'Enabled'} | Set-NetAdapterPowerManagement -AllowComputerToTurnOffDevice Disabled\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 退出码必须传播：Windows PowerShell 5.1 里 Set-NetAdapterPowerManagement 的非终止错误
+                    // 不会改变 powershell.exe 退出码，旧写法无论成败恒返回 0 → && 恒成立 → 修复恒显「成功」，
+                    // 实际可能什么都没改（复检「节能托管：开启」依旧，用户感知「修复后没有用」）。现语义：
+                    // 查询失败 → FAIL；成功关闭 ≥1 个适配器 → OK；全部关闭失败 → FAIL；
+                    // 本就没有「已启用」项（终态已达成，幂等）→ OK。
+                    sb.AppendLine("powershell -NoProfile -Command \"$n=0; $f=0; try{ $list=Get-NetAdapterPowerManagement -ErrorAction Stop }catch{ exit 2 }; foreach($p in $list){ if($p.AllowComputerToTurnOffDevice -eq 'Enabled'){ try{ Set-NetAdapterPowerManagement -InputObject $p -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop; $n++ }catch{ $f++ } } }; if($n -gt 0){exit 0}elseif($f -gt 0){exit 1}else{exit 0}\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "adapter_reset":
                     if (adapterName.Length > 0)
                     {
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" disable >nul 2>&1");
-                        sb.AppendLine("timeout /t 3 /nobreak >nul 2>&1");
+                        // timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）会立即报错失效；ping 延时无此依赖
+                        sb.AppendLine("ping -n 4 127.0.0.1 >nul");
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 default:

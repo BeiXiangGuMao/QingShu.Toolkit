@@ -86,6 +86,40 @@ public static partial class NetworkChecks
 
             var details = new List<string>();
             string? problem = null;
+
+            // 批量预查（慢查询根治 2026-11）：Win32_PnPEntity / Win32_PnPSignedDriver 均无索引，
+            // WHERE PNPDeviceID / DeviceID 过滤在 WMI 侧仍是全表枚举——逐卡查询 N 次 = N 次全枚举，
+            // Win32_PnPSignedDriver（全机签名驱动，数百条复杂对象）单次即数秒到数十秒，低配教学机
+            // 上本检查 25 秒硬超时必触顶（用户实测「网卡硬件与驱动状态检查超时（超过 25 秒已强制
+            // 中止）」，且该检查是纯本机 WMI 查询与网络无关——旧超时文案「多为网络无应答」是误导）。
+            // 改为「一次全网络类查询 + 内存匹配」：总枚举从 N×全表 降到各 1 次（PNPClass='Net'
+            // 过滤已被 hardware.nic_probe 同款查询实测可行）；WmiHelper 自身另有 20 秒枚举硬超时
+            // 兜底，检查硬超时同步升 40 秒（TimeoutOverrides）。预查漏掉的个别非 Net 类设备按
+            // 「无记录」静默降级，不误报。
+            var errMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in await WmiHelper.QueryAsync(
+                "SELECT PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPClass='Net'",
+                mo => new
+                {
+                    Id = (mo["PNPDeviceID"]?.ToString() ?? "").Trim(),
+                    Err = Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(e.Id) && !errMap.ContainsKey(e.Id)) errMap[e.Id] = e.Err;
+            }
+
+            var drvMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in await WmiHelper.QueryAsync(
+                "SELECT DeviceID, DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceClass='NET'",
+                mo => new
+                {
+                    Id = (mo["DeviceID"]?.ToString() ?? "").Trim(),
+                    Text = $"{mo["DriverVersion"]} ({mo["DriverDate"]})"
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(d.Id) && !drvMap.ContainsKey(d.Id)) drvMap[d.Id] = d.Text;
+            }
+
             foreach (var a in adapters)
             {
                 var statusText = a.Status switch
@@ -101,30 +135,27 @@ public static partial class NetworkChecks
                 if (a.Status == 5 && (ctx.Primary == null || ctx.Primary.Description.Contains(a.Name.Split(' ')[0])))
                     problem ??= $"{a.Name}: 网卡已被禁用";
 
-                // PnP 错误码 + 驱动信息
+                // PnP 错误码 + 驱动信息（预查结果内存匹配，O(1)，不再逐卡发起 WMI 慢类查询）
                 if (!string.IsNullOrEmpty(a.Pnp))
                 {
-                    var escaped = a.Pnp.Replace("\\", "\\\\");
-                    var err = await WmiHelper.QueryAsync(
-                        $"SELECT ConfigManagerErrorCode, Name FROM Win32_PnPEntity WHERE PNPDeviceID='{escaped}'",
-                        mo => Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)).ConfigureAwait(false);
-                    if (err.Count > 0 && err[0] != 0)
+                    var pnpId = a.Pnp.Trim();
+                    if (errMap.TryGetValue(pnpId, out var errCode))
                     {
-                        var errText = err[0] switch
+                        if (errCode != 0)
                         {
-                            1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
-                            28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
-                            _ => $"配置管理器错误码 {err[0]}"
-                        };
-                        details.Add($"⚠ {a.Name} 设备异常: {errText}");
-                        problem ??= $"{a.Name}: {errText}";
-                    }
-                    else if (err.Count > 0)
-                    {
-                        var drv = await WmiHelper.QueryAsync(
-                            $"SELECT DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceID='{escaped}'",
-                            mo => $"{mo["DriverVersion"]} ({mo["DriverDate"]})").ConfigureAwait(false);
-                        if (drv.Count > 0) details.Add($"{a.Name} 驱动: {drv[0]}");
+                            var errText = errCode switch
+                            {
+                                1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
+                                28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
+                                _ => $"配置管理器错误码 {errCode}"
+                            };
+                            details.Add($"⚠ {a.Name} 设备异常: {errText}");
+                            problem ??= $"{a.Name}: {errText}";
+                        }
+                        else if (drvMap.TryGetValue(pnpId, out var drvText))
+                        {
+                            details.Add($"{a.Name} 驱动: {drvText}");
+                        }
                     }
                 }
             }

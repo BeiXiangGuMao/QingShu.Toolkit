@@ -16,8 +16,9 @@ namespace QingShu.Plugin.NetworkDiag;
 /// （Last* 五项读写 store + 落盘，诊断设置镜像在开始诊断前刷新一次）；宿主日志服务 →
 /// Action&lt;string, string&gt;；LogLocationText 由插件宿主数据根 + \logs 经构造函数传入；
 /// 硬件探测（报告设备事实）经构造函数注入本插件实现。其余逻辑/护栏逐字保留：
-/// 诊断与修复取消源分立、修复成功转 Fixed 状态、open_portal 不翻转、winsock 标注重启生效、
-/// 修复后重建拓扑、修复提权进行中禁止重开诊断等。
+/// 诊断与修复取消源分立、修复后自动复核闭环（复检通过才转 Fixed，未通过保留红/黄并更新为复检证据）、
+/// winsock/arp_clear 无立即复核语义（重启生效/表项需流量重学）并标注原因、修复后重建拓扑、
+/// 修复提权进行中禁止重开诊断等。
 /// </summary>
 public partial class NetworkDiagViewModel : ObservableObject
 {
@@ -327,27 +328,102 @@ public partial class NetworkDiagViewModel : ObservableObject
         {
             await _repair.RunAsync(selected, progress, _ctsRepair.Token).ConfigureAwait(true);
 
-            // 修复成功 → 对应检查项转「已修复」：打通 Fixed 状态链路（计数芯片/绿勾/PDF 样式此前均已支持，
-            // 但全工程从未写入该状态，导致修复后列表永远停在红/黄、无闭环反馈）。
-            // open_portal 的成功仅代表门户已打开，认证是否成功须复诊确认，不翻转；
-            // winsock 重置需重启才生效，翻转文案特别标注。
+            // 修复后闭环复核：动作「执行成功」（命令退出码）≠「问题已解决」——flushdns 对 DNS 服务器
+            // 本身不可用这类根因无效、PowerShell 非终止错误会假成功，旧逻辑按动作成功直接把检查项
+            // 翻「已修复」（绿），用户重新诊断又变红，感知「修复后没有用」。现对执行成功的动作用
+            // 全新网络快照重跑其关联检查，按实测结果诚实收敛：通过才翻绿，未通过保留红/黄并更新为
+            // 最新实测证据。winsock 重置需重启才生效（复核必然不通过）、arp_clear 清缓存后网关表项
+            // 要等真实流量才重新学习（立即复检必假红）——两项不立即复核，保留翻转并注明原因。
             if (!IsRunning) // 用户已重开诊断则不动新列表
             {
-                foreach (var a in selected.Where(a => a.Status == RepairStatus.Ok && a.Id != "open_portal"))
+                var okActions = selected.Where(a => a.Status == RepairStatus.Ok).ToList();
+                var noReverify = new[] { "winsock_reset", "arp_clear" };
+                var reIds = okActions.Where(a => !noReverify.Contains(a.Id))
+                                     .SelectMany(a => a.RelatedCheckIds).Distinct().ToList();
+
+                int rePass = 0, reBad = 0;
+                if (reIds.Count > 0)
                 {
-                    var suffix = a.Id == "winsock_reset" ? "，重启计算机后生效" : "";
+                    RepairHint = "修复动作已执行，正在复核修复效果（用全新网络快照重跑关联检查）…";
+                    // 断网类动作（DHCP 续租 / 网卡启停 / 重协商）后协议栈需数秒收敛；open_portal 提交
+                    // 认证表单后也给门户服务端数秒入账时间（原 800ms 入账延时职责移交此处），延后再测防假阴性
+                    var settle = okActions.Any(a => a.Id is "renew_dhcp" or "adapter_reset" or "enable_adapter" or "open_portal") ? 4000 : 1000;
+                    await Task.Delay(settle, _ctsRepair.Token).ConfigureAwait(true);
+                    var reReport = await _diag.ReverifyAsync(reIds, _ctsRepair.Token).ConfigureAwait(true);
+                    foreach (var re in reReport.Items)
+                    {
+                        var orig = Items.FirstOrDefault(i => i.Id == re.Id);
+                        if (orig is null) continue;
+                        if (re.Status == CheckStatus.Pass)
+                        {
+                            rePass++;
+                            orig.Status = CheckStatus.Fixed;
+                            orig.Summary = $"已修复，复检通过：{re.Summary}";
+                            orig.Suggestion = "";
+                            orig.Details = re.Details;
+                        }
+                        else if (re.Status is CheckStatus.Warning or CheckStatus.Fail)
+                        {
+                            reBad++;
+                            orig.Status = re.Status;
+                            orig.Summary = $"修复动作已执行，但复检仍未通过：{re.Summary}";
+                            orig.Suggestion = re.Suggestion;
+                            orig.Details = re.Details;
+                        }
+                        else
+                        {
+                            orig.Summary = $"修复动作已执行（该项复核未执行：{re.Summary}）";
+                        }
+                    }
+
+                    // 动作目标终态实测：nic_powersave_off 的关联检查（speed.nic_rate / hardware.nic_probe）
+                    // 对「节能托管开启」只记线索不判级——复检 Pass 不代表节能真的关了。以复检会话共享键
+                    // 终值兜底：nic.powersave 仍为 true 时把已被翻绿的关联项拦回，如实报告终态未达成，
+                    // 杜绝「修复动作成功但节能照旧」的误绿（2026-11 审查实锤，唯一判级不覆盖修复目标的动作）
+                    if (okActions.Any(a => a.Id == "nic_powersave_off")
+                        && reReport.SharedSnapshot.TryGetValue("nic.powersave", out var psOn) && psOn)
+                    {
+                        foreach (var orig in Items.Where(i => (i.Id == "speed.nic_rate" || i.Id == "hardware.nic_probe")
+                                                              && i.Status == CheckStatus.Fixed))
+                        {
+                            rePass = Math.Max(0, rePass - 1);
+                            reBad++;
+                            orig.Status = CheckStatus.Warning;
+                            orig.Summary = "修复动作已执行，但复检实测节能托管仍为开启（命令层已显式传播退出码仍失败，多为驱动/系统层拒绝该设置）";
+                            orig.Suggestion = "可在设备管理器 → 网卡属性 → 电源管理手动取消「允许计算机关闭此设备以节约电源」；仍无效多为驱动限制，可更新网卡驱动。";
+                        }
+                    }
+                }
+
+                foreach (var a in okActions.Where(a => noReverify.Contains(a.Id)))
+                {
+                    var note = a.Id == "winsock_reset"
+                        ? "重置 Winsock 目录，重启计算机后生效"
+                        : "清除 ARP 缓存；网关表项将随正常网络访问自动重新学习";
                     foreach (var item in Items.Where(i => a.RelatedCheckIds.Contains(i.Id)
                                                           && i.Status is CheckStatus.Warning or CheckStatus.Fail))
                     {
                         item.Status = CheckStatus.Fixed;
-                        item.Summary = $"已执行修复（{a.Title}{suffix}）";
+                        item.Summary = $"已执行修复（{note}）";
                     }
                 }
+
                 Recount();
-                // 修复后重建拓扑：Fixed 状态映射为绿色「正常」，断点定位随实际修复结果收敛
+                // 修复后重建拓扑：Fixed 与复核后状态映射回拓扑健康档，断点定位随实测结果收敛
                 Topology = NetworkTopologyBuilder.Build(_lastContext, Items.ToList(), _topoModeText);
+
+                // 修复清单按复检后状态重建：复检通过/无复核语义翻绿的项不再挂着可重试，剩余问题生成新计划
+                // （先于终态提示执行——BuildRepairPlan 会写 RepairHint，随后被下方终态文案覆盖）
+                BuildRepairPlan();
+
+                RepairHint = reIds.Count > 0
+                    ? $"修复执行完毕：复检通过 {rePass} 项"
+                      + (reBad > 0 ? $"，仍有 {reBad} 项未通过（列表已更新为最新实测证据，请按建议处置；涉及校园网侧问题请报修信息中心）" : "")
+                      + (okActions.Any(a => a.Id == "winsock_reset") ? "；Winsock 重置需重启计算机后生效" : "") + "。"
+                    : okActions.Count > 0
+                        ? "修复执行完毕；已执行动作无需立即复核（Winsock 需重启生效 / ARP 表项将自动重新学习），建议稍后重新诊断确认。"
+                        : "修复执行完毕，但本次没有动作执行成功（状态与输出见修复清单）；可重试或重新诊断后处理。";
             }
-            RepairHint = "修复执行完毕。建议重新运行诊断复核结果；Winsock 重置需要重启计算机后生效。";
             // 报告强制性生成（插件版新增）：修复后重出报告，把修复结果固化进留档（用户重开诊断则跳过，新报告由新诊断产出）
             if (!IsRunning)
             {

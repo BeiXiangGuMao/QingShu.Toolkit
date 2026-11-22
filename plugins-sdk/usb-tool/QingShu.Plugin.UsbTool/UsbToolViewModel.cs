@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -38,6 +39,7 @@ public partial class UsbToolViewModel : ObservableObject
     [ObservableProperty] private string _threatSummary = "";
     [ObservableProperty] private bool _hasDevice;
     [ObservableProperty] private bool _isEmptyResult;
+    [ObservableProperty] private string _visibilitySummary = "";
 
     public bool CanOperate => !IsBusy && SelectedDevice != null;
     public bool IsNotBusy => !IsBusy;
@@ -91,6 +93,8 @@ public partial class UsbToolViewModel : ObservableObject
             ProgressText = drives.Count == 0 ? "未发现 USB 存储设备（请插入U盘后点刷新）。" : $"发现 {drives.Count} 个 USB 存储设备。";
             _log("info", $"USB 设备枚举完成：{drives.Count} 个"
                 + (drives.Count > 0 ? "：" + string.Join("；", drives.Select(d => $"{d.Model}（{d.LettersText}）")) : ""));
+            // 刷新后立即重建修复清单与可见性诊断（选择未变时 ObservableProperty 不触发，需显式重建）
+            await BuildFixPlanAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -106,9 +110,35 @@ public partial class UsbToolViewModel : ObservableObject
         if (d == null) return;
         try
         {
-            foreach (var a in await _repair.BuildPlanAsync(d).ConfigureAwait(true)) FixActions.Add(a);
+            var plan = await _repair.BuildPlanAsync(d).ConfigureAwait(true);
+            foreach (var a in plan.Actions) FixActions.Add(a);
+            // 可见性诊断同步呈现：「识别到设备但资源管理器不显示」的根因结论即时可见
+            CheckResults.Clear();
+            foreach (var o in plan.Diagnosis) CheckResults.Add(new UsbCheckRow(o));
+            VisibilitySummary = SummarizeVisibility(plan.Diagnosis);
         }
         catch (Exception ex) { Hint = $"生成修复清单失败：{ex.Message}"; }
+    }
+
+    private static string SummarizeVisibility(IReadOnlyList<UsbCheckOutcome> dx)
+    {
+        var fail = dx.FirstOrDefault(o => o.Status == "Fail");
+        if (fail != null) return $"可见性异常：{fail.Title}";
+        var warn = dx.FirstOrDefault(o => o.Status == "Warning");
+        if (warn != null) return $"可见性注意：{warn.Title}";
+        return "可见性正常：盘符与挂载状态无异常。";
+    }
+
+    /// <summary>「识别到设备但资源管理器不显示」专项诊断：重新枚举 + 重建修复清单 + 可见性结论。</summary>
+    [RelayCommand]
+    private async Task RunVisibilityDiagAsync()
+    {
+        if (IsBusy) return;
+        await RunGuardedAsync("正在重新诊断可见性…", async _ =>
+        {
+            await RefreshDevicesCoreAsync().ConfigureAwait(true);
+            Hint = "可见性诊断完成：结论见「检测结论」区——磁盘脱机 / 无盘符分区 / RAW 文件系统 / 策略隐藏 / 过滤器遗留均给出对应修复动作。";
+        });
     }
 
     // ================= 硬件检测 =================
@@ -236,7 +266,7 @@ public partial class UsbToolViewModel : ObservableObject
         {
             await _repair.RunAsync(SelectedDevice.Drive, selected, new Progress<UsbFixAction>(_ => { }), ct).ConfigureAwait(true);
             int ok = selected.Count(a => a.Status == "Ok");
-            Hint = $"修复执行完毕（成功 {ok}/{selected.Count}）。建议「刷新设备」后重新健康检测复核；设备栈重置若生效会短暂掉线重连。";
+            Hint = $"修复执行完毕（成功 {ok}/{selected.Count}）。盘符类修复后请「刷新设备」复核；策略清理后需「重启资源管理器」重新显示；设备栈重置会短暂掉线重连。";
             if (ok > 0) await RefreshDevicesCoreAsync().ConfigureAwait(true);
         });
     }

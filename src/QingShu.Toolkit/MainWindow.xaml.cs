@@ -87,6 +87,9 @@ public sealed partial class MainWindow : Window
         PopupCountText.Text = $"拦截 {_popup.BlockedCount}";
         _update.StatusChanged += OnUpdateStatus;
 
+        // 焦点状态维护：失焦/最小化时仪表盘暂停 3s 采样（恢复后下一拍自动继续），降常驻 CPU/IO
+        Activated += (_, e) => App.IsWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;
+
         // 外移插件运行集变化（后台线程触发）：回 UI 线程统一协调导航接管与内置服务挂起/恢复。
         // AutoLoadEnabledAsync 完成时（启动阶段）与手动加载/卸载时都会触发
         _plugins = App.Services.GetRequiredService<PluginManager>();

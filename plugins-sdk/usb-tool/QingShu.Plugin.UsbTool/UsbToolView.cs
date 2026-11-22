@@ -73,7 +73,7 @@ public sealed class UsbToolView : UserControl
         ApplyStyle(title, "PageTitleTextBlock");
         var subtitle = new TextBlock
         {
-            Text = "修复与查杀二合一，直连物理盘扇区做硬件级检测：表面坏区扫描、扩容盘鉴别、写速度实测；查杀覆盖U盘蠕虫的 autorun 自启、伪装文档、快捷方式劫持等落盘特征；修复提供设备栈重置、文件系统查错到分区表重建。只对 USB 设备生效，绝不触碰系统盘。",
+            Text = "修复与查杀二合一，直连物理盘扇区做硬件级检测：表面坏区扫描、扩容盘鉴别、写速度实测；查杀覆盖U盘蠕虫的 autorun 自启、伪装文档、快捷方式劫持等落盘特征；修复覆盖「已识别但资源管理器不显示」的常见根因（脱机 / 无盘符分区 / RAW / 策略隐藏 / 过滤器遗留），提供设备栈重置、文件系统查错到分区表重建。只对 USB 设备生效，绝不触碰系统盘。",
             MaxWidth = 860,
             HorizontalAlignment = HorizontalAlignment.Left,
             TextWrapping = TextWrapping.Wrap
@@ -118,10 +118,15 @@ public sealed class UsbToolView : UserControl
         capacityBtn.Padding = new Thickness(14, 5, 14, 5);
         capacityBtn.Click += async (_, _) => await ShowCapacityDialogAsync();
 
+        var diagBtn = TextButton("\uE9D9", "诊断「识别但不显示」", vm => vm.RunVisibilityDiagCommand);
+        diagBtn.SetBinding(Control.IsEnabledProperty, OneWay(nameof(UsbToolViewModel.IsNotBusy)));
+        diagBtn.Padding = new Thickness(14, 5, 14, 5);
+
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         btnRow.Children.Add(refreshBtn);
         btnRow.Children.Add(healthBtn);
         btnRow.Children.Add(capacityBtn);
+        btnRow.Children.Add(diagBtn);
 
         var devicePicker = new StackPanel { Spacing = 6, MinWidth = 430 };
         devicePicker.Children.Add(combo);
@@ -139,11 +144,17 @@ public sealed class UsbToolView : UserControl
         infoVolumes.MaxWidth = 430;
         infoVolumes.SetBinding(TextBlock.TextProperty, OneWay("SelectedDevice.VolumesText"));
 
+        var infoVisibility = Caption(TryBrush("InfoTextBrush") ?? Secondary());
+        infoVisibility.TextWrapping = TextWrapping.Wrap;
+        infoVisibility.MaxWidth = 430;
+        infoVisibility.SetBinding(TextBlock.TextProperty, OneWay(nameof(UsbToolViewModel.VisibilitySummary)));
+
         var deviceInfo = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, VerticalAlignment = VerticalAlignment.Top };
         deviceInfo.Children.Add(infoSummary);
         deviceInfo.Children.Add(infoBus);
         deviceInfo.Children.Add(infoSerial);
         deviceInfo.Children.Add(infoVolumes);
+        deviceInfo.Children.Add(infoVisibility);
         deviceInfo.SetBinding(FrameworkElement.VisibilityProperty, Vis(nameof(UsbToolViewModel.HasDevice)));
 
         // 无设备说明（IsEmptyResult 时可见）
@@ -219,7 +230,7 @@ public sealed class UsbToolView : UserControl
         var fixScroll = new ScrollViewer
         {
             Content = _fixList,
-            MaxHeight = 150,
+            MaxHeight = 230, // 修复动作扩容（联机/盘符/策略/过滤器），150px 已放不下
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
 
@@ -621,6 +632,7 @@ public sealed class UsbToolView : UserControl
         "\uE90F" => Symbol.Repair,
         "\uE768" => Symbol.Play,
         "\uE71E" => Symbol.Find,
+        "\uE9D9" => Symbol.Diagnostic, // 可见性诊断按钮
         _ => Symbol.ReportHacked // \uE7BC 扩容检测（ReportHacked 图标语义一致）
     };
 

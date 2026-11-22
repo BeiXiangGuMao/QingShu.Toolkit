@@ -58,8 +58,14 @@ public sealed class NetworkDiagView : UserControl
         // 拓扑卡：VM.Topology 变化 → Canvas 重画（诊断完成/取消/修复后三个时机都会触发）
         _vm.PropertyChanged += OnVmPropertyChanged;
         // 离开页面收尾：取消在途诊断/修复并释放取消源（与内置页 Unloaded 同语义；
-        // VM 为 transient，不收尾则旧操作后台裸奔且与复入页的新 VM 并发竞争）
-        Unloaded += (_, _) => _vm.Dispose();
+        // VM 为 transient，不收尾则旧操作后台裸奔且与复入页的新 VM 并发竞争）。
+        // 先退订 VM.PropertyChanged 再释放：View↔VM 互引成环虽无外部根可整体回收，显式断开
+        // 事件引用辅助 GC 尽快收敛整环（「切换标签页内存持续升高」防御性收尾，2026-11）
+        Unloaded += (_, _) =>
+        {
+            _vm.PropertyChanged -= OnVmPropertyChanged;
+            _vm.Dispose();
+        };
         // 主题切换时按新主题重画拓扑：节点/连线颜色是本地 FromHex 构造，不随 ThemeResource 自动切换
         ActualThemeChanged += (_, _) => RenderTopology();
 

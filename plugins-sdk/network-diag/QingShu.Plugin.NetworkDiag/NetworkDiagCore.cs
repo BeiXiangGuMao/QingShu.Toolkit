@@ -382,13 +382,20 @@ internal static class WmiScopes
 /// </summary>
 public static class WmiHelper
 {
+    /// <summary>WMI 枚举统一 20 秒硬超时：ManagementObjectSearcher 默认无超时，个别慢类
+    /// （Win32_PnPSignedDriver / Win32_PnPEntity 全表枚举）在低配机/杀软环境可能挂数十秒，
+    /// 超出诊断逐项硬超时后遗留任务变孤儿继续占线程。枚举超时抛异常 → 外层 catch 返回已
+    /// 获取部分，检查项按「信息不可得」降级，孤儿任务最迟 20 秒自终止（内存防御一环）。</summary>
+    private static System.Management.EnumerationOptions EnumOpts()
+        => new() { Timeout = TimeSpan.FromSeconds(20) };
+
     public static Task<List<T>> QueryAsync<T>(string wql, Func<ManagementObject, T> selector)
         => Task.Run(() =>
         {
             var list = new List<T>();
             try
             {
-                using var searcher = new ManagementObjectSearcher(wql);
+                using var searcher = new ManagementObjectSearcher(wql) { Options = EnumOpts() };
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -412,7 +419,7 @@ public static class WmiHelper
             var list = new List<T>();
             try
             {
-                using var searcher = new ManagementObjectSearcher(scope, wql);
+                using var searcher = new ManagementObjectSearcher(scope, wql, EnumOpts());
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -432,7 +439,7 @@ public static class WmiHelper
         {
             try
             {
-                using var searcher = new ManagementObjectSearcher(wql);
+                using var searcher = new ManagementObjectSearcher(wql) { Options = EnumOpts() };
                 foreach (var o in searcher.Get())
                 {
                     if (o is ManagementObject mo)
@@ -811,13 +818,16 @@ public static class SpeedTestHelper
 ///  1. 拉取门户页面（跟随重定向 / 自动识别 iframe 内嵌登录页）
 ///  2. 解析 HTML 表单：用户名输入框（text/tel/email/number）、密码输入框（password）、隐藏字段原样保留
 ///  3. 按表单 method/action 以 urlencoded 方式提交账号密码（不执行任何 JS —— 纯 JS 渲染的门户无法支持，会明确返回原因）
-///  4. 提交后用 NCSI 探测复核真实连通性（唯一可信判据）
 /// 安全说明：账号密码仅从宿主设置镜像读取；日志与返回消息不含密码。
+/// 不内置登录后连通性复核（2026-11 用户需求删除）：校园网常拦截或延迟放行 NCSI 探测域名，提交后
+/// 立即复核易假阴性（明明登录成功却报「账号可能输错」并回退浏览器）；是否真正在线由修复完成后的
+/// 自动复核（portal.detect 用全新快照重跑）统一实测判定。
 /// 门户形态千差万别，本助手是“尽力而为”：失败一律回退为打开浏览器人工登录。
 /// </summary>
 public static class PortalAutoLoginHelper
 {
-    public sealed record AutoLoginResult(bool Submitted, bool VerifiedOnline, string Message);
+    // Submitted=表单已提交（不承诺已在线：登录后连通性复核已删除，在线与否由修复后自动复核判定）
+    public sealed record AutoLoginResult(bool Submitted, string Message);
 
     private static readonly HttpClient Client = new(new HttpClientHandler
     {
@@ -829,9 +839,6 @@ public static class PortalAutoLoginHelper
     {
         Timeout = TimeSpan.FromSeconds(12)
     };
-
-    private const string NcsiUrl = "http://www.msftconnecttest.com/connecttest.txt";
-    private const string NcsiExpected = "Microsoft Connect Test";
 
     public static async Task<AutoLoginResult> TryLoginAsync(string portalUrl, string username, string password, CancellationToken ct)
     {
@@ -862,7 +869,7 @@ public static class PortalAutoLoginHelper
             }
 
             if (form.PasswordField.Length == 0 || form.UserField.Length == 0)
-                return new AutoLoginResult(false, false,
+                return new AutoLoginResult(false,
                     "自动登录失败：门户页面未找到标准登录表单（可能为纯 JS 渲染或扫码登录），已回退为浏览器人工登录。");
 
             // 3) 组装并提交
@@ -889,21 +896,19 @@ public static class PortalAutoLoginHelper
             }
             _ = await post.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-            // 4) NCSI 复核（唯一可信判据：真的能拿到预期内容才算登录成功）
-            await Task.Delay(800, ct).ConfigureAwait(false); // 给门户服务端一点入账时间
-            var verify = await NetworkProbeHelper.HttpAsync(NcsiUrl, followRedirect: false, readBody: true).ConfigureAwait(false);
-            if (verify.Ok && verify.StatusCode == 200 && verify.BodySnippet.Contains(NcsiExpected, StringComparison.Ordinal))
-                return new AutoLoginResult(true, true, $"自动登录成功：已提交认证并通过连通性复核（{verify.ElapsedMs} ms）。");
-            return new AutoLoginResult(true, false,
-                $"自动登录已提交（门户响应 HTTP {(int)post.StatusCode}），但连通性复核未通过：账号可能输错、已在线别处登录或门户需要验证码。已回退为浏览器人工登录。");
+            // 4) 不做登录后连通性复核（2026-11 用户需求删除）：提交即返回。原 NCSI 复核在校园网
+            //    常拦截/延迟放行 NCSI 域名的环境下易假阴性（明明登录成功却报「账号可能输错」并回退
+            //    浏览器）；是否真正在线由修复完成后的自动复核（portal.detect 重跑）统一实测判定。
+            return new AutoLoginResult(true,
+                $"已提交认证表单（门户响应 HTTP {(int)post.StatusCode}）；是否真正在线以修复完成后的自动复核/重新诊断为准。");
         }
         catch (OperationCanceledException)
         {
-            return new AutoLoginResult(false, false, "自动登录超时，已回退为浏览器人工登录。");
+            return new AutoLoginResult(false, "自动登录超时，已回退为浏览器人工登录。");
         }
         catch (Exception ex)
         {
-            return new AutoLoginResult(false, false, $"自动登录异常（{ex.Message}），已回退为浏览器人工登录。");
+            return new AutoLoginResult(false, $"自动登录异常（{ex.Message}），已回退为浏览器人工登录。");
         }
     }
 
@@ -995,6 +1000,18 @@ public sealed class CheckContext
     public void SetShared<T>(string key, T value) => _shared[key] = value!;
     public T? GetShared<T>(string key) => _shared.TryGetValue(key, out var v) && v is T t ? t : default;
     public bool SharedBool(string key) => GetShared<bool>(key);
+    /// <summary>键是否已被写入：区分「实测为 false」与「本会话根本没测」（复核会话孤立跑某项时，
+    /// 前置项写入的外网/认证结论缺失 ≠ 结论为否——据此防「认证已过期」一类假红）。</summary>
+    public bool HasShared(string key) => _shared.ContainsKey(key);
+    /// <summary>布尔型共享键终值快照（修复后复核用）：nic.powersave / delivopt.p2p 等写入点
+    /// 均只在「异常态成立」时写 true，快照缺键 = 终态正常，供 VM 做动作目标终态实测判定。</summary>
+    public Dictionary<string, bool> SharedBoolSnapshot()
+    {
+        var snap = new Dictionary<string, bool>();
+        foreach (var kv in _shared)
+            if (kv.Value is bool b) snap[kv.Key] = b;
+        return snap;
+    }
 }
 
 /// <summary>单项检查接口。所有检查实现均为无状态，可安全复用。</summary>
@@ -1023,6 +1040,9 @@ public abstract class CheckBase : ICheck
 
 // ================= 诊断编排器（宿主 Services/Network/NetworkDiagnosticService.cs 同源移植） =================
 
+/// <summary>修复后复核结果：检查项快照 + 复检会话布尔共享键终值（动作目标终态实测判定用）。</summary>
+public sealed record ReverifyReport(List<CheckItem> Items, Dictionary<string, bool> SharedSnapshot);
+
 public interface INetworkDiagnosticService
 {
     /// <summary>生成一次运行的检查计划（全新 CheckItem 实例）。</summary>
@@ -1030,6 +1050,9 @@ public interface INetworkDiagnosticService
     /// <summary>执行计划：逐项更新 CheckItem 状态（ObservableObject，UI 自动刷新），并写入会话日志。</summary>
     Task<DiagnosticSessionReport> ExecuteAsync(List<CheckItem> plan, RunMode mode, IProgress<CheckItem>? progress, CancellationToken ct,
         IProgress<SpeedProgress>? speedProgress = null);
+    /// <summary>修复后复核（闭环验证）：用全新网络快照重跑指定检查项，返回最新结果快照（独立会话日志，不产出诊断报告）；
+    /// SharedSnapshot 为复检会话布尔共享键终值（nic.powersave 等），供调用方实测动作目标终态（复检 Pass 不代表目标达成时拦回）。</summary>
+    Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct);
     CheckContext? LastContext { get; }
 }
 
@@ -1097,7 +1120,8 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly Dictionary<string, int> TimeoutOverrides = new()
     {
         ["speed.download"] = 90, ["portal.detect"] = 40, ["portal.expiry"] = 40,
-        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30, ["hardware.nic_probe"] = 40
+        ["quality.mtu"] = 30, ["rare.gatewayloss"] = 30,
+        ["hardware.nic_probe"] = 40, ["hardware.nic_pnp"] = 40
     };
 
     private static int TimeoutFor(string id) => TimeoutOverrides.TryGetValue(id, out var s) ? s : 25;
@@ -1200,7 +1224,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
                         outcome = await runTask.ConfigureAwait(true); // 正常完成；异常由此抛出统一接住
                     else
                         outcome = CheckOutcome.Fail($"检查超时（超过 {timeoutSec} 秒已强制中止）",
-                            "该检查等待响应过久（多为网络无应答），已中止此项以保证其余检查不被卡住；请结合网关/DNS/外网连通项结论定位。",
+                            "该检查等待响应过久，已中止此项以保证其余检查不被卡住：网络连通类检查多为网络无应答，本机信息类检查（WMI/注册表/服务查询）多为系统繁忙或 WMI 响应慢，非网络问题；请结合网关/DNS/外网连通项结论定位。",
                             $"超时阈值：{timeoutSec} 秒");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -1259,6 +1283,82 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
         session.Write(LogLevel.Info, "session",
             $"诊断完成：通过 {report.PassCount} / 警告 {report.WarnCount} / 未通过 {report.FailCount} / 跳过 {report.SkipCount}");
         return report;
+    }
+
+    /// <summary>
+    /// 修复后复核（闭环验证）：用全新网络快照（网卡/Wi-Fi 重新探测）重跑指定检查项，返回最新结果。
+    /// 动作「执行成功」（命令退出码）不等于「问题已解决」——如 flushdns 对 DNS 服务器本身不可用无效、
+    /// PowerShell 非终止错误会假成功——调用方必须以本方法实测结果决定检查项是否翻「已修复」。
+    /// 与 ExecuteAsync 共用逐项硬超时护栏；独立会话日志留档（类别 reverify），不产出诊断报告。
+    /// </summary>
+    public async Task<ReverifyReport> ReverifyAsync(IReadOnlyCollection<string> checkIds, CancellationToken ct)
+    {
+        var results = new List<CheckItem>();
+        if (checkIds.Count == 0) return new ReverifyReport(results, new Dictionary<string, bool>());
+
+        var session = DiagSessionLog.Begin(_logRoot);
+        try
+        {
+            var adapters = NetworkProbeHelper.GetAllAdapters();
+            var primary = NetworkProbeHelper.GetPrimaryAdapter();
+            var wifi = primary is { IsWireless: true } ? await NetworkProbeHelper.GetWifiInfoAsync().ConfigureAwait(true) : null;
+            var ctx = new CheckContext
+            {
+                Settings = _settings.Current,
+                Log = session,
+                Ct = ct,
+                Adapters = adapters,
+                Primary = primary,
+                Wifi = wifi
+            };
+
+            var impl = OrderedChecks.ToDictionary(c => c.Id, c => c);
+            session.Write(LogLevel.Info, "reverify", $"修复后复核开始：共 {checkIds.Count} 项", checkIds.ToArray());
+            foreach (var id in checkIds)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!impl.TryGetValue(id, out var check)) continue;
+                var item = new CheckItem(id, check.Name, check.Category);
+                CheckOutcome outcome;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var timeoutSec = TimeoutFor(id);
+                    var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    linked.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+                    var runTask = check.RunAsync(ctx, linked.Token);
+                    var done = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(timeoutSec + 3))).ConfigureAwait(true);
+                    if (done == runTask)
+                        outcome = await runTask.ConfigureAwait(true);
+                    else
+                        outcome = CheckOutcome.Fail($"复核超时（超过 {timeoutSec} 秒已强制中止）",
+                            "该项复核等待响应过久，已中止以保证其余复核不被卡住；请重新运行诊断以最新结果为准。");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException)
+                {
+                    outcome = CheckOutcome.Fail("复核超时（已强制中止）", "该项复核内部无响应被强制中止；请重新运行诊断以最新结果为准。");
+                }
+                catch (Exception ex)
+                {
+                    outcome = CheckOutcome.Fail($"复核执行异常：{ex.Message}", "该项复核出现未预期错误；请重新运行诊断以最新结果为准。");
+                }
+                sw.Stop();
+                item.Status = outcome.Status;
+                item.Summary = outcome.Summary;
+                item.Suggestion = outcome.Suggestion;
+                item.Details = outcome.Details;
+                results.Add(item);
+                session.Write(LogLevel.Info, $"reverify.{id}", $"[{outcome.Status}] {outcome.Summary}",
+                    new { ms = sw.ElapsedMilliseconds, details = outcome.Details });
+            }
+            session.Write(LogLevel.Info, "reverify", "修复后复核完成");
+            return new ReverifyReport(results, ctx.SharedBoolSnapshot());
+        }
+        finally
+        {
+            session.Dispose();
+        }
     }
 }
 // ================= 检查实现：第一层（宿主 Services/Network/Checks.Physical.cs 同源移植） =================
@@ -1339,6 +1439,40 @@ public static partial class NetworkChecks
 
             var details = new List<string>();
             string? problem = null;
+
+            // 批量预查（慢查询根治 2026-11）：Win32_PnPEntity / Win32_PnPSignedDriver 均无索引，
+            // WHERE PNPDeviceID / DeviceID 过滤在 WMI 侧仍是全表枚举——逐卡查询 N 次 = N 次全枚举，
+            // Win32_PnPSignedDriver（全机签名驱动，数百条复杂对象）单次即数秒到数十秒，低配教学机
+            // 上本检查 25 秒硬超时必触顶（用户实测「网卡硬件与驱动状态检查超时（超过 25 秒已强制
+            // 中止）」，且该检查是纯本机 WMI 查询与网络无关——旧超时文案「多为网络无应答」是误导）。
+            // 改为「一次全网络类查询 + 内存匹配」：总枚举从 N×全表 降到各 1 次（PNPClass='Net'
+            // 过滤已被 hardware.nic_probe 同款查询实测可行）；WmiHelper 自身另有 20 秒枚举硬超时
+            // 兜底，检查硬超时同步升 40 秒（TimeoutOverrides）。预查漏掉的个别非 Net 类设备按
+            // 「无记录」静默降级，不误报。
+            var errMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in await WmiHelper.QueryAsync(
+                "SELECT PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPClass='Net'",
+                mo => new
+                {
+                    Id = (mo["PNPDeviceID"]?.ToString() ?? "").Trim(),
+                    Err = Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(e.Id) && !errMap.ContainsKey(e.Id)) errMap[e.Id] = e.Err;
+            }
+
+            var drvMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in await WmiHelper.QueryAsync(
+                "SELECT DeviceID, DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceClass='NET'",
+                mo => new
+                {
+                    Id = (mo["DeviceID"]?.ToString() ?? "").Trim(),
+                    Text = $"{mo["DriverVersion"]} ({mo["DriverDate"]})"
+                }).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrEmpty(d.Id) && !drvMap.ContainsKey(d.Id)) drvMap[d.Id] = d.Text;
+            }
+
             foreach (var a in adapters)
             {
                 var statusText = a.Status switch
@@ -1354,30 +1488,27 @@ public static partial class NetworkChecks
                 if (a.Status == 5 && (ctx.Primary == null || ctx.Primary.Description.Contains(a.Name.Split(' ')[0])))
                     problem ??= $"{a.Name}: 网卡已被禁用";
 
-                // PnP 错误码 + 驱动信息
+                // PnP 错误码 + 驱动信息（预查结果内存匹配，O(1)，不再逐卡发起 WMI 慢类查询）
                 if (!string.IsNullOrEmpty(a.Pnp))
                 {
-                    var escaped = a.Pnp.Replace("\\", "\\\\");
-                    var err = await WmiHelper.QueryAsync(
-                        $"SELECT ConfigManagerErrorCode, Name FROM Win32_PnPEntity WHERE PNPDeviceID='{escaped}'",
-                        mo => Convert.ToInt32(mo["ConfigManagerErrorCode"] ?? 0)).ConfigureAwait(false);
-                    if (err.Count > 0 && err[0] != 0)
+                    var pnpId = a.Pnp.Trim();
+                    if (errMap.TryGetValue(pnpId, out var errCode))
                     {
-                        var errText = err[0] switch
+                        if (errCode != 0)
                         {
-                            1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
-                            28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
-                            _ => $"配置管理器错误码 {err[0]}"
-                        };
-                        details.Add($"⚠ {a.Name} 设备异常: {errText}");
-                        problem ??= $"{a.Name}: {errText}";
-                    }
-                    else if (err.Count > 0)
-                    {
-                        var drv = await WmiHelper.QueryAsync(
-                            $"SELECT DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceID='{escaped}'",
-                            mo => $"{mo["DriverVersion"]} ({mo["DriverDate"]})").ConfigureAwait(false);
-                        if (drv.Count > 0) details.Add($"{a.Name} 驱动: {drv[0]}");
+                            var errText = errCode switch
+                            {
+                                1 => "设备未正确配置", 10 => "设备无法启动", 22 => "设备被禁用",
+                                28 => "驱动未安装", 31 => "设备驱动异常", 43 => "设备因故障停止",
+                                _ => $"配置管理器错误码 {errCode}"
+                            };
+                            details.Add($"⚠ {a.Name} 设备异常: {errText}");
+                            problem ??= $"{a.Name}: {errText}";
+                        }
+                        else if (drvMap.TryGetValue(pnpId, out var drvText))
+                        {
+                            details.Add($"{a.Name} 驱动: {drvText}");
+                        }
                     }
                 }
             }
@@ -2116,7 +2247,13 @@ public static partial class NetworkChecks
                 var details = new List<string> { $"门户 {s.PortalBaseUrl} TCP 探测: {(tcp.Ok ? $"可达（{tcp.ElapsedMs} ms）" : tcp.Error)}", $"外网连通: {(internetOk ? "正常" : "不通")}" };
 
                 if (tcp.Ok && !internetOk)
-                    return CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray());
+                    // internet.http.ok 的写入点在本会话更早的 portal.detect / internet.http——复核会话若
+                    // 孤立跑本项（前置项未跑或超时中止），键缺失 ≠ 外网不通，不能据此判「认证已过期」假红
+                    // （2026-11 审查实锤：open_portal 复检批里 portal.detect 超时会连带本项假红，与
+                    // portal.detect 的实测绿结论自相矛盾）
+                    return ctx.HasShared("internet.http.ok")
+                        ? CheckOutcome.Fail("认证已过期：门户可达但外网不通", "典型的城域网认证过期状态，请立即打开门户重新认证。", canFix: true, details.ToArray())
+                        : CheckOutcome.Warn("门户可达，但本次复核会话无外网实测依据", "孤立复核无法判定认证状态（外网连通结论未在本会话产生）；请重新运行完整诊断获取准确结论。", details.ToArray());
                 if (tcp.Ok && internetOk)
                     return CheckOutcome.Pass("门户可达且外网正常，认证状态良好。", details.ToArray());
                 if (!tcp.Ok && internetOk)
@@ -3573,7 +3710,7 @@ public sealed class NetworkRepairService : INetworkRepairService
 #if !STABLE_BUILD
             var st = _settings.Current;
             var autoHint = st.PortalAutoLogin && st.PortalUsername.Length > 0 && st.PortalPassword.Length > 0
-                ? "已开启自动登录：一键修复将直接提交认证表单，并用连通性复核验证；失败时自动回退浏览器人工登录。"
+                ? "已开启自动登录：一键修复将直接提交认证表单；是否真正在线由修复完成后的自动复核实测判定，无法提交时自动回退浏览器人工登录。"
                 : "调起默认浏览器打开检测到的认证门户；在 设置 → 网络诊断 配置账号并开启自动登录后，可免每次手动登录。";
 #else
             // 正式版（STABLE_BUILD）：实验性自动登录整体剔除，仅保留浏览器人工登录引导
@@ -3661,8 +3798,28 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var okLine = lines.FirstOrDefault(l => l.Contains($"##OK##{a.Id}"));
                     var failLine = lines.FirstOrDefault(l => l.Contains($"##FAIL##{a.Id}"));
+                    // ##DETAIL##<动作id>;name:MARK…：动作级失败明细（start_net_services 逐服务原因，
+                    // ASCII 标记防编码歧义）——失败时映射为可读文案并入动作输出证据，不再一句笼统 FAIL
+                    var detailLine = lines.FirstOrDefault(l => l.TrimStart().StartsWith($"##DETAIL##{a.Id};"));
+                    var detailText = detailLine != null
+                        ? LocalizeServiceDetail(detailLine.Trim().Substring($"##DETAIL##{a.Id};".Length))
+                        : null;
+                    // FAIL 行带原因后缀（如「##FAIL##enable_adapter 主网卡名称不可得，动作未执行」）时
+                    // 把原因提为主文案，不再落「可能取消了 UAC」的误导兜底
+                    var failPrefix = $"##FAIL##{a.Id}";
+                    var failReason = failLine != null
+                        && failLine.Trim().StartsWith(failPrefix, StringComparison.Ordinal)
+                        && failLine.Trim().Length > failPrefix.Length
+                            ? failLine.Trim().Substring(failPrefix.Length).Trim()
+                            : null;
                     a.Status = okLine != null ? RepairStatus.Ok : failLine != null ? RepairStatus.Fail : RepairStatus.Fail;
-                    a.Output = okLine != null ? "执行成功" : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
+                    a.Output = okLine != null
+                        ? "执行成功"
+                        : detailText != null
+                            ? $"执行失败，明细：{detailText}\n{failLine}".Trim()
+                            : failReason != null
+                                ? $"执行失败：{failReason}"
+                                : $"未在提权脚本输出中找到成功标记（用户可能取消了 UAC）\n{failLine}".Trim();
                     session.Write(a.Status == RepairStatus.Ok ? LogLevel.Info : LogLevel.Error, "repair",
                         $"[{a.Status}] {a.Title}", a.Output);
                     progress?.Report(a);
@@ -3680,6 +3837,25 @@ public sealed class NetworkRepairService : INetworkRepairService
         }
 
         session.Write(LogLevel.Info, "repair", "修复流程结束");
+    }
+
+    /// <summary>##DETAIL## 明细的 ASCII 标记 → 用户可读文案（服务名保留原文，未知标记原样透出）。</summary>
+    private static string LocalizeServiceDetail(string raw)
+    {
+        var parts = raw.Split(';');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var p = parts[i];
+            if (p.EndsWith(":DISABLED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":DISABLED".Length)] + "：已被禁用（需信息中心解锁启动类型）";
+            else if (p.EndsWith(":FAILED", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":FAILED".Length)] + "：启动失败（权限不足或依赖服务异常）";
+            else if (p.EndsWith(":NOT_RUNNING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":NOT_RUNNING".Length)] + "：启动后未保持运行";
+            else if (p.EndsWith(":MISSING", StringComparison.Ordinal))
+                parts[i] = p[..(p.Length - ":MISSING".Length)] + "：服务不存在（系统精简或被移除）";
+        }
+        return string.Join("；", parts);
     }
 
     private async Task<(bool Ok, string Output)> RunNormalAsync(RepairAction action)
@@ -3716,9 +3892,12 @@ public sealed class NetworkRepairService : INetworkRepairService
                 {
                     var r = await PortalAutoLoginHelper.TryLoginAsync(
                         portal.ToString(), s.PortalUsername, s.PortalPassword, CancellationToken.None).ConfigureAwait(true);
-                    if (r.VerifiedOnline) return (true, r.Message);
+                    // 动作只承诺「把认证页带到面前」：表单提交成功或浏览器已打开均计成功（登录后 NCSI
+                    // 连通性复核已删除——校园网常拦截/延迟放行 NCSI 域名，提交后立即复核易假阴性）；
+                    // 是否真正在线由修复完成后的自动复核（portal.detect 重跑）给出实测结论。
+                    if (r.Submitted) return (true, r.Message);
                     Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
-                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工确认。");
+                    return (true, $"{r.Message}\n已在默认浏览器打开 {portal} 供人工登录；完成登录后重新诊断复核。");
                 }
                 Process.Start(new ProcessStartInfo(portal.ToString()) { UseShellExecute = true });
                 return (true, $"已在默认浏览器打开 {portal}（提示：在 设置 → 网络诊断 配置账号并开启自动登录，可免每次手动登录）");
@@ -3761,7 +3940,11 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"ipconfig /renew >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "enable_adapter":
-                    sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    // 空网卡名时显式 FAIL 带原因，不再拼出 `set interface ""` 静默报错被吞后误判「可能取消了 UAC」
+                    if (adapterName.Length > 0)
+                        sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    else
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     break;
                 case "resync_clock":
                     // 失败回退：先启动 Windows 时间服务再重试一次。旧写法 net time \\\\localhost /set /y
@@ -3775,15 +3958,26 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine($"netsh winsock reset >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
                     break;
                 case "start_net_services":
-                    // 仅启动未运行的网络基础服务；被禁用（StartType=Disabled）的跳过计为失败，不改启动类型。
-                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL
-                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; foreach($s in $ids){ $svc=Get-Service -Name $s -ErrorAction SilentlyContinue; if($svc -and $svc.Status -ne 'Running'){ if($svc.StartType -eq 'Disabled'){ $bad++ } else { try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500 }catch{ $bad++ } } } }; exit $bad\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 仅启动未运行的网络基础服务；被禁用的跳过计为失败，不改启动类型。
+                    // PowerShell 以 $bad 作退出码：全启动成功返回 0 → cmd && 打 OK 标记；任一失败/被禁用 → FAIL。
+                    // v2（2026-11）：Windows PowerShell 5.1 的 Get-Service 返回对象没有 StartType 属性
+                    // （.NET Framework 的 ServiceController 无此成员，PS 6+ 才加入），恒 $null → 禁用判断
+                    // 恒不成立 → 禁用服务也走 Start-Service 后异常失败；且 `>nul 2>&1` 把细节全吞，失败时
+                    // 无「哪个服务、为什么没起来」的证据。现改 Get-CimInstance Win32_Service 的 StartMode
+                    // 判禁用（PS 5.1 可用）、启动后复核状态，失败明细以 ##DETAIL##<动作id>;服务:标记 行随
+                    // stdout 进 outLog 供宿主解析（powershell 行不再 >nul；脚本内部全部静默无噪音，
+                    // 明细用 ASCII 标记杜绝编码歧义）；退出码语义不变。
+                    sb.AppendLine("powershell -NoProfile -Command \"$ids=@('Dhcp','Dnscache','NlaSvc','netprofm','iphlpsvc','BFE'); $bad=0; $det=@(); $svcs=@{}; Get-CimInstance Win32_Service | ForEach-Object { if($ids -contains $_.Name){ $svcs[$_.Name]=$_ } }; foreach($s in $ids){ $sc=Get-Service -Name $s -ErrorAction SilentlyContinue; if(-not $sc){ $bad++; $det+=$s+':MISSING'; continue }; if($sc.Status -eq 'Running'){ continue }; if($svcs.ContainsKey($s) -and $svcs[$s].StartMode -eq 'Disabled'){ $bad++; $det+=$s+':DISABLED'; continue }; try{ Start-Service -Name $s -ErrorAction Stop; Start-Sleep -Milliseconds 500; if((Get-Service -Name $s).Status -ne 'Running'){ $bad++; $det+=$s+':NOT_RUNNING' } }catch{ $bad++; $det+=$s+':FAILED' } }; if($det.Count -gt 0){ Write-Output ('##DETAIL##" + a.Id + ";' + ($det -join ';')) }; exit $bad\" && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "dns_set_public":
                     if (adapterName.Length > 0)
                     {
                         // 链式：主 DNS 设置失败即 FAIL，不再执行次要操作，避免被 add 次 DNS 的成功掩盖成 OK
                         sb.AppendLine($"netsh interface ip set dns \"{adapterName}\" static {_settings.Current.DnsPreferred} primary >nul 2>&1 && netsh interface ip add dns \"{adapterName}\" {_settings.Current.DnsAlternate} index=2 >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 case "tcp_autotuning":
@@ -3794,14 +3988,24 @@ public sealed class NetworkRepairService : INetworkRepairService
                     sb.AppendLine("reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization\" /v DODownloadMode /t REG_DWORD /d 100 /f >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "nic_powersave_off":
-                    sb.AppendLine("powershell -NoProfile -Command \"Get-NetAdapterPowerManagement | Where-Object {$_.AllowComputerToTurnOffDevice -eq 'Enabled'} | Set-NetAdapterPowerManagement -AllowComputerToTurnOffDevice Disabled\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
+                    // 退出码必须传播：Windows PowerShell 5.1 里 Set-NetAdapterPowerManagement 的非终止错误
+                    // 不会改变 powershell.exe 退出码，旧写法无论成败恒返回 0 → && 恒成立 → 修复恒显「成功」，
+                    // 实际可能什么都没改（复检「节能托管：开启」依旧，用户感知「修复后没有用」）。现语义：
+                    // 查询失败 → FAIL；成功关闭 ≥1 个适配器 → OK；全部关闭失败 → FAIL；
+                    // 本就没有「已启用」项（终态已达成，幂等）→ OK。
+                    sb.AppendLine("powershell -NoProfile -Command \"$n=0; $f=0; try{ $list=Get-NetAdapterPowerManagement -ErrorAction Stop }catch{ exit 2 }; foreach($p in $list){ if($p.AllowComputerToTurnOffDevice -eq 'Enabled'){ try{ Set-NetAdapterPowerManagement -InputObject $p -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop; $n++ }catch{ $f++ } } }; if($n -gt 0){exit 0}elseif($f -gt 0){exit 1}else{exit 0}\" >nul 2>&1 && echo ##OK##" + a.Id + " || echo ##FAIL##" + a.Id);
                     break;
                 case "adapter_reset":
                     if (adapterName.Length > 0)
                     {
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" disable >nul 2>&1");
-                        sb.AppendLine("timeout /t 3 /nobreak >nul 2>&1");
+                        // timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）会立即报错失效；ping 延时无此依赖
+                        sb.AppendLine("ping -n 4 127.0.0.1 >nul");
                         sb.AppendLine($"netsh interface set interface \"{adapterName}\" enable >nul 2>&1 && echo ##OK##{a.Id} || echo ##FAIL##{a.Id}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"echo ##FAIL##{a.Id} 主网卡名称不可得，动作未执行");
                     }
                     break;
                 default:

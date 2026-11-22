@@ -43,6 +43,10 @@
 dotnet publish src/QingShu.Toolkit -c Release -p:Platform=x64 -r win-x64 --self-contained -p:WindowsAppSDKSelfContained=true
 ```
 
+> 启动提速（R2R）：`scripts/make_release.ps1` 打包时默认追加 `-p:PublishReadyToRun=true`
+> （预编译本机映像，教学机 HDD/低配 CPU 上首帧与首交互明显加快）；代价是产物与 ZIP 体积
+> 增大约 30-40%，对更新下载敏感的场合可加 `-NoR2R` 关闭。手工 publish 想同效时自行追加该参数。
+
 发布为**自包含单目录**：.NET 8 运行时与 Windows App SDK 运行时全部进入产物，
 目标机器**无需安装任何运行时**，免管理员、免安装。
 
@@ -195,7 +199,7 @@ harness 化后发布包默认自带七个插件（gala 主控/被控 + 弹窗拦
   ①城域网门户自动登录——宿主 `Helpers/PortalAutoLoginHelper`、修复路径与设置组，插件 `NetworkDiagCore` 同源实现；
   ②U盘工具——stable 构建下导航入口隐藏、插件不自动加载（静默跳过）、手动加载明确拒绝，
   预览版导航标注「U盘工具（实验性）」；
-  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 const 开关收敛（ExperimentalEnabled / UsbToolEnabled）；
+  UI 入口可见性由 `Models/AppBuildProfile.cs` 的 static readonly 开关收敛（ExperimentalEnabled / UsbToolEnabled；const 在固定构建形态下折叠会触发 CS0162 不可达警告，readonly 运行期等价，剔除机制本体为 #if STABLE_BUILD 源级守护）；
 - 剔除发生在**编译期**：正式版产物中没有实验性功能的代码与入口，而非"隐藏但仍在"；
   预览版（main）不定义 STABLE_BUILD，两分支共享同一份带守护的源码，合并零冲突。
 
