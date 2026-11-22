@@ -160,6 +160,7 @@
 85. 发布包默认插件随包自动构建（make_release.ps1 §2.5）：bin 下无产物的插件工程自动 dotnet build（显式 -p:QingshuHome= 指向宿主发布目录，插件 csproj 五级探测兜底），构建失败即中止发布（宁可不发不发残缺包）；-SkipPlugins 显式发布纯宿主包。Windows 验收：删掉任一插件 bin 后跑 make_release.ps1 -PackOnly，观察「自动 dotnet build」提示且包内 plugins\ 含该插件
 86. plugin.json 清单装载：从插件工程根 plugin.json.template 装载落为 plugin.json（旧口径从 bin 找 template 永远落空——插件工程未设 CopyToOutputDirectory，装载出的插件缺清单宿主无法加载）；仅缺失时补建，用户已改配置与 plugin.sig 不被重置（与 build_all_plugins.ps1 装载语义一致）。Windows 验收：包内每个 plugins\<id>\ 必有 plugin.json，插件页七插件全部加载
 87. 正式版剔除实验性插件：宿主 csproj 定义 STABLE_BUILD 时（正式版构建），qingshu.plugin.usbtool 不入包（与 AppBuildProfile.UsbToolEnabled=false 及宿主三重门禁同口径），日志打印剔除提示；预览版（main，无 STABLE_BUILD）七插件全量入包。Windows 验收：stable 分支打包后包内 plugins\ 无 qingshu.plugin.usbtool 目录且含其余 6 个
+88. 插件 csproj 宿主引用指向托管主程序集（全部 8 个插件工程含 Sample）：自包含 publish 目录的 QingShu.Toolkit.exe 是原生 apphost（无 CLI 元数据），旧 HintPath 指向 exe 必致 MSB3246「PE image does not have metadata」+ CS0234/CS0246 级联（make_release.ps1 自动构建 GalaMaster 时 Windows 实测踩中）；现 HintPath 统一改 $(QingshuHome)\QingShu.Toolkit.dll（R2R 编译过的托管主程序集元数据完整可引用；exe 存在性仅用作 QingshuHome 探测标志不作引用目标）；防回归锚点 check_runtime_v3 plugin_ref_audit（8 个 csproj 全扫：exe HintPath 必 FAIL / dll HintPath 缺失必 FAIL / 零工程扫到必 FAIL）。Windows 验收：make_release.ps1 自动构建七插件（stable 六个）全部成功，插件页各插件加载正常
 
 ## C. 已知边界（设计使然，非缺陷）
 

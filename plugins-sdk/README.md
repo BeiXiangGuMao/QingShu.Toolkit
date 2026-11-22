@@ -54,7 +54,7 @@ plugins/
 
 ```xml
 <Reference Include="QingShu.Toolkit">
-  <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+  <HintPath>$(QingshuHome)\QingShu.Toolkit.dll</HintPath>
 </Reference>
 ```
 

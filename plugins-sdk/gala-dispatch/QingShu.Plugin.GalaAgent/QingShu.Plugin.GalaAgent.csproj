@@ -40,7 +40,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <Reference Include="QingShu.Toolkit">
-      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.dll</HintPath>
     </Reference>
   </ItemGroup>
 
