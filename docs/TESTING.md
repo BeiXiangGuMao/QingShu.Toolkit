@@ -147,6 +147,11 @@
 76. 提权动作空网卡名显式失败：enable_adapter/adapter_reset/dns_set_public 在主网卡名称不可得时生成带原因的 FAIL 行（此前要么静默无标记被解析端误判「可能取消了 UAC」、要么拼出空名命令报错被吞）；FAIL 行带原因后缀时解析端把原因提为主文案
 77. adapter_reset 延时改 ping：timeout /t 在 stdin 非控制台（隐藏窗口/服务环境）立即报错失效改 ping -n 4 127.0.0.1；修复完成后修复清单按复检后状态重建（复检通过/无复核语义翻绿的项不再挂着可重试，剩余问题生成新计划）
 
+**本轮新增：更新链路 E2E 实测 + 机房一键装机 + 内置页徽章同步**
+78. 更新链路端到端可用性（沙箱已实测 51/51，见 scripts/update_e2e_sim.py：真实本地 HTTP mock 服务器 + 真实文件系统安装段）——Windows 侧复验口径：发布新版（如 v1.5.1-beta）→ 应用内「立即检查更新」发现 → 下载（进度/速度可见）→ 退出后 update.cmd 解压覆盖 → 自重启：新 exe 就位；`plugins\` 用户自装插件、默认插件目录内用户附加文件、`plugin.sig` 全部保全（zip 外文件永不删除）；随包默认插件 plugin.json 刷新为随包版本；`%LOCALAPPDATA%` 用户数据（config/logs/reports/plugins-data）逐字节不受影响；下载残留（app-new/zip）清理干净；用户名含撇号（如 O'Brien）机器更新正常（zip/newDir 路径 PS 单引号双写转义）；中途杀掉 robocopy（errorlevel ≥8）→ 提示「更新失败，新版本已保存在下载目录」且新包保留、不重启、旧版本可继续运行，修正后原样重试幂等成功
+79. 机房一键装机（scripts/deploy_install.ps1，沙箱已仿真 48/48，见 scripts/deploy_sim.py）：共享目录放发布 zip + `.sha256`（make_release.ps1 自动生成）+ 装机脚本 → 一条命令完成首装；哈希不符/缺 sidecar/缺 -ExpectedHash 中止（拒绝未核验包）；sidecar 文件名与 zip 不符中止（防错放）；D 盘优先无 D 盘退 C:\Tools（-InstallRoot 可指定）；已安装未加 -Force 跳过解压（保留 plugins 用户资产），-Force 覆盖式增量（zip 外文件保留）；-WithConfig 基线不覆盖本机已有配置；-Autostart 写 HKCU Run 键；安装摘要（目录/版本/SHA256/七插件/配置来源/自启）可点名；任一步失败打印已完成步骤、修正后重跑从未完成处续装
+80. 大文件类型徽章内置回退页同步：卸载磁盘清理插件回退内置磁盘清理页（或直接使用内置页）时，大文件行文件名右侧同样显示类型徽章（视频/音频/压缩包/镜像/虚拟机磁盘/安装包/文档/备份转储/邮件存档/数据库/无后缀），样式与插件页一致（InfoChipFillBrush 浅色/深色主题均正常）——此前仅插件页有徽章（0b95a22 遗留项）
+
 ## C. 已知边界（设计使然，非缺陷）
 
 - QuestPDF 社区许可声明仅在生成 PDF 时设置（App ctor）

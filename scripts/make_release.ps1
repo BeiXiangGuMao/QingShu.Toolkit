@@ -140,6 +140,15 @@ Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath -Co
 $zipSize = "{0:N1} MB" -f ((Get-Item $zipPath).Length / 1048576)
 Write-Host "    完成（$zipSize）" -ForegroundColor Green
 
+# ---- 3.1 SHA256 摘要与 sidecar（发布→部署哈希链闭环：DEPLOY_ZIP.md §六） ----
+# zip 旁写同名 .sha256（格式：<哈希>  <文件名>，sha256sum/Get-FileHash 通用）；
+# 机房装机脚本 deploy_install.ps1 读取它做部署前核验，不一致即中止（防共享目录传输损坏/误替换）。
+$zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash
+$hashSidecar = "$zipPath.sha256"
+Set-Content -Path $hashSidecar -Value ('{0}  {1}' -f $zipHash, (Split-Path $zipPath -Leaf)) -Encoding ascii
+Write-Host ('    SHA256: {0}' -f $zipHash) -ForegroundColor DarkCyan
+Write-Host ('    摘要已写入 {0}（随 zip 一同放共享目录，deploy_install.ps1 自动核验）' -f (Split-Path $hashSidecar -Leaf)) -ForegroundColor DarkCyan
+
 # ---- 4. 打包签名 MSIX（Windows SDK MakeAppx + SignTool；-NoMsix 跳过） ----
 # MSIX 为手动安装格式：必须先装 .cer 证书（本地计算机 → 受信任的人）再装 .msix，
 # 否则 Add-AppxPackage 报 0x800B0109（签名根证书不受信任）。仓库内一键完成：
@@ -498,6 +507,7 @@ OID = 1.3.6.1.5.5.7.3.3
 if ($PackOnly) {
     Write-Host "==> -PackOnly 模式：不创建 Release。产物：" -ForegroundColor Yellow
     Write-Host "    zip ：$zipPath"
+    Write-Host "    哈希：$hashSidecar（部署核验用，随 zip 一同分发）"
     if ($msixPath) {
         Write-Host "    msix：$msixPath"
         Write-Host ('    cer ：{0} —— 本机验收：.\scripts\install_msix.ps1 -Msix "{1}" 一键装证书并安装' -f $cerPath, $msixPath)

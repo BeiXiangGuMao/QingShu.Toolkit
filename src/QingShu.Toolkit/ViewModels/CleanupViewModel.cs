@@ -97,8 +97,26 @@ public partial class LargeFileVm : ObservableObject
     public string Name => Item.Name;
     public string PathText => Item.Dir;
     public string ExtText => Item.Ext;
+    public string KindText => KindOf(Item.Ext);
     public string SizeText => FormatHelper.Bytes(Item.SizeBytes);
     public string TimeText => Item.LastWrite.ToString("yyyy-MM-dd HH:mm");
+
+    /// <summary>扩展名 → 类型徽章文案（与插件 DiskCleanupView 同源移植；未知扩展名回退原始后缀或「其他」）。</summary>
+    public static string KindOf(string ext) => ext switch
+    {
+        ".MP4" or ".AVI" or ".MKV" or ".MOV" or ".WMV" or ".FLV" or ".M4V" or ".TS" or ".WEBM" => "视频",
+        ".MP3" or ".WAV" or ".FLAC" or ".M4A" or ".APE" or ".OGG" => "音频",
+        ".ZIP" or ".RAR" or ".7Z" or ".TAR" or ".GZ" or ".BZ2" or ".XZ" => "压缩包",
+        ".ISO" or ".IMG" or ".VHD" or ".VHDX" or ".GHO" or ".WIM" => "镜像",
+        ".VMDK" or ".VDI" or ".QCOW2" => "虚拟机磁盘",
+        ".EXE" or ".MSI" or ".MSIX" => "安装包",
+        ".DOC" or ".DOCX" or ".PDF" or ".PPT" or ".PPTX" or ".XLS" or ".XLSX" => "文档",
+        ".BAK" or ".DMP" or ".EML" => "备份/转储",
+        ".PST" or ".OST" => "邮件存档",
+        ".DB" or ".MDF" or ".NDF" or ".LDF" or ".ACCDB" => "数据库",
+        "" => "无后缀",
+        _ => ext.TrimStart('.').ToLowerInvariant() + " 文件"
+    };
 
     [ObservableProperty] private bool _isSelected;
 }
