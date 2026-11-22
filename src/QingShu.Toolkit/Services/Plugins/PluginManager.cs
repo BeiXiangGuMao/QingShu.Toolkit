@@ -208,7 +208,11 @@ public sealed class PluginManager : IPluginManager
             }
             var folder = Path.Combine(PluginsRoot, folderName);
             var verify = VerifyFull(folder, folderName);
-            if (!verify.Ok || verify.Manifest == null) throw new InvalidOperationException(verify.ErrorText);
+            // 放行口径与自动加载过滤、插件页 CanLoad 三处一致：验签通过（Ok）或未签名（Unsigned，官方签名是可选增强）均可加载；
+            // 其余状态（清单无效 / 防冒名 / 哈希不符 / 宿主过旧 / 签名不符）一律拒绝——防篡改红线不变，想按未签名加载删除 plugin.sig 即可。
+            if (verify.Manifest == null
+                || (verify.State != PluginVerifyState.Ok && verify.State != PluginVerifyState.Unsigned))
+                throw new InvalidOperationException(verify.ErrorText);
             var manifest = verify.Manifest;
 
             // 实验性功能门禁：正式版（stable 构建，STABLE_BUILD）不加载 U盘工具插件。

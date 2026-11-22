@@ -54,7 +54,6 @@ public sealed class AppSettings
     public int LargeFileMinMb { get; set; } = 100;
     /// <summary>true=删除进回收站（默认安全模式）；false=直接删除</summary>
     public bool DeleteToRecycleBin { get; set; } = true;
-    public List<string> CleanupExcludeDirs { get; set; } = new();
 
     // ---------- 功耗 ----------
     /// <summary>auto / balanced / performance / eco</summary>
@@ -96,9 +95,6 @@ public sealed class AppSettings
     public string LastClassName { get; set; } = "";
     public string LastReporter { get; set; } = "";
     public string LastDeviceTag { get; set; } = "";
-
-    // ---------- 演示数据标记 ----------
-    public bool FirstRunDone { get; set; } = false;
 
     // ---------- 内置插件（harness 风格：默认安装、默认启用、可停用） ----------
     /// <summary>

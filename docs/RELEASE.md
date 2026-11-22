@@ -80,18 +80,22 @@ Compress-Archive -Path "$pub/*" -DestinationPath $zip -CompressionLevel Optimal
 
 ### 2.4 生成校验值
 
-```powershell
-Get-FileHash $zip -Algorithm SHA256
-```
-
+make_release.ps1 打包后**自动**计算 SHA256 并在 zip 旁写同名 `.sha256` sidecar
+（`<哈希>  <文件名>` 格式，`sha256sum`/`Get-FileHash` 通用），控制台同步打印哈希值；
 把哈希值附在 Release 说明中，供用户/机房管理员核验完整性。
+
+```powershell
+Get-FileHash $zip -Algorithm SHA256   # 手动复核（与 .sha256 sidecar 应一致）
+```
 
 ### 2.5 用户侧使用方式
 
 1. 解压到**任意可写目录**（如 `D:\Tools\QingShu.Toolkit`）；不建议解压到
    `C:\Program Files` 等需要管理员写权限的目录（日志、下载更新等写入会受影响）。
 2. 双击 `QingShu.Toolkit.exe` 运行。首次运行如出现 SmartScreen 提示，见第五节 FAQ。
-3. 机房批量部署、升级与卸载全流程规划见 `docs/DEPLOY_ZIP.md`。
+3. 机房批量部署、升级与卸载全流程见 `docs/DEPLOY_ZIP.md`；机房一键装机脚本
+   `scripts/deploy_install.ps1`（SHA256 核验 → D/C 盘探测解压 → 基线配置 →
+   HKCU 自启 → 安装摘要，幂等续装）。
 
 ### 2.6 七插件一键构建验证与装载（`scripts/build_all_plugins.ps1`）
 

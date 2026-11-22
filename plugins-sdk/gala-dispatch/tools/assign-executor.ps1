@@ -62,7 +62,7 @@ if (-not (Test-Path $AssignmentPath)) {
     exit 1
 }
 
-Write-Host "开始监控 $AssignmentPath（间隔 ${IntervalSeconds}s，模式：$(if ($Apply) { '应用限速' } else { '仅展示' }）"
+Write-Host "开始监控 $AssignmentPath（间隔 ${IntervalSeconds}s，模式：$(if ($Apply) { '应用限速' } else { '仅展示' })）"
 Write-Host "按 Ctrl+C 退出。"
 $lastStamp = ""
 while ($true) {

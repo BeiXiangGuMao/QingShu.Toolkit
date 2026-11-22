@@ -43,7 +43,9 @@
     <!--
       版本策略（正式版分支）：版本号无后缀，展示层自动呈现正式样式；
       下方 STABLE_BUILD 编译期剔除实验性功能（当前：城域网门户自动登录、U盘工具，见 Models/AppBuildProfile.cs）。
-      预览线（main）带 -beta 后缀并行推进；定期 git merge main 后转正时把本行改为下一正式版（如 1.5.0）。
+      预览线（main）带 -beta 后缀并行推进（当前 1.5.0-beta）；定期 git merge main 后转正时把本行改为下一正式版（如 1.5.0）。
+      stable 切版后 main 必须立即推进到下一 beta 号——同号正式发布大于同号预发布（版本键级别语义），
+      否则 Beta 通道用户会被正式版吸走并卡死在旧 minor（详见 docs/RELEASE.md 第五章）。
     -->
     <Version>1.4.0</Version>
     <Copyright>版权所有 © 2026 BeiXiangGuMao</Copyright>
