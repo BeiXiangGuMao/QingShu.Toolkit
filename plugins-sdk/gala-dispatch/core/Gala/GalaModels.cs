@@ -424,17 +424,14 @@ public static class GalaFrame
 
     public static async Task WriteFrameAsync(NetworkStream stream, byte[] frame, CancellationToken ct)
     {
-        // 循环写完整帧：WriteAsync 不保证一次写完（部分写后连接异常时返回值偏小），
-        // 残包会让对端按非法长度直接断连；返回零字节视为连接失效
-        int off = 0;
-        while (off < frame.Length)
-        {
-            // WriteAsync 收 ReadOnlyMemory 的重载返回非泛型 ValueTask（await 结果为 void），
-            // 取返回字节数必须用 (byte[], int, int, CancellationToken) 重载（Task<int>）——CS0029
-            int n = await stream.WriteAsync(frame, off, frame.Length - off, ct).ConfigureAwait(false);
-            if (n <= 0) throw new IOException("流写入零字节（连接已失效）");
-            off += n;
-        }
+        // Stream.WriteAsync 全部重载的 await 结果均为 void——不存在返回写入字节数的 WriteAsync
+        // （返回字节数是 ReadAsync 的语义；(byte[],int,int,ct) 重载返回的 Task 同样无值，
+        // 赋给 int 即 CS0029——正是 Windows 实测最后残留的这一错，上一轮误记该重载为 Task<int>）。
+        // Stream 契约即「整段写完或抛异常」：NetworkStream 在底层 Socket 部分发送时内部循环补齐，
+        // 部分写不以偏小返回值外露，连接失效统一经 SocketException/IOException/OCE 异常通道上报，
+        // 故整帧一次写入即可，无需也无法做逐字节计数循环；读侧 ReadExactAsync 的循环必须保留
+        //（ReadAsync 允许合法短读）
+        await stream.WriteAsync(frame, 0, frame.Length, ct).ConfigureAwait(false);
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
