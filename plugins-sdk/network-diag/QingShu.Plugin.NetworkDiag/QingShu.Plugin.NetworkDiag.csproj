@@ -72,7 +72,7 @@
     -->
     <PackageReference Include="QuestPDF" Version="2026.9.1" ExcludeAssets="runtime" />
     <Reference Include="QingShu.Toolkit">
-      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.dll</HintPath>
     </Reference>
   </ItemGroup>
 

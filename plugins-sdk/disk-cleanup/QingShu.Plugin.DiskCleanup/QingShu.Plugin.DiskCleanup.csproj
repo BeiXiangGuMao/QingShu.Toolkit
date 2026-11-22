@@ -50,7 +50,7 @@
     -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" ExcludeAssets="runtime" />
     <Reference Include="QingShu.Toolkit">
-      <HintPath>$(QingshuHome)\QingShu.Toolkit.exe</HintPath>
+      <HintPath>$(QingshuHome)\QingShu.Toolkit.dll</HintPath>
     </Reference>
   </ItemGroup>
 
