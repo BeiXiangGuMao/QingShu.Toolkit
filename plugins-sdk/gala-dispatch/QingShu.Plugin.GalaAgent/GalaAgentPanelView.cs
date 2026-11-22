@@ -180,3 +180,16 @@ public sealed class GalaAgentPanelView : UserControl
         TextWrapping = TextWrapping.Wrap
     };
 }
+
+/// <summary>Grid.Children.Add 扩展（带行/列定位），减少样板。参数收 FrameworkElement：
+/// WinUI 3 的 Grid.SetRow/SetColumn 签名要求 FrameworkElement 而非 UIElement（CS1503）。
+/// 与主控面板 GalaMasterPanelExtensions 同一写法——扩展方法按命名空间隔离，两插件各自持有一份。</summary>
+internal static class GalaAgentPanelExtensions
+{
+    public static void Add(this UIElementCollection children, FrameworkElement element, int row, int col)
+    {
+        Grid.SetRow(element, row);
+        Grid.SetColumn(element, col);
+        children.Add(element);
+    }
+}
