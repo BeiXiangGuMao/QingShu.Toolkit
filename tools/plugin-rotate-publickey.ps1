@@ -1,8 +1,24 @@
-﻿# plugin-rotate-publickey.ps1 —— 换钥流程第 2 步：把新官方公钥替换进宿主 PluginSigning.cs
-# 用法：powershell -ExecutionPolicy Bypass -File tools\plugin-rotate-publickey.ps1
-#       可选参数：-PublicKeyXml <official-public-key.xml 路径>  -HostSource <PluginSigning.cs 路径>
-# 前置：先用 plugin-keygen.ps1 生成新密钥对；私钥离线保管，绝不入库。
-# 效果：校验公钥 XML 可用 → 备份宿主源文件 → 替换 OfficialPublicKeyXml 常量 → 打印新指纹与后续动作。
+﻿<#
+.SYNOPSIS
+    将新的官方插件签名公钥安全写入宿主源码。
+
+.DESCRIPTION
+    校验公钥 XML 后备份宿主源文件，再替换 OfficialPublicKeyXml 常量并打印指纹。
+    运行前先使用 plugin-keygen.ps1 生成密钥；私钥必须离线保管且不得入库。
+    换钥后必须重新发布宿主，并使用新私钥重签所有插件。
+
+.PARAMETER PublicKeyXml
+    plugin-keygen.ps1 生成的公钥 XML 路径。
+
+.PARAMETER HostSource
+    宿主 PluginSigning.cs 路径；缺省指向当前仓库源码。
+
+.EXAMPLE
+    .\tools\plugin-rotate-publickey.ps1
+
+.EXAMPLE
+    .\tools\plugin-rotate-publickey.ps1 -PublicKeyXml 'D:\Secure\official-public-key.xml'
+#>
 param(
     [string]$PublicKeyXml = "$env:USERPROFILE\Documents\QingShu.PluginSigning\official-public-key.xml",
     [string]$HostSource = "$PSScriptRoot\..\src\QingShu.Toolkit\Services\Plugins\PluginSigning.cs"

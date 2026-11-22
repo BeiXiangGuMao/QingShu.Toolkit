@@ -116,7 +116,7 @@ public partial class NetworkDiagViewModel : ObservableObject
         OnPropertyChanged(nameof(FixedChipVis));
     }
 
-    public NetworkDiagViewModel(INetworkDiagnosticService diag, INetworkRepairService repair,
+    internal NetworkDiagViewModel(INetworkDiagnosticService diag, INetworkRepairService repair,
         IPdfReportService pdf, NetworkDiagSettingsStore settings, IHardwareProbeService probe,
         Action<string, string> log, string logLocationText)
     {

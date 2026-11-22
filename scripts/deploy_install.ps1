@@ -1,11 +1,39 @@
-﻿# 青枢工具箱 · 机房一键装机脚本（deploy_install.ps1）
-# 配套发布 zip 使用：把 QingShu.Toolkit-<版本>.zip、同名 .sha256、本脚本一起放共享目录，
-# 装机机上一条命令完成首装/续装。全流程幂等：失败修正后原样重跑，从未完成处续装。
-# 用法示例：
-#   powershell -ExecutionPolicy Bypass -File .\deploy_install.ps1 -SharePath '\\server\share\QingShu' -Autostart
-#   powershell -ExecutionPolicy Bypass -File .\deploy_install.ps1 -SharePath 'D:\share\QingShu' -WithConfig 'D:\share\QingShu\config.json'
-# 规划与语义：docs/DEPLOY_ZIP.md §三（装机六步）与 §四（机房日常升级走应用内自动更新，
-# 本脚本用于首装与故障重装；解压永远覆盖式增量，禁止先删后解压——防丢 plugins\ 用户自装插件）。
+﻿<#
+.SYNOPSIS
+    青枢工具箱机房一键安装与修复脚本。
+
+.DESCRIPTION
+    从共享目录读取发布 ZIP 和 SHA-256 sidecar，校验后以覆盖式增量解压完成首装或修复。
+    不删除 ZIP 中不存在的文件，保留用户自装插件；失败后修正问题并原样重跑即可续装。
+    日常版本升级建议使用应用内自动更新；本脚本用于首装、故障修复和基线部署。
+
+    示例：
+      .\deploy_install.ps1 -SharePath '\\server\share\QingShu' -Autostart
+      .\deploy_install.ps1 -SharePath 'D:\share\QingShu' -WithConfig 'D:\share\QingShu\config.json'
+
+    详细流程见 docs/DEPLOY_ZIP.md。
+
+.PARAMETER SharePath
+    含发布 ZIP 与同名 .sha256 的共享目录，也可以直接指定 ZIP 文件路径。
+
+.PARAMETER InstallRoot
+    安装根目录；缺省自动选择 D:\Tools，无 D 盘时使用 C:\Tools。
+
+.PARAMETER WithConfig
+    可选的基线 config.json 路径。
+
+.PARAMETER ExpectedHash
+    可选的预期 SHA-256；优先级高于 ZIP 旁的 .sha256 文件。
+
+.PARAMETER Autostart
+    可选：为当前用户创建开机自启项。
+
+.PARAMETER Force
+    已存在安装时仍覆盖解压并应用基线配置。
+
+.EXAMPLE
+    .\deploy_install.ps1 -SharePath '\\server\share\QingShu' -Autostart
+#>
 
 param(
     [string]$SharePath  = '',      # 共享目录（含发布 zip 与同名 .sha256；也可直接传 zip 全路径）

@@ -451,9 +451,9 @@ public sealed class UsbToolView : UserControl
         if (a.RunningVis) statusCol.Children.Add(new ProgressRing { Width = 14, Height = 14, IsActive = true });
 
         var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(2, 2, 2, 2) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLengthHelper.FromAutoLength() });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLengthHelper.FromStar(1) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLengthHelper.FromAutoLength() });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         chk.SetValue(Grid.ColumnProperty, 0);
         nameCol.SetValue(Grid.ColumnProperty, 1);
         statusCol.SetValue(Grid.ColumnProperty, 2);
@@ -499,8 +499,8 @@ public sealed class UsbToolView : UserControl
             nameCol.Children.Add(pathText);
 
             var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(2, 2, 2, 2) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLengthHelper.FromAutoLength() });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLengthHelper.FromStar(1) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             chk.SetValue(Grid.ColumnProperty, 0);
             nameCol.SetValue(Grid.ColumnProperty, 1);
             grid.Children.Add(chk);
@@ -632,7 +632,7 @@ public sealed class UsbToolView : UserControl
         "\uE90F" => Symbol.Repair,
         "\uE768" => Symbol.Play,
         "\uE71E" => Symbol.Find,
-        "\uE9D9" => Symbol.Diagnostic, // 可见性诊断按钮
+        "\uE9D9" => Symbol.View, // 可见性诊断按钮
         _ => Symbol.ReportHacked // \uE7BC 扩容检测（ReportHacked 图标语义一致）
     };
 

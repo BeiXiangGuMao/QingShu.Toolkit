@@ -1,6 +1,24 @@
-﻿# plugin-sign.ps1 —— 给插件目录做官方签名（RSA-2048 + SHA-256 + PKCS#1 v1.5）
-# 用法：powershell -ExecutionPolicy Bypass -File tools\plugin-sign.ps1 -PluginFolder <插件目录> [-KeyPath <私钥.xml>]
-# 流程：校验目录名=id → 计算主程序集 SHA-256 写入清单 → 重写清单（UTF-8 无 BOM）→ 对清单原始字节签名 → 写 plugin.sig
+﻿<#
+.SYNOPSIS
+    使用官方 RSA 私钥为插件目录生成签名。
+
+.DESCRIPTION
+    校验插件目录名与清单 ID 一致，为主程序集计算 SHA-256 并写入清单，
+    再以 RSA-2048、SHA-256、PKCS#1 v1.5 对清单原始字节签名。
+    修改清单或更换 DLL 后必须重新签名。
+
+.PARAMETER PluginFolder
+    包含 plugin.json 和主程序集的插件目录。
+
+.PARAMETER KeyPath
+    官方私钥 XML 路径；缺省为当前用户 Documents\QingShu.PluginSigning。
+
+.EXAMPLE
+    .\tools\plugin-sign.ps1 -PluginFolder 'D:\plugins\qingshu.plugin.sample'
+
+.EXAMPLE
+    .\tools\plugin-sign.ps1 -PluginFolder 'D:\plugins\qingshu.plugin.sample' -KeyPath 'D:\Secure\official-private-key.xml'
+#>
 param(
     [Parameter(Mandatory = $true)][string]$PluginFolder,
     [string]$KeyPath = "$env:USERPROFILE\Documents\QingShu.PluginSigning\official-private-key.xml"

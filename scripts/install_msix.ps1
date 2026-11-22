@@ -9,10 +9,12 @@
     若仍不受信任，自动回退导入「受信任的根证书颁发机构」后重试一次。
     导入机器存储需要管理员权限：非管理员运行时自动弹出 UAC 提权窗口。
     证书已被本机信任时（如重装新版本）不再请求提权，直接安装。
+    证书导入目标为本地计算机的「受信任的人」存储；仅在该方式仍无法验证时，
+    才回退到「受信任的根证书颁发机构」。
 
     用法（在仓库根目录或任意位置执行）：
       .\scripts\install_msix.ps1                              # 自动找仓库根目录最新 .msix
-      .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-1.2.0-beta.msix
+      .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-1.5.0-beta.msix
       .\scripts\install_msix.ps1 -CertOnly                    # 只导入证书，不安装
 
 .PARAMETER Msix
@@ -45,7 +47,7 @@ if (-not $Msix) {
     if ($latest) { $Msix = $latest.FullName }
 }
 if (-not $Msix -or -not (Test-Path $Msix)) {
-    throw "未找到 .msix：请先运行 make_release.ps1 打包，或用 -Msix 指定路径（如 -Msix .\QingShu.Toolkit-1.2.0-beta.msix）"
+    throw "未找到 .msix：请先运行 make_release.ps1 打包，或用 -Msix 指定路径（如 -Msix .\QingShu.Toolkit-1.5.0-beta.msix）"
 }
 $Msix = (Resolve-Path $Msix).Path
 

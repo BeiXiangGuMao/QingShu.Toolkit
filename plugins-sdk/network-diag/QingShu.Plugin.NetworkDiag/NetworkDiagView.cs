@@ -45,7 +45,7 @@ public sealed class NetworkDiagView : UserControl
     private InfoBar? _reportInfo;                        // 导出结果提示（成功路径 / 失败原因 / 缺必填）
     private Button? _completeActionBtn;                  // InfoBar「补全信息」动作按钮（复用实例，按需挂/摘）
 
-    public NetworkDiagView(NetworkDiagViewModel vm, NetworkDiagSettingsStore settings,
+    internal NetworkDiagView(NetworkDiagViewModel vm, NetworkDiagSettingsStore settings,
         IHardwareProbeService probe, Action<string, string> log)
     {
         _vm = vm;
@@ -900,7 +900,7 @@ public sealed class NetworkDiagView : UserControl
     private static Style MakeListItemStyle()
     {
         var s = new Style(typeof(ListViewItem));
-        s.Setters.Add(new Setter(FrameworkElement.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        s.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
         s.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0, 2, 0, 2)));
         s.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 0d));
         return s;

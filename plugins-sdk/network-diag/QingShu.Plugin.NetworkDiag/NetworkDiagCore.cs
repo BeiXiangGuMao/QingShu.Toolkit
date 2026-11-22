@@ -1141,7 +1141,7 @@ public sealed class NetworkDiagnosticService : INetworkDiagnosticService
     private static readonly ICheck[] OrderedChecks =
         AllChecks.OrderBy(c => (int)c.Category).ToArray();
 
-    public NetworkDiagnosticService(NetworkDiagSettingsStore settings, Action<string, string> log, string logRoot)
+    internal NetworkDiagnosticService(NetworkDiagSettingsStore settings, Action<string, string> log, string logRoot)
     {
         _settings = settings;
         _log = log;
@@ -3635,7 +3635,7 @@ public sealed class NetworkRepairService : INetworkRepairService
     private readonly Action<string, string> _log; // (level, message) → 插件日志适配（宿主日志服务同职责）
     private readonly string _logRoot;             // 会话日志根（宿主数据根 + \logs，与内置页共用）
 
-    public NetworkRepairService(NetworkDiagSettingsStore settings, Action<string, string> log, string logRoot)
+    internal NetworkRepairService(NetworkDiagSettingsStore settings, Action<string, string> log, string logRoot)
     {
         _settings = settings;
         _log = log;
