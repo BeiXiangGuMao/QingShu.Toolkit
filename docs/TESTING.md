@@ -152,6 +152,12 @@
 79. 机房一键装机（scripts/deploy_install.ps1，沙箱已仿真 48/48，见 scripts/deploy_sim.py）：共享目录放发布 zip + `.sha256`（make_release.ps1 自动生成）+ 装机脚本 → 一条命令完成首装；哈希不符/缺 sidecar/缺 -ExpectedHash 中止（拒绝未核验包）；sidecar 文件名与 zip 不符中止（防错放）；D 盘优先无 D 盘退 C:\Tools（-InstallRoot 可指定）；已安装未加 -Force 跳过解压（保留 plugins 用户资产），-Force 覆盖式增量（zip 外文件保留）；-WithConfig 基线不覆盖本机已有配置；-Autostart 写 HKCU Run 键；安装摘要（目录/版本/SHA256/七插件/配置来源/自启）可点名；任一步失败打印已完成步骤、修正后重跑从未完成处续装
 80. 大文件类型徽章内置回退页同步：卸载磁盘清理插件回退内置磁盘清理页（或直接使用内置页）时，大文件行文件名右侧同样显示类型徽章（视频/音频/压缩包/镜像/虚拟机磁盘/安装包/文档/备份转储/邮件存档/数据库/无后缀），样式与插件页一致（InfoChipFillBrush 浅色/深色主题均正常）——此前仅插件页有徽章（0b95a22 遗留项）
 
+**本轮新增：全部功能端到端验证（静态全链路门禁 + 逻辑级/协议级仿真 831 检全绿）**
+81. 插件加载放行口径修复（plugin_sim.py 68/68 实锤驱动）：未签名插件（State=Unsigned）手动与自动加载均被旧口径 `!verify.Ok` 拒绝（「缺少 plugin.sig（未签名）」），与插件页 CanLoad（VerifyOk = Ok or Unsigned）、AutoLoadEnabledAsync 过滤器、SDK README「未签名插件默认放行加载」三处承诺相悖——已改为 Ok|Unsigned 放行（防篡改红线不变：BadSignature/HashMismatch/IdMismatch/HostTooOld/ManifestInvalid 仍一律拒绝）；沙箱复刻验签全状态机验证：RSA-2048+SHA-256+PKCS#1 v1.5 数学级验签（官方公钥指纹复刻 = 84:6C:65:C7:BD:D7:10:29，与插件页展示口径一致）、签名后篡改清单/程序集一字节必拒、防冒名/哈希锁定/宿主版本门逐项过
+82. 宿主磁盘清理回退页完成态汇总与插件版同源（cleanup_scan_sim.py 68/68 同源断言驱动）：微信/QQ 完成态补「（N 个账号）· 已按账号分组」、大文件完成态补「合计 X」——此前插件版有、宿主内置回退页缺失（0b95a22 汇总增强只落了插件侧，2fbdd90 只同步了徽章）；验收口径：卸载磁盘清理插件回退内置页，扫描完成文案与插件页逐字一致
+83. 僵尸配置项移除（settings_sim.py 41/41 全库引用扫描实锤）：AppSettings.CleanupExcludeDirs 与 FirstRunDone 自 v1.0.0 起零引用（宿主/插件/文档均无消费点），已删除；旧机器 config.json 中的对应键由 System.Text.Json 未知字段忽略语义自然兼容（roundtrip 41 项实测：中文明文落盘、键大小写不敏感、未知字段容忍、任一字段类型不符整份回退默认、.tmp 原子写崩溃不留半截配置）；PopupRule 三组模式为注释明示保留项，不在清除范围
+84. 全功能端到端验证矩阵（scripts/e2e_all.py 一键全量）：12 项静态门禁 + 16 套行为/逻辑仿真（新增插件 68 / 设置 41 / 清理 68 / 优化 35 / 仪表盘 27 / Gala 115 六套，合既有 10 套）合计 831 检，28 个功能维度全 PASS；Gala 套件含真实 socketpair 协议闭环（hello→welcome→metrics→switch→ack）与生产拓扑（飞线二中 49 节点）Normalize/Validate/MatchRoute 实测；沙箱无 dotnet/Windows，编译与真机运行仍按各功能既有 Windows 实测条目执行
+
 ## C. 已知边界（设计使然，非缺陷）
 
 - QuestPDF 社区许可声明仅在生成 PDF 时设置（App ctor）

@@ -392,7 +392,7 @@ public partial class CleanupViewModel : ObservableObject
             UpdateImSelected();
             WeChatStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的微信文件（也可能修改过存储位置，可用大文件扫描兜底）。"
-                : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
+                : $"发现 {files.Count} 个久远文件（{files.Select(f => f.Account).Distinct().Count()} 个账号）· 共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已按账号分组、默认全选，请逐项确认后删除。";
         }
         catch (OperationCanceledException) { WeChatStatus = "扫描已取消。"; }
         catch (Exception ex) { WeChatStatus = $"扫描失败：{ex.Message}"; }
@@ -422,7 +422,7 @@ public partial class CleanupViewModel : ObservableObject
             UpdateImSelected();
             QqStatus = files.Count == 0
                 ? $"未发现超过 {ParseDays(_imOldDaysText)} 天的 QQ 文件。"
-                : $"发现 {files.Count} 个久远文件，共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已默认全选，请逐项确认后删除。";
+                : $"发现 {files.Count} 个久远文件（{files.Select(f => f.Account).Distinct().Count()} 个账号）· 共 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}。已按账号分组、默认全选，请逐项确认后删除。";
         }
         catch (OperationCanceledException) { QqStatus = "扫描已取消。"; }
         catch (Exception ex) { QqStatus = $"扫描失败：{ex.Message}"; }
@@ -565,7 +565,7 @@ public partial class CleanupViewModel : ObservableObject
             if (_ctsLarge.IsCancellationRequested) { LargeStatus = "扫描已取消（以下为中止前已找到的部分结果）。"; return; }
             LargeFiles = new ObservableCollection<LargeFileVm>(files.Take(200).Select(f => new LargeFileVm(f)));
             UpdateLargeSelected();
-            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
+            LargeStatus = $"发现 {files.Count} 个 ≥{ParseInt(_largeMinMbText, 100)}MB 的文件 · 合计 {FormatHelper.Bytes(files.Sum(f => f.SizeBytes))}，展示前 {LargeFiles.Count} 个。请勾选确认后删除。";
         }
         catch (OperationCanceledException) { LargeStatus = "扫描已取消。"; }
         catch (Exception ex) { LargeStatus = $"扫描失败：{ex.Message}"; }
