@@ -194,7 +194,7 @@ public partial class CleanupViewModel : ObservableObject
     [ObservableProperty] private string _lastResult = "";
     [ObservableProperty] private bool _deleteToRecycleBin;
 
-    public CleanupViewModel(ICleanupService cleanup, IImScanService im, ILargeFileScanService large,
+    internal CleanupViewModel(ICleanupService cleanup, IImScanService im, ILargeFileScanService large,
         CleanupSettingsStore settings, Action<string, string> log)
     {
         _cleanup = cleanup;

@@ -1,6 +1,19 @@
-﻿# plugin-keygen.ps1 —— 生成青枢工具箱官方插件签名密钥对（RSA-2048）
-# 用法：powershell -ExecutionPolicy Bypass -File tools\plugin-keygen.ps1 [-OutDir <目录>]
-# 私钥 = 官方身份，务必离线保管（U盘保险柜），严禁入仓库 / 严禁分发给任何人。
+﻿<#
+.SYNOPSIS
+    生成青枢工具箱官方插件签名密钥对（RSA-2048）。
+
+.DESCRIPTION
+    私钥代表官方签名身份。生成后必须离线保管，严禁提交到仓库或分发给他人。
+
+.PARAMETER OutDir
+    密钥输出目录；缺省为当前用户 Documents\QingShu.PluginSigning。
+
+.EXAMPLE
+    .\tools\plugin-keygen.ps1
+
+.EXAMPLE
+    .\tools\plugin-keygen.ps1 -OutDir 'D:\Secure\QingShu.PluginSigning'
+#>
 param(
     [string]$OutDir = "$env:USERPROFILE\Documents\QingShu.PluginSigning"
 )

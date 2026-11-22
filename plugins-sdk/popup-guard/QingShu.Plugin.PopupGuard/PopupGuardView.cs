@@ -441,12 +441,12 @@ public sealed class PopupGuardView : UserControl
                 Padding = new Thickness(6, 4, 6, 4),
                 MinWidth = 0,
                 MinHeight = 0,
-                Background = new SolidColorBrush(Colors.Transparent),
+                Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
                 BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(6),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            removeButton.Child = new FontIcon
+            removeButton.Content = new FontIcon
             {
                 FontFamily = new FontFamily("Segoe Fluent Icons"),
                 Glyph = "\uE711",
@@ -470,8 +470,8 @@ public sealed class PopupGuardView : UserControl
 
             _whitelistList.Children.Add(new Border
             {
-                Background = TryBrush("CardBackgroundBrush") ?? new SolidColorBrush(Colors.Transparent),
-                BorderBrush = TryBrush("DividerStrokeBrush") ?? new SolidColorBrush(Colors.Transparent),
+                Background = TryBrush("CardBackgroundBrush") ?? new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
+                BorderBrush = TryBrush("DividerStrokeBrush") ?? new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(12, 8, 12, 8),
@@ -494,8 +494,8 @@ public sealed class PopupGuardView : UserControl
         else
         {
             b.CornerRadius = new CornerRadius(12);
-            b.Background = TryBrush("CardBackgroundBrush") ?? new SolidColorBrush(Colors.Transparent);
-            b.BorderBrush = TryBrush("DividerStrokeBrush") ?? new SolidColorBrush(Colors.Transparent);
+            b.Background = TryBrush("CardBackgroundBrush") ?? new SolidColorBrush(Color.FromArgb(0, 0, 0, 0));
+            b.BorderBrush = TryBrush("DividerStrokeBrush") ?? new SolidColorBrush(Color.FromArgb(0, 0, 0, 0));
             b.BorderThickness = new Thickness(1);
         }
         b.Child = new StackPanel { Spacing = 10 };
@@ -532,7 +532,7 @@ public sealed class PopupGuardView : UserControl
 
     private static Brush SecondaryBrush() => new SolidColorBrush(Color.FromArgb(255, 110, 118, 128));
     private static Brush FallbackInfoBrush() => new SolidColorBrush(Color.FromArgb(255, 0, 98, 204));
-    private static Brush FallbackInfoChipBrush() => new SolidColorBrush(Color.FromArgb(255, 26, 0, 122, 255));
+    private static Brush FallbackInfoChipBrush() => new SolidColorBrush(Color.FromArgb(26, 0, 122, 255));
     private static Brush FallbackWarnBrush() => new SolidColorBrush(Color.FromArgb(255, 201, 52, 0));
-    private static Brush FallbackWarnChipBrush() => new SolidColorBrush(Color.FromArgb(255, 26, 255, 149, 0));
+    private static Brush FallbackWarnChipBrush() => new SolidColorBrush(Color.FromArgb(26, 255, 149, 0));
 }

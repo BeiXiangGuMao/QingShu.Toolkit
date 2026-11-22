@@ -1,16 +1,17 @@
 ﻿<#
 .SYNOPSIS
-    青枢工具箱一键发布脚本：本地构建 → 打 zip + 签名 MSIX → 创建 GitHub Release → 上传资产。
+    青枢工具箱正式版一键发布脚本（当前版本 1.4.0）。
     更新系统（自动检查更新）依赖仓库中存在 Release，首次使用先运行本脚本发布一次。
     zip 供应用内自动更新使用；MSIX（+ .cer 证书）为手动安装格式，可选产出。
 
 .DESCRIPTION
-    用法（在仓库根目录的 PowerShell 中执行）：
-      # 发布 Beta 版（tag 取 csproj Version，如 1.2.0-beta → v1.2.0-beta，标记为预发布）
-      .\scripts\make_release.ps1 -Token <你的GitHub PAT>
+    从项目文件读取版本号，执行 win-x64 发布，生成 ZIP 与 SHA-256；默认还生成签名
+    MSIX 和 .cer，并创建或更新 GitHub Release 后上传资产。-PackOnly 仅生成本地文件，
+    不访问 GitHub。
 
-      # 发布稳定版（覆盖 tag，非预发布）
-      .\scripts\make_release.ps1 -Token <PAT> -Tag v1.3.0 -Stable
+    用法（在仓库根目录的 PowerShell 中执行）：
+      # 发布当前正式版（自动读取版本并提示输入 Token）
+      .\scripts\make_release.ps1 -Stable
 
       # 只打包不上传（先本地验收 zip / msix / cer）
       .\scripts\make_release.ps1 -PackOnly
@@ -19,13 +20,13 @@
       .\scripts\make_release.ps1 -PackOnly -SkipPlugins
 
       # 本机安装 MSIX（自动提权导入证书 → 安装；解决 0x800B0109 证书不受信任）
-      .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-<版本>.msix
+      .\scripts\install_msix.ps1 -Msix .\QingShu.Toolkit-1.4.0.msix
 
-    Token 权限：repo（Contents: read & write）即可。
-    注意：发布的 tag 版本号必须高于用户本机版本号，更新检查才会提示升级。
+    Token 需要目标仓库 Contents 读写权限。建议使用 GITHUB_TOKEN 环境变量或安全提示输入，
+    不要把 Token 直接写入命令行历史。发布版本必须高于用户本机版本，更新检查才会提示升级。
 
 .PARAMETER Token
-    GitHub Personal Access Token（repo 权限）。也可通过环境变量 GITHUB_TOKEN 提供。
+    GitHub Personal Access Token。缺省使用 GITHUB_TOKEN 环境变量；若未设置则安全提示输入。
 
 .PARAMETER Tag
     Release 标签。缺省自动取 src/QingShu.Toolkit/*.csproj 的 <Version> 并加 v 前缀。
@@ -126,6 +127,10 @@ if ($isStableBuild) {
     # ——与"正式版=预览版砍掉实验性功能的产物、编译期整体剔除"哲学一致（docs/RELEASE.md 第五章）。
     $defaultPlugins = @($defaultPlugins | Where-Object { $_.Id -ne "qingshu.plugin.usbtool" })
     Write-Host "    正式版构建（STABLE_BUILD）：实验性插件 qingshu.plugin.usbtool 不入包（宿主已编译期剔除该功能）" -ForegroundColor DarkGray
+    $excludedPluginDir = Join-Path $publishDir "plugins\qingshu.plugin.usbtool"
+    if (Test-Path $excludedPluginDir) {
+        Remove-Item -LiteralPath $excludedPluginDir -Recurse -Force
+    }
 }
 function Find-PluginDll([string]$binRoot, [string]$sdk) {
     Get-ChildItem $binRoot -Recurse -Filter "$sdk.dll" -ErrorAction SilentlyContinue |
@@ -487,7 +492,7 @@ OID = 1.3.6.1.5.5.7.3.3
   </Resources>
   <Applications>
     <Application Id="App" Executable="QingShu.Toolkit.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="青枢工具箱" Description="学校系统工具箱" BackgroundColor="transparent"
+      <uap:VisualElements DisplayName="青枢工具箱" Description="学校专用系统工具箱：网络诊断、磁盘清理、性能优化与功耗管理" BackgroundColor="transparent"
                           Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" />
     </Application>
   </Applications>

@@ -549,10 +549,40 @@ public sealed class DiskCleanupView : UserControl
     private static Style MakeListItemStyle()
     {
         var s = new Style(typeof(ListViewItem));
-        s.Setters.Add(new Setter(FrameworkElement.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        s.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
         s.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0, 2, 0, 2)));
         s.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 0d));
         return s;
+    }
+
+    private Border MakeCard(double padding, double spacing)
+    {
+        var card = new Border { Padding = new Thickness(padding) };
+        var style = TryStyle("CardStyle");
+        if (style != null)
+        {
+            card.Style = style;
+        }
+        else
+        {
+            card.CornerRadius = new CornerRadius(12);
+            card.Background = TryBrush("CardBackgroundBrush")
+                ?? new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            card.BorderBrush = TryBrush("DividerStrokeBrush")
+                ?? new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            card.BorderThickness = new Thickness(1);
+        }
+
+        card.Child = new StackPanel { Spacing = spacing };
+        return card;
+    }
+
+    private static TextBlock Caption(Brush foreground)
+    {
+        var textBlock = new TextBlock();
+        ApplyStyle(textBlock, "CaptionTextBlock");
+        textBlock.Foreground = foreground;
+        return textBlock;
     }
 
     private static Button AccentTextButton(Symbol symbol, string text, System.Windows.Input.ICommand command)

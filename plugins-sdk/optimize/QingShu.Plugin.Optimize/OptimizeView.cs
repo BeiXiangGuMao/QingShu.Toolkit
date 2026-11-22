@@ -191,6 +191,14 @@ public sealed class OptimizeView : UserControl
         return card;
     }
 
+    private static TextBlock Caption(Brush foreground)
+    {
+        var textBlock = new TextBlock();
+        ApplyStyle(textBlock, "CaptionTextBlock");
+        textBlock.Foreground = foreground;
+        return textBlock;
+    }
+
     private static TextBlock CaptionText(string text)
     {
         var t = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
@@ -215,7 +223,7 @@ public sealed class OptimizeView : UserControl
     private static Style MakeListItemStyle(string pad)
     {
         var s = new Style(typeof(ListViewItem));
-        s.Setters.Add(new Setter(FrameworkElement.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        s.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
         s.Setters.Add(new Setter(Control.PaddingProperty, ParsePad(pad)));
         s.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 0d));
         return s;
