@@ -27,6 +27,15 @@
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <!--
+      PRI 生成整链关闭（2026-11 Windows 实测 MSB4062 根治）：dotnet CLI 构建时
+      MrtCore.PriGen.targets 的 AddPriPayloadFilesToCopyToOutputDirectoryItems 会在引用闭包
+      出现 .pri 时调 ExpandPriContent，其程序集 Microsoft.Build.Packaging.Pri.Tasks.dll 只随
+      Visual Studio 安装，dotnet SDK 目录没有 → MSB4062（首次编译成功即触发该链，gala 主控端
+      实测踩中）。本插件纯代码构建（零 resw / 零 XAML / 零 PRIResource）本就无需 .pri，且
+      make_release 装载只取 dll + plugin.json，关闭 PRI 不改变发布产物；八个插件统一口径防复发。
+    -->
+    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
+    <!--
       MVVM Toolkit 风格提示关闭：与宿主同口径（[ObservableProperty] 保持经典字段式写法，
       C# 13 分部属性写法在部分 VS/Roslyn 组合下生成器不产出实现导致全量报错，固定字段式）。
     -->

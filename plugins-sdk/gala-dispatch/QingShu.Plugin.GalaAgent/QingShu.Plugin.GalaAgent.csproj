@@ -19,6 +19,15 @@
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <!--
+      PRI 生成整链关闭（2026-11 Windows 实测 MSB4062 根治）：dotnet CLI 构建时
+      MrtCore.PriGen.targets 的 AddPriPayloadFilesToCopyToOutputDirectoryItems 会在引用闭包
+      出现 .pri 时调 ExpandPriContent，其程序集 Microsoft.Build.Packaging.Pri.Tasks.dll 只随
+      Visual Studio 安装，dotnet SDK 目录没有 → MSB4062（首次编译成功即触发该链，gala 主控端
+      实测踩中）。本插件纯代码构建（零 resw / 零 XAML / 零 PRIResource）本就无需 .pri，且
+      make_release 装载只取 dll + plugin.json，关闭 PRI 不改变发布产物；八个插件统一口径防复发。
+    -->
+    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
+    <!--
       宿主程序集目录（含 QingShu.Toolkit.exe 的发布目录）。探测顺序：
       ① -p:QingshuHome=...（命令行传参最可靠，不受 MSBuild 节点复用缓存旧环境的影响）
       ② 环境变量 QINGSHU_HOME（可能被复用的构建节点按旧环境求值，设了不生效时改用 ①）
