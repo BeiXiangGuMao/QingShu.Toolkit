@@ -157,6 +157,9 @@
 82. 宿主磁盘清理回退页完成态汇总与插件版同源（cleanup_scan_sim.py 68/68 同源断言驱动）：微信/QQ 完成态补「（N 个账号）· 已按账号分组」、大文件完成态补「合计 X」——此前插件版有、宿主内置回退页缺失（0b95a22 汇总增强只落了插件侧，2fbdd90 只同步了徽章）；验收口径：卸载磁盘清理插件回退内置页，扫描完成文案与插件页逐字一致
 83. 僵尸配置项移除（settings_sim.py 41/41 全库引用扫描实锤）：AppSettings.CleanupExcludeDirs 与 FirstRunDone 自 v1.0.0 起零引用（宿主/插件/文档均无消费点），已删除；旧机器 config.json 中的对应键由 System.Text.Json 未知字段忽略语义自然兼容（roundtrip 41 项实测：中文明文落盘、键大小写不敏感、未知字段容忍、任一字段类型不符整份回退默认、.tmp 原子写崩溃不留半截配置）；PopupRule 三组模式为注释明示保留项，不在清除范围
 84. 全功能端到端验证矩阵（scripts/e2e_all.py 一键全量）：12 项静态门禁 + 16 套行为/逻辑仿真（新增插件 68 / 设置 41 / 清理 68 / 优化 35 / 仪表盘 27 / Gala 115 六套，合既有 10 套）合计 831 检，28 个功能维度全 PASS；Gala 套件含真实 socketpair 协议闭环（hello→welcome→metrics→switch→ack）与生产拓扑（飞线二中 49 节点）Normalize/Validate/MatchRoute 实测；沙箱无 dotnet/Windows，编译与真机运行仍按各功能既有 Windows 实测条目执行
+85. 发布包默认插件随包自动构建（make_release.ps1 §2.5）：bin 下无产物的插件工程自动 dotnet build（显式 -p:QingshuHome= 指向宿主发布目录，插件 csproj 五级探测兜底），构建失败即中止发布（宁可不发不发残缺包）；-SkipPlugins 显式发布纯宿主包。Windows 验收：删掉任一插件 bin 后跑 make_release.ps1 -PackOnly，观察「自动 dotnet build」提示且包内 plugins\ 含该插件
+86. plugin.json 清单装载：从插件工程根 plugin.json.template 装载落为 plugin.json（旧口径从 bin 找 template 永远落空——插件工程未设 CopyToOutputDirectory，装载出的插件缺清单宿主无法加载）；仅缺失时补建，用户已改配置与 plugin.sig 不被重置（与 build_all_plugins.ps1 装载语义一致）。Windows 验收：包内每个 plugins\<id>\ 必有 plugin.json，插件页七插件全部加载
+87. 正式版剔除实验性插件：宿主 csproj 定义 STABLE_BUILD 时（正式版构建），qingshu.plugin.usbtool 不入包（与 AppBuildProfile.UsbToolEnabled=false 及宿主三重门禁同口径），日志打印剔除提示；预览版（main，无 STABLE_BUILD）七插件全量入包。Windows 验收：stable 分支打包后包内 plugins\ 无 qingshu.plugin.usbtool 目录且含其余 6 个
 
 ## C. 已知边界（设计使然，非缺陷）
 

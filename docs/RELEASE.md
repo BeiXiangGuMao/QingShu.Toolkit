@@ -100,9 +100,11 @@ Get-FileHash $zip -Algorithm SHA256   # 手动复核（与 .sha256 sidecar 应�
 ### 2.6 七插件一键构建验证与装载（`scripts/build_all_plugins.ps1`）
 
 harness 化后发布包默认自带七个插件（gala 主控/被控 + 弹窗拦截 / U盘工具 /
-磁盘清理 / 系统优化 / 网络诊断）。`make_release.ps1` 打包时自动装载——但它要求
-插件**先已构建**；本脚本是插件侧的独立验证入口，Windows 侧一条命令完成全部七插件
-构建核验（先编译验证）：
+磁盘清理 / 系统优化 / 网络诊断）。`make_release.ps1` 打包时自动装载——bin 下无
+构建产物的插件工程已可自动 `dotnet build`（2026-11 起，发布流程一条命令闭环；
+构建失败即中止发布，`-SkipPlugins` 可出纯宿主包）；本脚本仍是插件侧的独立
+验证与排查入口，Windows 侧一条命令完成全部七插件构建核验（先编译验证，
+收全错误清单再一起修）：
 
 ```powershell
 # 只构建验证（宿主已发布过一次即可，脚本自动探测 bin\publish\win-x64 等四级路径）
@@ -214,6 +216,14 @@ git checkout stable
 # csproj <Version> 已是无后缀正式号（如 1.3.0）
 .\scripts\make_release.ps1    # 版本无 "-" 后缀 → 自动按正式发布（非预发布，无需手动 -Stable）
 ```
+
+**默认插件随包自动构建与剔除**（2026-11）：`make_release.ps1` 装载默认插件时，
+bin 下无构建产物的插件工程会自动 `dotnet build`（显式传 `-p:QingshuHome=` 指向宿主
+发布目录，构建失败即中止发布），`plugin.json` 从插件工程根的 `plugin.json.template`
+装载——发布流程一条命令闭环，无需先跑 §2.6 的 `build_all_plugins.ps1`（后者仍是
+插件侧独立验证/排查入口）。正式版构建（宿主 csproj 定义 `STABLE_BUILD`）自动剔除
+实验性插件 `qingshu.plugin.usbtool` 不入包——与宿主导航隐藏/自动加载跳过/手动加载
+拒绝的三重门禁口径一致；需要发布纯宿主包时加 `-SkipPlugins`。
 
 稳定版通道（默认档「稳定版（正式发布，推荐）」）用户即可收到；Beta 通道用户同样可见，
 同号互推关系与注意事项见 5.3。
