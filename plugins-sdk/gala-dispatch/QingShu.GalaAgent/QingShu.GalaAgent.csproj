@@ -18,10 +18,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 共享核心（与插件工程同一份源码）：Agent 逻辑 + 拓扑模型/协议帧 + 压力模型（优先级名称等） -->
+    <!-- 共享核心（与插件工程同一份源码）：Agent 逻辑 + 拓扑模型/协议帧 + 压力模型（优先级名称等）
+         + GalaEventLog（事件留痕）+ GalaFile（原子写/备份回退）+ GalaHook（分配变更钩子）——缺链接即 CS0103 -->
     <Compile Include="..\core\Gala\GalaAgent.cs" />
     <Compile Include="..\core\Gala\GalaModels.cs" />
     <Compile Include="..\core\Gala\GalaPressure.cs" />
+    <Compile Include="..\core\Gala\GalaEventLog.cs" />
+    <Compile Include="..\core\Gala\GalaFile.cs" />
+    <Compile Include="..\core\Gala\GalaHook.cs" />
   </ItemGroup>
 
 </Project>

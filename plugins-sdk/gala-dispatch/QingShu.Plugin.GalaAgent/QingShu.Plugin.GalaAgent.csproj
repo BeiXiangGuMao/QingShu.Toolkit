@@ -4,7 +4,7 @@
     <!--
       元旦晚会智能分流 · 服务端插件（被控终端用，常驻上报与执行指令）。
       与宿主完全一致的 TFM / SDK 投影 / MinVersion，保证跨 ALC 类型同一。
-      Gala 核心（Agent 逻辑 + 模型/协议帧 + 压力模型）以 Compile 链接 ../core/Gala 共享源码（单一事实源）。
+      Gala 核心（Agent 逻辑 + 模型/协议帧 + 压力模型 + 留痕/原子写/钩子底座）以 Compile 链接 ../core/Gala 共享源码（单一事实源）。
     -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
@@ -45,10 +45,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 共享核心（与独立主控端/服务端程序同一份源码）：Agent 逻辑 + 拓扑模型/协议帧 + 压力模型（优先级名称等） -->
+    <!-- 共享核心（与独立主控端/服务端程序同一份源码）：Agent 逻辑 + 拓扑模型/协议帧 + 压力模型（优先级名称等）
+         + GalaEventLog（事件留痕）+ GalaFile（原子写/备份回退）+ GalaHook（分配变更钩子）——缺链接即 CS0103 -->
     <Compile Include="..\core\Gala\GalaAgent.cs" />
     <Compile Include="..\core\Gala\GalaModels.cs" />
     <Compile Include="..\core\Gala\GalaPressure.cs" />
+    <Compile Include="..\core\Gala\GalaEventLog.cs" />
+    <Compile Include="..\core\Gala\GalaFile.cs" />
+    <Compile Include="..\core\Gala\GalaHook.cs" />
   </ItemGroup>
 
   <!-- 宿主程序集缺失时直接报人话错误，不再吞成二十条 CS0246/CS0234 级联 -->

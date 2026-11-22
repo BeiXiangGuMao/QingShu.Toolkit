@@ -119,7 +119,7 @@ public sealed class GalaTopologyConfig
                 warns.Add($"节点 {n.Id} 的 IP 不是合法地址：{n.Ip}");
             foreach (var gw in n.GatewayIps.Where(gw => !IPAddress.TryParse(gw, out _)))
                 warns.Add($"节点 {n.Id} 的网关地址不是合法 IP：{gw}");
-            foreach (var seg in n.Segments.Where(seg => !seg.EndsWith('.', StringComparison.Ordinal)))
+            foreach (var seg in n.Segments.Where(seg => !seg.EndsWith(".", StringComparison.Ordinal)))
                 warns.Add($"节点 {n.Id} 的终端段前缀建议以点结尾（八点界，防 10.1 误吞 10.10.x）：{seg}");
             if ((n.Type == "router" || n.Type == "server") && n.Ip.Length == 0 && n.GatewayIps.Count == 0)
                 warns.Add($"节点 {n.Id}（{n.Type}）未填 IP，不参与探测与压力评估");
@@ -429,7 +429,9 @@ public static class GalaFrame
         int off = 0;
         while (off < frame.Length)
         {
-            int n = await stream.WriteAsync(frame.AsMemory(off, frame.Length - off), ct).ConfigureAwait(false);
+            // WriteAsync 收 ReadOnlyMemory 的重载返回非泛型 ValueTask（await 结果为 void），
+            // 取返回字节数必须用 (byte[], int, int, CancellationToken) 重载（Task<int>）——CS0029
+            int n = await stream.WriteAsync(frame, off, frame.Length - off, ct).ConfigureAwait(false);
             if (n <= 0) throw new IOException("流写入零字节（连接已失效）");
             off += n;
         }

@@ -82,7 +82,9 @@ public sealed class GalaMasterPlugin : IQToolkitPlugin, IQToolkitUiProvider
             {
                 var master = EnsureMaster();
                 if (!master.IsRunning) return Task.FromResult<string?>("主控端未在运行。");
-                _ = Task.Run(async () =>
+                // 注意：本 lambda 的参数名 _ 是 Func<CancellationToken,...> 的取消令牌，体内不能用
+                // _ = Task.Run(...) 丢弃赋值（会命中参数 → Task 赋给 CancellationToken CS0029），直接调用即可
+                Task.Run(async () =>
                 {
                     try { await master.StopAsync().ConfigureAwait(false); } catch { }
                 });

@@ -355,7 +355,9 @@ public sealed class GalaMaster
         await SendAsync(s, GalaFrame.Encode(welcome), CancellationToken.None).ConfigureAwait(false);
     }
 
-    private static async Task SendAsync(ClientSession s, byte[] frame, CancellationToken ct)
+    // 实例方法：发送失败时需回调实例的 MarkSessionBroken（静态上下文无法触达 CS0120）；
+    // 全部调用方（SendWelcomeAsync/DispatchPassAsync/各 Try* 指令）均为实例方法，改实例零波及
+    private async Task SendAsync(ClientSession s, byte[] frame, CancellationToken ct)
     {
         var stream = s.Stream;
         if (stream == null || !s.Alive) throw new InvalidOperationException("会话已断开");
@@ -449,7 +451,7 @@ public sealed class GalaMaster
         var probes = await Task.WhenAll(targets.Select(ip => ProbeOneIpAsync(ip, node.ProbePort, ct))).ConfigureAwait(false);
         bool alive = probes.Any(p => p.Alive);
         double rtt = probes.Where(p => p.Alive && p.RttMs >= 0).Select(p => p.RttMs).DefaultIfEmpty(-1).Min();
-        return (node, alive, rtt, probes.Count(p => p.Alive), probes.Count);
+        return (node, alive, rtt, probes.Count(p => p.Alive), probes.Length); // 数组无 Count 属性，裸 Count 命中的是 LINQ 扩展方法组（CS0428）
     }
 
     /// <summary>
@@ -549,7 +551,8 @@ public sealed class GalaMaster
         try
         {
             using var client = new TcpClient();
-            await client.ConnectAsync(ip, port, ct).WaitAsync(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
+            // 带 CancellationToken 的 ConnectAsync 重载返回 ValueTask（无 WaitAsync），先 AsTask 再挂超时（CS1061）
+            await client.ConnectAsync(ip, port, ct).AsTask().WaitAsync(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
             return client.Connected;
         }
         catch { return false; }

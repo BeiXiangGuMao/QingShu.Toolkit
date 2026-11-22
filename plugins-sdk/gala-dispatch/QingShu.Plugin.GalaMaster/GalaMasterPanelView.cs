@@ -143,7 +143,8 @@ public sealed class GalaMasterPanelView : UserControl
             Margin = new Thickness(0, 0, 8, 0)
         };
 
-        _clientList = new ListView { Height = 170, SelectionMode = SelectionMode.Single };
+        // WinUI 3 的 ListView.SelectionMode 类型是 ListViewSelectionMode（SelectionMode 是另一个不兼容枚举，CS0266）
+        _clientList = new ListView { Height = 170, SelectionMode = ListViewSelectionMode.Single };
         _clientList.SelectionChanged += (_, _) =>
         {
             try
@@ -740,7 +741,8 @@ public sealed class GalaMasterPanelView : UserControl
         // switch 标签画在节点上方：下方空间留给动态挂载的真实终端小点
         Canvas.SetTop(label, n.Type == "switch" ? y - size / 2 - 16 : y + size / 2 + 2);
         label.MinWidth = 120;
-        label.TextAlignment = Microsoft.UI.Text.TextAlignment.Center;
+        // TextBlock.TextAlignment 的类型是 Microsoft.UI.Xaml.TextAlignment（UI.Text 里只有 FontWeights，无 TextAlignment，CS0234）
+        label.TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center;
     }
 
     // ================= 小工具 =================
@@ -805,7 +807,7 @@ public sealed class GalaMasterPanelView : UserControl
 /// <summary>Grid.Children.Add 扩展（带行/列定位），减少样板。</summary>
 internal static class GalaMasterPanelExtensions
 {
-    public static void Add(this UIElementCollection children, UIElement element, int row, int col)
+    public static void Add(this UIElementCollection children, FrameworkElement element, int row, int col)
     {
         Grid.SetRow(element, row);
         Grid.SetColumn(element, col);
