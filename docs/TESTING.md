@@ -166,6 +166,7 @@
 
 91. WinUI 插件关闭 PRI 生成还需同时设置 EnableCoreMrtTooling=false：AppxGeneratePriEnabled=false 仅关闭 PRI 生成目标，MrtCore.PriGen.targets 仍会在 CopyLocalFilesOutputGroup 调用 Visual Studio 专属 RemovePayloadDuplicates（dotnet SDK 缺 Microsoft.Build.AppxPackage.dll）并报 MSB4062。七个纯代码 WinUI 插件统一关闭 Core MRT tooling；Windows 验收：不传额外 MSBuild 属性，GalaMaster dotnet build 成功。
 92. 正式版发布清理实验插件残留：stable 打包前删除 publish\plugins\qingshu.plugin.usbtool，避免此前插件安装到发布目录的旧文件绕过正式版插件清单过滤；Windows 验收：stable ZIP 与 MSIX 均含其余 6 个默认插件，不含 USB Tool；main ZIP 含 7 个插件。
+93. 插件切换三处原生崩溃面根治（用户 Windows 实测「切换插件闪退」，闪退无日志 = 原生 stowed-exception 0xc000027b 类，托管 UnhandledException 捕获不到，与 App e.Handled=true 吞托管异常的行为互证）：①PluginNavHostPage.OnNavigatedFrom 不再 Content=null——Frame 换页过渡窗口内新旧内容共存，此刻强拆视觉树是 WinUI 3 原生布局竞态崩溃面（E_INVALIDARG → fail-fast），本页 transient + 宿主导航后即清 BackStack，旧页整体失去引用无需手动断链；②MainWindow 导航在途守卫（_navInFlight + NavigationCompleted/Failed 复位 + 排队重放丢回下一条 UI 消息）：过渡动画未完成时二次 Frame.Navigate 是同族原生竞态面，快速连点导航项或插件加载/卸载触发的 SyncPluginDelegation 撞上用户导航均会踩中；NavigateToPluginNav 同时补同 tag 短路（同页重入不再重复建视图）与挂载失败回退（try/catch 记日志回插件管理页）；③PluginManager 卸载策略按 UiCreated 分流：创建过导航页/面板视图的插件软卸载（断引用移出运行集，ALC 驻留待 GC）——WinUI 3 不支持回收承载过 XAML 对象的 collectible ALC，Alc.Unload+强 GC 后原生残留引用随时 AV；未创建过 UI 的插件维持硬卸载完全回收。Windows 验收：加载 3 个以上插件后在插件导航页/内置页/插件管理页之间连续快速切换 30 秒无闪退；卸载正在显示过导航页的插件后立即重新加载并再次进入，无闪退；应用日志出现「加载上下文驻留防原生崩溃」字样（UI 插件卸载路径）
 
 ## C. 已知边界（设计使然，非缺陷）
 

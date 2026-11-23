@@ -32,6 +32,13 @@ public sealed partial class MainWindow : Window
     // 当前显示的插件导航页 tag（PluginNavHostPage 无内置页型映射，回退/选中导航都要用到）
     private string? _currentPluginNavTag;
     private bool _closed;
+    // Frame 导航在途标志（过渡窗口内禁止叠加导航）：WinUI 3 Frame 在过渡动画未完成时
+    // 二次 Navigate 存在原生竞态崩溃面（用户快速连点导航项 / 插件加载卸载触发的
+    // SyncPluginDelegation 撞上用户导航均会踩中，表现即「切换插件闪退」）；
+    // 在途期间的新请求只记目标，NavigationCompleted/Failed 后回 UI 线程重放一次
+    private bool _navInFlight;
+    private Type? _queuedNavPage;   // 在途期间排队的目标内置页（与 _queuedNavTag 二选一，只保最新）
+    private string? _queuedNavTag;  // 在途期间排队的目标插件 navTag
 
     private static readonly Dictionary<string, Type> PageMap = new()
     {
@@ -86,6 +93,10 @@ public sealed partial class MainWindow : Window
             PopupCountText.Text = $"拦截 {count}");
         PopupCountText.Text = $"拦截 {_popup.BlockedCount}";
         _update.StatusChanged += OnUpdateStatus;
+
+        // 导航在途标志复位 + 排队目标重放（两条路径都必须复位，防导航失败后标志永久卡死）
+        ContentFrame.NavigationCompleted += (_, _) => SettleFrameNav();
+        ContentFrame.NavigationFailed += (_, _) => SettleFrameNav();
 
         // 焦点状态维护：失焦/最小化时仪表盘暂停 3s 采样（恢复后下一拍自动继续），降常驻 CPU/IO
         Activated += (_, e) => App.IsWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;
@@ -186,6 +197,14 @@ public sealed partial class MainWindow : Window
 
     public void NavigateToPage(Type pageType)
     {
+        // 导航在途：不叠加 Navigate，只记最新目标，Frame 事件回调里重放
+        if (_navInFlight)
+        {
+            _queuedNavPage = pageType;
+            _queuedNavTag = null;
+            return;
+        }
+
         // 内置页被外移插件接管（manifest.navTag 对上）：内容改挂插件视图，导航项原位不动。
         // 该检查在「同页短路」之前——当前正显示内置页时接管发生，再次导航也要进入插件视图
         var tag = BuiltInPluginCatalog.TagOfPage(pageType);
@@ -196,11 +215,46 @@ public sealed partial class MainWindow : Window
         }
 
         if (ContentFrame.CurrentSourcePageType == pageType) return;
-        ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
-        ClearBackStack();
-        _navSyncing = true;
-        SelectNavItemByPage(pageType);
-        _navSyncing = false;
+        NavigateBuiltinCore(pageType);
+    }
+
+    /// <summary>Frame 导航落地（完成或失败）：复位在途标志，并重放在途期间排队的最新目标。</summary>
+    private void SettleFrameNav()
+    {
+        _navInFlight = false;
+        (Type? page, string? tag) = (_queuedNavPage, _queuedNavTag);
+        _queuedNavPage = null;
+        _queuedNavTag = null;
+        if (page == null && tag == null) return;
+        // 重放丢回下一条 UI 消息：让刚完成的过渡动画先收尾，避免在 Frame 完成回调内
+        // 再入导航（TransitionDispatcher 未排空时二次 Navigate 同样是竞态面）
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_closed) return;
+            if (tag != null) NavigateToPluginNav(tag);
+            else if (page != null) NavigateToPage(page);
+        });
+    }
+
+    /// <summary>内置页导航核心（在途标志置位 + 导航 + 清栈 + 选中项同步；异常不外抛）。</summary>
+    private void NavigateBuiltinCore(Type pageType)
+    {
+        _navInFlight = true;
+        try
+        {
+            ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            ClearBackStack();
+            _navSyncing = true;
+            SelectNavItemByPage(pageType);
+            _navSyncing = false;
+        }
+        catch (Exception ex)
+        {
+            // 导航异常（Frame 状态异常等）：复位标志并留痕，Unloaded 兜底只记日志不可依赖
+            _navInFlight = false;
+            App.Services.GetRequiredService<Services.Logging.ILogService>()
+                .App(Services.Logging.LogLevel.Error, "nav", $"内置页导航失败 {pageType.Name}：{ex.Message}");
+        }
     }
 
     /// <summary>
@@ -209,6 +263,20 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void NavigateToPluginNav(string tag)
     {
+        // 导航在途：不叠加 Navigate，只记最新目标（与内置页同一守卫）
+        if (_navInFlight)
+        {
+            _queuedNavTag = tag;
+            _queuedNavPage = null;
+            return;
+        }
+
+        // 同一插件页已在显示中：不重复建视图/重复导航（防连点重入 + RuntimesChanged 竞态下
+        // 的重复挂载——同一插件视图短时间挂两份也是原生布局压力面）
+        if (ContentFrame.CurrentSourcePageType == typeof(PluginNavHostPage)
+            && string.Equals(_currentPluginNavTag, tag, StringComparison.Ordinal))
+            return;
+
         var view = _plugins.CreateNavViewFor(tag);
         if (view == null)
         {
@@ -216,20 +284,30 @@ public sealed partial class MainWindow : Window
             var builtin = BuiltInPluginCatalog.All.FirstOrDefault(b => b.NavTag == tag);
             if (builtin == null) return;
             if (ContentFrame.CurrentSourcePageType == builtin.PageType) return;
-            ContentFrame.Navigate(builtin.PageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
-            ClearBackStack();
-            _navSyncing = true;
-            SelectNavItem(tag);
-            _navSyncing = false;
+            NavigateBuiltinCore(builtin.PageType); // SelectNavItemByPage 同 tag 解析，语义不变
             return;
         }
 
         _currentPluginNavTag = tag;
-        ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
-        ClearBackStack();
-        _navSyncing = true;
-        SelectNavItem(tag);
-        _navSyncing = false;
+        _navInFlight = true;
+        try
+        {
+            ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            ClearBackStack();
+            _navSyncing = true;
+            SelectNavItem(tag);
+            _navSyncing = false;
+        }
+        catch (Exception ex)
+        {
+            // 插件视图挂载失败（原生层拒绝等）：不复用本插件页本次接管，回退插件管理页
+            // （不回退插件接管判断——插件仍在运行，下一轮导航会重新尝试挂载）
+            _navInFlight = false;
+            _currentPluginNavTag = null;
+            App.Services.GetRequiredService<Services.Logging.ILogService>()
+                .App(Services.Logging.LogLevel.Error, "plugin", $"插件导航页挂载失败 tag={tag}：{ex.Message}");
+            NavigateToPage(typeof(PluginsPage));
+        }
     }
 
     /// <summary>
