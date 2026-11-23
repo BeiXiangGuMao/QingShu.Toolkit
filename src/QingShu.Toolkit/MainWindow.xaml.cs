@@ -35,7 +35,8 @@ public sealed partial class MainWindow : Window
     // Frame 导航在途标志（过渡窗口内禁止叠加导航）：WinUI 3 Frame 在过渡动画未完成时
     // 二次 Navigate 存在原生竞态崩溃面（用户快速连点导航项 / 插件加载卸载触发的
     // SyncPluginDelegation 撞上用户导航均会踩中，表现即「切换插件闪退」）；
-    // 在途期间的新请求只记目标，NavigationCompleted/Failed 后回 UI 线程重放一次
+    // 在途期间的新请求只记目标，Navigated/NavigationFailed/NavigationStopped 后回 UI 线程重放一次
+    // （注意：WinUI 3 Frame 没有 NavigationCompleted 事件——该名属于 WebView2，误用即 CS1061）
     private bool _navInFlight;
     private Type? _queuedNavPage;   // 在途期间排队的目标内置页（与 _queuedNavTag 二选一，只保最新）
     private string? _queuedNavTag;  // 在途期间排队的目标插件 navTag
@@ -94,9 +95,12 @@ public sealed partial class MainWindow : Window
         PopupCountText.Text = $"拦截 {_popup.BlockedCount}";
         _update.StatusChanged += OnUpdateStatus;
 
-        // 导航在途标志复位 + 排队目标重放（两条路径都必须复位，防导航失败后标志永久卡死）
-        ContentFrame.NavigationCompleted += (_, _) => SettleFrameNav();
+        // 导航在途标志复位 + 排队目标重放（三条路径都必须复位，防导航失败/被中断后标志永久卡死）。
+        // Frame 全部四个事件：Navigating/Navigated/NavigationStopped/NavigationFailed（Learn 文档口径），
+        // 没有 NavigationCompleted（WebView2 专用）——落地、失败、被中断三个出口同族复位
+        ContentFrame.Navigated += (_, _) => SettleFrameNav();
         ContentFrame.NavigationFailed += (_, _) => SettleFrameNav();
+        ContentFrame.NavigationStopped += (_, _) => SettleFrameNav();
 
         // 焦点状态维护：失焦/最小化时仪表盘暂停 3s 采样（恢复后下一拍自动继续），降常驻 CPU/IO
         Activated += (_, e) => App.IsWindowActive = e.WindowActivationState != WindowActivationState.Deactivated;
