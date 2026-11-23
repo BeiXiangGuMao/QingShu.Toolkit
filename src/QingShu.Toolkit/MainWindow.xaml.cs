@@ -33,19 +33,14 @@ public sealed partial class MainWindow : Window
     // 当前显示的插件导航页 tag（PluginNavHostPage 无内置页型映射，回退/选中导航都要用到）
     private string? _currentPluginNavTag;
     private bool _closed;
-    // Frame 导航在途标志（过渡窗口内禁止叠加导航）：WinUI 3 Frame 在过渡动画未完成时
+    // Frame 导航在途标志（导航收尾前禁止叠加导航）：WinUI 3 Frame 过渡/收尾未完成时
     // 二次 Navigate 存在原生竞态崩溃面（用户快速连点导航项 / 插件加载卸载触发的
     // SyncPluginDelegation 撞上用户导航均会踩中，表现即「切换插件闪退」）；
     // 在途期间的新请求只记目标，Navigated/NavigationFailed/NavigationStopped 后回 UI 线程重放一次
-    // （注意：WinUI 3 Frame 没有 NavigationCompleted 事件——该名属于 WebView2，误用即 CS1061）
+    // （注意：WinUI 3 Frame 没有 NavigationCompleted 事件——该名属于 WebView2，误用即 CS1061）。
     private bool _navInFlight;
     private Type? _queuedNavPage;   // 在途期间排队的目标内置页（与 _queuedNavTag 二选一，只保最新）
     private string? _queuedNavTag;  // 在途期间排队的目标插件 navTag
-    // 插件导航视图缓存（navTag → 视图实例）：插件视图是纯代码构建的重资产（数百个元素 + VM + 服务，
-    // 单视图构建代码 500~1000 行），此前每次切换都全新重建——UI 线程建树+布局是「切换卡」的主因，
-    // 且每次过渡都折腾大批 XAML 节点（原生布局竞态的持续暴露面）。缓存后切换 = 重挂已构建树；
-    // 卸载/重载经 SyncPluginDelegation 统一失效，绝不残留旧实例视图
-    private readonly Dictionary<string, FrameworkElement> _pluginNavViews = new();
 
     private static readonly Dictionary<string, Type> PageMap = new()
     {
@@ -103,8 +98,15 @@ public sealed partial class MainWindow : Window
 
         // 导航在途标志复位 + 排队目标重放（三条路径都必须复位，防导航失败/被中断后标志永久卡死）。
         // Frame 全部四个事件：Navigating/Navigated/NavigationStopped/NavigationFailed（Learn 文档口径），
-        // 没有 NavigationCompleted（WebView2 专用）——落地、失败、被中断三个出口同族复位
-        ContentFrame.Navigated += (_, _) => SettleFrameNav();
+        // 没有 NavigationCompleted（WebView2 专用）——落地、失败、被中断三个出口同族复位。
+        // 清栈挪出 Navigate 调用栈：BackStack 是 Frame 导航日志（journal），Navigate 返回点仍在
+        // 导航收尾窗口内，同步清栈是与导航机制同窗突变的嫌疑面；延后到下一条 UI 消息执行，
+        // journal 突变面归零（内存回收语义不变，仅执行时机后移一条消息）
+        ContentFrame.Navigated += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() => { if (!_closed) ClearBackStack(); });
+            SettleFrameNav();
+        };
         ContentFrame.NavigationFailed += (_, _) => SettleFrameNav();
         ContentFrame.NavigationStopped += (_, _) => SettleFrameNav();
 
@@ -196,7 +198,8 @@ public sealed partial class MainWindow : Window
     /// 清空 Frame 返回栈：本壳无返回语义（NavView 无返回按钮，也无 BackRequested 处理），
     /// 而 Frame.Navigate 每次都会把当前页压入 BackStack 且条目永不消费——所有 VM 均为
     /// Transient，旧页整棵控件树（含其 VM 与扫描结果集合）被历史条目持有无法 GC，
-    /// 挨个切换模块内存线性上涨（用户实测实锤）。每次导航后清栈，旧页立即失去引用可回收；
+    /// 挨个切换模块内存线性上涨（用户实测实锤）。每次导航后清栈（在 Navigated 后的下一条
+    /// UI 消息执行，绝不与 Navigate 同步窗口重叠，见构造函数内注释），旧页立即失去引用可回收；
     /// 旧页 Unloaded→Vm.Dispose 仍在卸载时照常执行，不受影响。
     /// </summary>
     private void ClearBackStack()
@@ -236,8 +239,8 @@ public sealed partial class MainWindow : Window
         _queuedNavPage = null;
         _queuedNavTag = null;
         if (page == null && tag == null) return;
-        // 重放丢回下一条 UI 消息：让刚完成的过渡动画先收尾，避免在 Frame 完成回调内
-        // 再入导航（TransitionDispatcher 未排空时二次 Navigate 同样是竞态面）
+        // 重放丢回下一条 UI 消息：避免在 Frame 完成回调内再入导航（过渡动画虽已全程抑制，
+        // Navigate 返回点的导航收尾窗口仍存在，窗口内二次 Navigate 同样是竞态面）
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_closed) return;
@@ -253,9 +256,12 @@ public sealed partial class MainWindow : Window
         try
         {
             var mountSw = Stopwatch.StartNew();
-            ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            // 全程抑制导航过渡（Learn 口径 SuppressNavigationTransitionInfo：指定导航期间不播放动画）：
+            // 进场过渡要对新旧两棵数百元素树挂/拆 composition 动画——既是切换卡顿主源，也是过渡
+            // 窗口内布局/拆树竞态（原生 fail-fast 0xc000027b 家族，切换期 visual teardown 同症状
+            // 见 Files #19110）的持续暴露面；抑制后过渡窗口塌缩为零且切换即时响应
+            ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
             mountSw.Stop();
-            ClearBackStack();
             _navSyncing = true;
             SelectNavItemByPage(pageType);
             _navSyncing = false;
@@ -294,19 +300,16 @@ public sealed partial class MainWindow : Window
             && string.Equals(_currentPluginNavTag, tag, StringComparison.Ordinal))
             return;
 
-        // 视图获取：缓存复用优先（首次新建并计时）——每次切换全新重建 500~1000 行的纯代码
-        // UI 树 + VM + 服务是「切换卡」主因；缓存实例跨切换复用，Unloaded/Loaded 会自然停走
-        // 各视图内部定时器（如弹窗守护 1s 刷新），状态跨访问保留
+        // 视图获取：每次导航全新重建（transient 契约）。第 95 条曾按 navTag 缓存视图实例，
+        // 2026-11 复盘回退：①与插件视图「Unloaded=VM.Dispose（取消在途扫描/删除等破坏性操作）」
+        // 的 transient 安全契约直接冲突——磁盘清理/U盘工具/网络诊断三视图 Unloaded 即收尾，
+        // 缓存复用=回访拿到已 Dispose 的 VM，页面报废；②500~1000 行纯代码树的重挂载
+        // measure/arrange 成本与全新重建相当（缓存后实测仍卡）；真正的卡顿主源是进场过渡动画
+        // （已在两处 Navigate 抑制）与 UI 线程同步日志 IO（LogService 已改后台写线程）
         var log = App.Services.GetRequiredService<Services.Logging.ILogService>();
         var buildSw = Stopwatch.StartNew();
-        bool cacheHit = _pluginNavViews.TryGetValue(tag, out var view);
-        if (!cacheHit)
-        {
-            view = _plugins.CreateNavViewFor(tag);
-            buildSw.Stop();
-            if (view != null) _pluginNavViews[tag] = view; // 创建成功才缓存，失败下次重试
-        }
-        else buildSw.Stop();
+        var view = _plugins.CreateNavViewFor(tag);
+        buildSw.Stop();
         if (view == null)
         {
             _popup.ResumeRuntime(); // 视图拿不到 = 内置实现继续服役，运行时先恢复
@@ -322,24 +325,22 @@ public sealed partial class MainWindow : Window
         try
         {
             var mountSw = Stopwatch.StartNew();
-            ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            // 同内置页：全程抑制导航过渡（注释见 NavigateBuiltinCore）
+            ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
             mountSw.Stop();
-            ClearBackStack();
             _navSyncing = true;
             SelectNavItem(tag);
             _navSyncing = false;
             // 切换耗时留痕：无 VS 诊断工具（打包版探查不到内存/性能）也能从 LogsPage 定位慢在哪一段
             log.App(Services.Logging.LogLevel.Info, "nav",
-                $"插件页 {tag} 切换完成：视图{(cacheHit ? "缓存复用" : $"新建 {buildSw.Elapsed.TotalMilliseconds:F0}ms")}，挂载 {mountSw.Elapsed.TotalMilliseconds:F0}ms");
+                $"插件页 {tag} 切换完成：视图新建 {buildSw.Elapsed.TotalMilliseconds:F0}ms，挂载 {mountSw.Elapsed.TotalMilliseconds:F0}ms");
         }
         catch (Exception ex)
         {
-            // 插件视图挂载失败（原生层拒绝等）：不复用本插件页本次接管，回退插件管理页
-            // （不回退插件接管判断——插件仍在运行，下一轮导航会重新尝试挂载）；
-            // 本轮视图一并出缓存，下次导航全新重试（可能就是这份视图触发了原生拒绝）
+            // 插件视图挂载失败（原生层拒绝等）：本轮接管放弃，回退插件管理页
+            // （不回退插件接管判断——插件仍在运行，下一轮导航会全新重试挂载）
             _navInFlight = false;
             _currentPluginNavTag = null;
-            _pluginNavViews.Remove(tag);
             log.App(Services.Logging.LogLevel.Error, "plugin", $"插件导航页挂载失败 tag={tag}：{ex.Message}");
             NavigateToPage(typeof(PluginsPage));
         }
@@ -360,14 +361,6 @@ public sealed partial class MainWindow : Window
             if (popupTaken) _popup.SuspendRuntime();
             else _popup.ResumeRuntime(); // 幂等：未挂起时为无操作
             BtnWhitelist.Visibility = popupTaken ? Visibility.Collapsed : Visibility.Visible;
-
-            // 视图缓存失效：navTag 不再被运行中插件接管（卸载/加载失败）即丢弃缓存视图——
-            // 缓存实例必须始终属于当前运行集里的插件实例，重载后首次进入全新重建
-            if (_pluginNavViews.Count > 0)
-            {
-                foreach (var staleTag in _pluginNavViews.Keys.Where(t => !_plugins.IsNavTagLoaded(t)).ToList())
-                    _pluginNavViews.Remove(staleTag);
-            }
 
             if (ContentFrame.CurrentSourcePageType == typeof(PluginNavHostPage)
                 && _currentPluginNavTag != null

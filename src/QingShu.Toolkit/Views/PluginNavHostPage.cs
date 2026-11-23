@@ -13,6 +13,9 @@ namespace QingShu.Toolkit.Views;
 /// stowed-exception 崩溃（0xc000027b 布局期 E_INVALIDARG，托管 UnhandledException
 /// 捕获不到，用户侧表现即「切换插件闪退」）；本页为 transient + 宿主导航后即清
 /// BackStack，旧页整体失去引用，插件视图的回收时机不受影响，无需手动断链。
+/// 宿主以 SuppressNavigationTransitionInfo 进入本页（2026-11 全程抑制导航过渡），
+/// 过渡动画窗口不存在；本页每次导航全新实例，承载的插件视图亦每次全新重建
+/// （transient 契约：视图 Unloaded=VM.Dispose 取消在途操作，2026-11 已回退第 95 条的视图缓存）。
 /// </summary>
 public sealed class PluginNavHostPage : Page
 {

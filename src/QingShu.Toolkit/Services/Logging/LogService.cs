@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Enumeration;
@@ -45,7 +46,6 @@ public interface ILogService
 /// </summary>
 public sealed class LogService : ILogService
 {
-    private static readonly object AppLock = new();
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -61,6 +61,7 @@ public sealed class LogService : ILogService
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "QingShu.Toolkit", "logs");
         try { Directory.CreateDirectory(Root); } catch { }
+        StartAppLogWriter();
     }
 
     #region 诊断会话
@@ -138,29 +139,63 @@ public sealed class LogService : ILogService
 
     #region 应用日志
 
+    // 应用日志异步化（2026-11 切换卡顿根治项）：此前 App() 在调用线程（常为 UI 线程）同步做
+    // 两次 File.AppendAllText（开-写-关）且持全局锁——每次导航/插件事件都在 UI 线程上做两轮
+    // 磁盘 IO，HDD + 杀软实时扫描下单条可达数十至数百毫秒，是「切换卡顿」的实锤构成之一。
+    // 改为并发队列 + 专用后台写线程：调用方入队即返回（微秒级，无锁无磁盘 IO），
+    // 磁盘 IO 全部离开 UI 线程；行内自带毫秒时间戳，出队顺序即写入顺序。
+    // 崩溃时丢失窗口仅剩队列内毫秒级增量（专用线程持续排空，不在导航风暴期集中堆积），
+    // 取证影响可忽略（崩溃现场另有 WER LocalDumps 全量 dump 兜底，见 enable_crash_dumps.ps1）。
+    private sealed record AppLogLine(string JsonPath, string JsonLine, string TextPath, string TextLine);
+    private readonly ConcurrentQueue<AppLogLine> _pendingAppLogs = new();
+    private readonly SemaphoreSlim _appLogSignal = new(0);
+
+    private void StartAppLogWriter()
+    {
+        var t = new Thread(AppLogDrainLoop) { IsBackground = true, Name = "qingshu-applog-writer" };
+        t.Start();
+    }
+
+    private void AppLogDrainLoop()
+    {
+        while (true)
+        {
+            // 等新条目；写批次期间新入队的条目会再次触发信号，队列始终被持续排空
+            _appLogSignal.Wait();
+            while (_pendingAppLogs.TryDequeue(out var line))
+            {
+                try
+                {
+                    File.AppendAllText(line.JsonPath, line.JsonLine, Encoding.UTF8);
+                    File.AppendAllText(line.TextPath, line.TextLine, Encoding.UTF8);
+                }
+                catch { }
+            }
+        }
+    }
+
     public void App(LogLevel level, string category, string message, object? data = null)
     {
         var now = DateTime.Now;
-        lock (AppLock)
+        string jsonLine;
+        try
         {
-            try
+            jsonLine = JsonSerializer.Serialize(new
             {
-                var textPath = Path.Combine(Root, $"app-{now:yyyyMM}.log");
-                var jsonPath = Path.Combine(Root, $"app-{now:yyyyMM}.jsonl");
-                var line = JsonSerializer.Serialize(new
-                {
-                    ts = now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    level = level.ToString().ToLowerInvariant(),
-                    cat = category,
-                    msg = message,
-                    data
-                }, JsonOpts);
-                File.AppendAllText(jsonPath, line + "\n", Encoding.UTF8);
-                File.AppendAllText(textPath,
-                    $"[{now:yyyy-MM-dd HH:mm:ss.fff}][{level.ToString().ToUpperInvariant()}][{category}] {message}\n", Encoding.UTF8);
-            }
-            catch { }
+                ts = now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                level = level.ToString().ToLowerInvariant(),
+                cat = category,
+                msg = message,
+                data
+            }, JsonOpts);
         }
+        catch { return; }
+        var month = now.ToString("yyyyMM");
+        var textLine = $"[{now:yyyy-MM-dd HH:mm:ss.fff}][{level.ToString().ToUpperInvariant()}][{category}] {message}\n";
+        _pendingAppLogs.Enqueue(new AppLogLine(
+            Path.Combine(Root, $"app-{month}.jsonl"), jsonLine + "\n",
+            Path.Combine(Root, $"app-{month}.log"), textLine));
+        _appLogSignal.Release();
     }
 
     public void SaveCleanupReport(CleanupReport report)
