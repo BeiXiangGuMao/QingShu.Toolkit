@@ -294,7 +294,9 @@ public sealed class PluginManager : IPluginManager
             if (rt.Instance is not IQToolkitUiProvider ui) return null;
             try
             {
-                return ui.CreatePanelView();
+                var view = ui.CreatePanelView();
+                rt.UiCreated = true; // 卸载策略随 UI 使用切换：承载过 XAML 对象的 ALC 不硬回收
+                return view;
             }
             catch (Exception ex)
             {
@@ -348,7 +350,9 @@ public sealed class PluginManager : IPluginManager
         if (rt == null) return null;
         try
         {
-            return ((IQToolkitNavPageProvider)rt.Instance).CreateNavView();
+            var view = ((IQToolkitNavPageProvider)rt.Instance).CreateNavView();
+            rt.UiCreated = true; // 卸载策略随 UI 使用切换：承载过 XAML 对象的 ALC 不硬回收
+            return view;
         }
         catch (Exception ex)
         {
@@ -391,18 +395,31 @@ public sealed class PluginManager : IPluginManager
             lock (_sync) { _runtime.Remove(folderName); }
 
             bool fully;
-            try
+            if (rt.UiCreated)
             {
-                rt.Alc.Unload();
-                CollectNow();
-                fully = !rt.AlcRef.IsAlive;
-            }
-            catch (Exception ex)
-            {
-                _log.App(LogLevel.Warn, "plugin", $"插件 {folderName} 上下文回收异常：{ex.Message}");
+                // 创建过 UI（导航页/面板）的插件不硬卸载：WinUI 3 不支持回收承载过 XAML 对象的
+                // collectible ALC——Alc.Unload+强 GC 后，原生 XAML 残留引用随时可能触发
+                // stowed-exception/AV 闪退（切换插件闪退的另一独立雷区）。软卸载：断引用、
+                // 移出运行集，ALC 驻留待 GC 自然处置（内存可控：仅插件程序集常驻，无活跃对象）。
                 fully = false;
+                _log.App(LogLevel.Info, "plugin",
+                    $"插件已卸载：{folderName}（含 UI，加载上下文驻留防原生崩溃；后台任务已收尾，不影响使用）");
             }
-            _log.App(LogLevel.Info, "plugin", $"插件已卸载：{folderName}（上下文回收：{(fully ? "完全" : "待后台释放")}）");
+            else
+            {
+                try
+                {
+                    rt.Alc.Unload();
+                    CollectNow();
+                    fully = !rt.AlcRef.IsAlive;
+                }
+                catch (Exception ex)
+                {
+                    _log.App(LogLevel.Warn, "plugin", $"插件 {folderName} 上下文回收异常：{ex.Message}");
+                    fully = false;
+                }
+                _log.App(LogLevel.Info, "plugin", $"插件已卸载：{folderName}（上下文回收：{(fully ? "完全" : "待后台释放")}）");
+            }
             RaiseRuntimesChanged(); // 被接管导航页回退内置实现
             return fully
                 ? $"已卸载「{rt.Instance.DisplayName}」，加载上下文完全释放。"
@@ -535,8 +552,7 @@ public sealed class PluginManager : IPluginManager
         });
     }
 
-    // ================= 运行时句柄 =================
-
+    /// <summary>运行时句柄。</summary>
     private sealed class RuntimePlugin
     {
         public RuntimePlugin(PluginManifest manifest, IQToolkitPlugin instance, PluginLoadContext alc,
@@ -554,6 +570,8 @@ public sealed class PluginManager : IPluginManager
         public PluginLoadContext Alc { get; }
         public PluginContext Context { get; }
         public WeakReference AlcRef { get; }
+        /// <summary>是否创建过 UI（导航页/面板视图）：决定卸载时硬回收还是软驻留（防 WinUI 原生崩溃）。</summary>
+        public bool UiCreated { get; set; }
     }
 }
 
