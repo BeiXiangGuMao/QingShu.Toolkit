@@ -170,6 +170,8 @@
 
 94. Frame 导航守卫事件名修正（main 分支 make_release.ps1 Windows 实测宿主 publish 双错：CS1061「Frame」未包含「NavigationCompleted」的定义 + XamlCompiler.exe MSB3073 exit=1）：WinUI 3 Microsoft.UI.Xaml.Controls.Frame 全部事件仅 Navigating/Navigated/NavigationStopped/NavigationFailed 四个（Microsoft Learn 文档口径），NavigationCompleted 属 WebView2 控件——第 93 条在途守卫首版误用该名订阅致编译失败；MSB3073 非独立缺陷，是 Release 配置下 csc 失败后 XAML 预编译二阶段（Microsoft.UI.Xaml.Markup.Compiler.interop.targets 841）拿不到程序集输入的同因级联；修正为 Navigated/NavigationFailed/NavigationStopped 三事件出口同族复位（落地/失败/被中断三出口全复位防标志卡死，语义与原设计等价更完备），第 93 条守卫措辞随改。Windows 验收：make_release.ps1 宿主 publish 零错误（CS1061 与 MSB3073 双双消失）；插件切换/快速连点导航行为与上一版一致无闪退
 
+95. 插件导航视图缓存复用 + 切换路径计时留痕 + 崩溃转储采集（用户 Windows 实测：VS 调试运行切换卡顿明显且诊断工具探查不到内存信息、打包版切换卡顿并闪退依旧）：插件导航视图是纯代码构建的重资产（弹窗守护 538 行/磁盘清理 661 行/网络诊断 1014 行构建代码 + 各 VM 自建服务），此前每次切换 NavigateToPluginNav→CreateNavViewFor 全新重建——UI 线程建树+布局数百元素是「切换卡」主因，且每次过渡都折腾大批 XAML 节点（原生布局竞态的持续暴露面）；修复：MainWindow 按 navTag 缓存已建视图（首次新建并计时留痕，此后缓存复用重挂载——Unloaded/Loaded 自然停走各视图内部定时器，状态跨访问保留），SyncPluginDelegation 对不再被接管的 navTag 统一失效（卸载/重载后必然全新重建，绝不残留旧实例视图），挂载失败时本轮视图出缓存下次全新重试；切换路径全程 Stopwatch 计时落应用日志（插件页每次留痕「视图缓存复用/新建 Nms，挂载 Mms」，内置页超 150ms 阈值才留痕）——打包版无法用 VS 诊断工具探查内存/性能时，LogsPage 直接可见每段耗时；新增 scripts/enable_crash_dumps.ps1（管理员一次性注册 WER LocalDumps：QingShu.Toolkit.exe 闪退时自动落 .dmp 到 %LOCALAPPDATA%\QingShu.Toolkit\crashdumps，支持 -Mini/-DumpFolder/-Remove，解决原生 stowed-exception 闪退拿不到证据的问题）。Windows 验收：连续切换插件页/内置页 20 次卡顿主观明显下降（日志出现「缓存复用」且挂载耗时远小于首次新建）；卸载正在显示的插件回退内置页后重载重进正常（重载后首次进日志为「新建」）；复现闪退时 crashdumps 目录出现 .dmp
+
 ## C. 已知边界（设计使然，非缺陷）
 
 - QuestPDF 社区许可声明仅在生成 PDF 时设置（App ctor）

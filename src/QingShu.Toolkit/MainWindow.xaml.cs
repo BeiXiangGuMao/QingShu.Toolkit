@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +41,11 @@ public sealed partial class MainWindow : Window
     private bool _navInFlight;
     private Type? _queuedNavPage;   // 在途期间排队的目标内置页（与 _queuedNavTag 二选一，只保最新）
     private string? _queuedNavTag;  // 在途期间排队的目标插件 navTag
+    // 插件导航视图缓存（navTag → 视图实例）：插件视图是纯代码构建的重资产（数百个元素 + VM + 服务，
+    // 单视图构建代码 500~1000 行），此前每次切换都全新重建——UI 线程建树+布局是「切换卡」的主因，
+    // 且每次过渡都折腾大批 XAML 节点（原生布局竞态的持续暴露面）。缓存后切换 = 重挂已构建树；
+    // 卸载/重载经 SyncPluginDelegation 统一失效，绝不残留旧实例视图
+    private readonly Dictionary<string, FrameworkElement> _pluginNavViews = new();
 
     private static readonly Dictionary<string, Type> PageMap = new()
     {
@@ -246,11 +252,18 @@ public sealed partial class MainWindow : Window
         _navInFlight = true;
         try
         {
+            var mountSw = Stopwatch.StartNew();
             ContentFrame.Navigate(pageType, null, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            mountSw.Stop();
             ClearBackStack();
             _navSyncing = true;
             SelectNavItemByPage(pageType);
             _navSyncing = false;
+            // 内置页一般很快，超阈值才留痕（避免日志刷屏；插件页切换则每次都留痕）
+            if (mountSw.Elapsed.TotalMilliseconds >= 150)
+                App.Services.GetRequiredService<Services.Logging.ILogService>()
+                    .App(Services.Logging.LogLevel.Info, "nav",
+                        $"内置页 {pageType.Name} 挂载 {mountSw.Elapsed.TotalMilliseconds:F0}ms（超 150ms 阈值留痕）");
         }
         catch (Exception ex)
         {
@@ -281,7 +294,19 @@ public sealed partial class MainWindow : Window
             && string.Equals(_currentPluginNavTag, tag, StringComparison.Ordinal))
             return;
 
-        var view = _plugins.CreateNavViewFor(tag);
+        // 视图获取：缓存复用优先（首次新建并计时）——每次切换全新重建 500~1000 行的纯代码
+        // UI 树 + VM + 服务是「切换卡」主因；缓存实例跨切换复用，Unloaded/Loaded 会自然停走
+        // 各视图内部定时器（如弹窗守护 1s 刷新），状态跨访问保留
+        var log = App.Services.GetRequiredService<Services.Logging.ILogService>();
+        var buildSw = Stopwatch.StartNew();
+        bool cacheHit = _pluginNavViews.TryGetValue(tag, out var view);
+        if (!cacheHit)
+        {
+            view = _plugins.CreateNavViewFor(tag);
+            buildSw.Stop();
+            if (view != null) _pluginNavViews[tag] = view; // 创建成功才缓存，失败下次重试
+        }
+        else buildSw.Stop();
         if (view == null)
         {
             _popup.ResumeRuntime(); // 视图拿不到 = 内置实现继续服役，运行时先恢复
@@ -296,20 +321,26 @@ public sealed partial class MainWindow : Window
         _navInFlight = true;
         try
         {
+            var mountSw = Stopwatch.StartNew();
             ContentFrame.Navigate(typeof(PluginNavHostPage), view, new Microsoft.UI.Xaml.Media.Animation.EntranceNavigationTransitionInfo());
+            mountSw.Stop();
             ClearBackStack();
             _navSyncing = true;
             SelectNavItem(tag);
             _navSyncing = false;
+            // 切换耗时留痕：无 VS 诊断工具（打包版探查不到内存/性能）也能从 LogsPage 定位慢在哪一段
+            log.App(Services.Logging.LogLevel.Info, "nav",
+                $"插件页 {tag} 切换完成：视图{(cacheHit ? "缓存复用" : $"新建 {buildSw.Elapsed.TotalMilliseconds:F0}ms")}，挂载 {mountSw.Elapsed.TotalMilliseconds:F0}ms");
         }
         catch (Exception ex)
         {
             // 插件视图挂载失败（原生层拒绝等）：不复用本插件页本次接管，回退插件管理页
-            // （不回退插件接管判断——插件仍在运行，下一轮导航会重新尝试挂载）
+            // （不回退插件接管判断——插件仍在运行，下一轮导航会重新尝试挂载）；
+            // 本轮视图一并出缓存，下次导航全新重试（可能就是这份视图触发了原生拒绝）
             _navInFlight = false;
             _currentPluginNavTag = null;
-            App.Services.GetRequiredService<Services.Logging.ILogService>()
-                .App(Services.Logging.LogLevel.Error, "plugin", $"插件导航页挂载失败 tag={tag}：{ex.Message}");
+            _pluginNavViews.Remove(tag);
+            log.App(Services.Logging.LogLevel.Error, "plugin", $"插件导航页挂载失败 tag={tag}：{ex.Message}");
             NavigateToPage(typeof(PluginsPage));
         }
     }
@@ -329,6 +360,14 @@ public sealed partial class MainWindow : Window
             if (popupTaken) _popup.SuspendRuntime();
             else _popup.ResumeRuntime(); // 幂等：未挂起时为无操作
             BtnWhitelist.Visibility = popupTaken ? Visibility.Collapsed : Visibility.Visible;
+
+            // 视图缓存失效：navTag 不再被运行中插件接管（卸载/加载失败）即丢弃缓存视图——
+            // 缓存实例必须始终属于当前运行集里的插件实例，重载后首次进入全新重建
+            if (_pluginNavViews.Count > 0)
+            {
+                foreach (var staleTag in _pluginNavViews.Keys.Where(t => !_plugins.IsNavTagLoaded(t)).ToList())
+                    _pluginNavViews.Remove(staleTag);
+            }
 
             if (ContentFrame.CurrentSourcePageType == typeof(PluginNavHostPage)
                 && _currentPluginNavTag != null
